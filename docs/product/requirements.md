@@ -15,3 +15,7 @@
 - Keine Runtime-Abhängigkeit von externer OpenAI-API
 - Hohe Wartbarkeit, Lesbarkeit und Skalierbarkeit
 - Vollständige Auditierbarkeit sicherheitsrelevanter Aktionen
+
+
+## Verbindliche Spezifikationsreferenz
+Die umsetzungsrelevanten Detailanforderungen für Phase 1 sind in `docs/product/phase1-fachliche-spezifikation-v1.md` festgelegt.
