@@ -131,7 +131,45 @@ Multi-Tenant reduziert Betriebsaufwand gegenüber getrennten Einzelinstanzen und
 - **Konflikt:** Externe Modellabhängigkeit vs. On-Prem-Verfügbarkeit.
   - **Gegenmaßnahme:** Lokales Model-Mirroring und versionierter Modellcache.
 
-## 8) Offene Punkte mit Nutzerentscheidung
-1. Darf `retention_months` durch Nutzer frei gesetzt werden oder nur in vordefinierten Compliance-Stufen?
-2. Soll initialer Edit-Export nur TXT/JSON oder zusätzlich SRT/VTT enthalten?
-3. Benötigt jeder Tenant eigene Keycloak-Gruppen/Rollen oder genügt Claim-basiertes Shared-Realm-Modell?
+## 8) Spezifikationsfreeze Schritt 2 (abgeschlossen)
+Die Anforderungsbasis für Phase 1 wurde in verbindliche Spezifikationen überführt. Diese Dokumente sind die Referenz für die Realisierungsphase:
+- Fachliche Spezifikation v1: `docs/product/phase1-fachliche-spezifikation-v1.md`
+- Schnittstellen-Spezifikation v1: `docs/architecture/api-spec-v1.md`
+- Event-Contracts v1: `docs/architecture/event-contracts-v1.md`
+- Datenmodell-Spezifikation v1: `docs/architecture/data-model-v1.md`
+- Security-Spezifikation v1: `docs/security/security-spec-v1.md`
+- Test-Spezifikation v1: `docs/testing/test-spec-v1.md`
+
+### Freeze-Gates (müssen vor Implementierungsstart erfüllt sein)
+1. Keine offenen Muss-Anforderungen in Phase 1.
+2. Jede API-Operation mit AuthZ-Regel, Tenant-Scope und Eingabevalidierung dokumentiert.
+3. Jede Datenentität mit Retention- und Audit-Regel dokumentiert.
+4. Kritische Security-Risiken mit Gegenmaßnahmen und Verifikation hinterlegt.
+5. Happy Path + Edge/Abuse-Pfade in Test-Spezifikation abgedeckt.
+
+## 9) Optimaler nächster Entwicklungsschritt (jetzt starten)
+**Schritt 3: Implementierungsstart „Auth + Upload Vertical Slice“ (TDD, ohne Funktionslücken)**
+
+### Ziel
+Ein minimaler, produktionsnaher End-to-End-Flow im Tenant-Scope:
+Login → Job anlegen → Upload finalisieren → Queueing → Statusabfrage.
+
+### Warum dieser Schritt optimal ist
+- Höchstes Architektur-Risiko (Tenant-Isolation + AuthZ + Upload-Validation) wird früh adressiert.
+- Schafft stabile Grundlage für nachfolgende Pipeline-/Editor-Features.
+- Verhindert spätere, teure Refactorings an API- und Datenmodellgrenzen.
+
+### Lieferobjekte (Pflicht)
+1. API-Skeleton für `POST /jobs`, `POST /jobs/{id}/complete-upload`, `GET /jobs/{id}`.
+2. Tenant-scope AuthZ-Middleware (Default Deny).
+3. Upload-Validierung (MIME/Magic Bytes/Size) gemäß Spezifikation.
+4. Queue-Publish mit idempotentem Verhalten und Audit-Event.
+5. TDD-Tests (Unit + Integration + Contract + Edge/Abuse) für den Vertical Slice.
+
+### Architekturkonflikte (aktiv zu beobachten)
+- **Konflikt:** frühe Geschwindigkeit vs. saubere Idempotenz.
+  - **Lösung:** Idempotency-Key sofort implementieren, nicht nachziehen.
+- **Konflikt:** vereinfachtes AuthZ-Mapping vs. langfristige Rollenmatrix.
+  - **Lösung:** RBAC-Matrix aus Spezifikation als zentrale Policy-Quelle verwenden.
+- **Konflikt:** schneller Upload-Pfad vs. Sicherheit.
+  - **Lösung:** Validierung serverseitig erzwingen, niemals nur Frontend-seitig.

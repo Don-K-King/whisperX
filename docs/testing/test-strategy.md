@@ -1,5 +1,7 @@
 # Test Strategy (TDD) – inkl. Edge/Security-Tests pro Entwicklungsschritt
 
+Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
+
 ## 1) Verbindlicher Ablauf je Arbeitspaket
 1. Akzeptanzkriterien + Security-Akzeptanzkriterien festlegen
 2. Edge-Case-Katalog für das Paket definieren
@@ -81,3 +83,10 @@
 ## 5) Regression-Gates (verbindlich)
 - Vollständige Regression bei Änderungen an Pipeline, Build, Architektur, Mandantenmodell, Queueing.
 - Für reine Doku-Änderungen: keine Runtime-Regression erforderlich, aber Konsistenzchecks der Doku verpflichtend.
+
+
+## 6) Freeze-Gates für Implementierungsstart (Schritt 3)
+- Keine offenen Muss-Anforderungen.
+- API-Operationen vollständig mit AuthZ/Tenant/Validierung dokumentiert.
+- Datenentitäten vollständig mit Retention/Audit-Regeln dokumentiert.
+- Kritische Risiken mit Gegenmaßnahmen und Testfällen hinterlegt.
