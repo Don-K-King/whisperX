@@ -27,3 +27,35 @@
 - Verwendete Testumgebung
 - Commit SHA und Build-Artefakt
 - Ergebnis (Pass/Fail) und ggf. Risikoeinschätzung
+
+
+## WP-3.1 Nachweis (Auth Middleware + Tenant Context)
+- Unit/Abuse: `tests/test_auth_tenant_context.py` deckt Happy Path, Claim-Fehler, Token-Ablauf, Audience-Mismatch, Rollen-/Tenant-Deny ab.
+- Gate-Zuordnung: Unit + Security/Abuse (P0, Muss grün).
+
+
+## WP-3.2 Nachweis (Job-Create Endpoint + Upload Session)
+- Unit: Validatoren für MIME/Size/Retention/Filename/Idempotency-Key.
+- Integration: Tenant-scoped Job-Persistenz, Upload-Session-Erstellung und Audit-Event.
+- Security/Abuse: Oversize, unsupported MIME, Idempotency-Key-Payload-Konflikt.
+- Nachweisdatei: `tests/test_job_create_service.py`.
+
+
+## Adapter-Umsetzung Nachweis (HTTP + Infrastruktur)
+- Integration (Infrastruktur): SQLite-Repo, SQLite-Idempotenz, Presign-Factory, JSONL-Audit (`tests/test_job_infra_adapters.py`).
+- Contract/Core (HTTP): Mapping Domain→API-Contract (`tests/test_fastapi_http_adapter.py`).
+- Integration (HTTP/optional): Endpunkt-Test mit FastAPI TestClient (`tests/test_fastapi_http_adapter_integration.py`, umgebungsabhängig).
+- Regression: vollständiger lokaler `unittest`-Discover-Lauf nach Strukturänderung durchgeführt.
+
+
+## WP-3.3 Nachweis (Complete-Upload Idempotency + Queue Publish)
+- Unit/Integration: `tests/test_complete_upload_service.py` (Happy Path, State/Storage checks, tenant deny, checksum validation).
+- Infrastruktur/Integration: `tests/test_complete_upload_infrastructure.py` (SQLite Outbox + Dispatcher Publish/Marking).
+- Contract/Core HTTP: `tests/test_complete_upload_http_adapter.py` (Response-Mapping `queued` + `queue`).
+- Regression: vollständiger lokaler `unittest`-Discover-Lauf nach Strukturänderung durchgeführt.
+
+
+## WP-3.4 Nachweis (Job-Status Endpoint)
+- Unit/Integration: `tests/test_job_status_service.py` (tenant-scoped read, progress fallback, not-found ohne Leak).
+- Contract/Core HTTP: `tests/test_job_status_http_adapter.py` (Response-Mapping).
+- Integration (HTTP/optional): `tests/test_fastapi_http_adapter_integration.py` ergänzt um GET-Status-Fall.

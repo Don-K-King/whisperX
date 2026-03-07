@@ -47,3 +47,40 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Sicheres Fehlerprofil: standardisierte Fehlerobjekte mit `error_code`/`correlation_id`, ohne sensitive Interna.
 - Enumerationsschutz auf tenant-sensitiven Endpunkten (`403/404`-Verhalten gemäß API-Vertrag).
 - Verifikationspflicht über Abuse-Tests gegen verbose Fehlerantworten.
+
+## WP-3.1 Kontrollkonkretisierung (Auth Middleware + Tenant Context)
+- Zentrale Policy-Funktion `authorize_request(...)` als Single-Entry für Claims-Validierung (`sub`, `tenant_id`, `roles`, `iss`, `aud`, `exp`, `iat`, `nbf`).
+- Default-Deny bei fehlendem `tenant_id` oder Rollen-/Tenant-Mismatch (`403 authz.deny`).
+- AuthN-Verletzungen führen konsistent zu `401` (`auth.invalid_token`/`auth.expired`).
+- Korrelations-ID ist verpflichtend in Fehlern und Erfolgs-Context für Audit/Forensik.
+- Missbrauchsschutz: nur erlaubte Rollen (`user`, `reviewer`, `admin`) werden akzeptiert.
+
+
+## WP-3.2 Kontrollkonkretisierung (Job-Create + Upload Session)
+- Input-Validation serverseitig verpflichtend: MIME-Allowlist, Größenlimit (`<= 21474836480`), Retention-Range (`1..36`), Dateinamen-Härtung.
+- Tenant-Isolation in Speicherpfaden: Upload-Objektpfad strikt `tenant/<tenant_id>/<job_id>/<filename>`.
+- Idempotenzschutz auf `POST /jobs` verhindert doppelte Job-Erstellung und Audit-Dubletten bei Wiederholungsrequests.
+- Audit-Ereignis `job.create` wird für jeden neu erzeugten Job geschrieben (`tenant_id`, `actor_id`, `job_id`, `idempotency_key`).
+
+
+## HTTP-/Infrastruktur-Adapter Controls
+- HTTP-Gate `POST /api/v1/jobs` erzwingt Bearer-Token-Präsenz und delegiert Claim-Prüfung zentral an `authorize_request` (Default-Deny bleibt erhalten).
+- Idempotency-Key wird als Header Pflicht gemacht; fehlender Header führt zu validierungsbasiertem Reject.
+- SQLite-Adapter persistiert `tenant_id` verpflichtend in Job- und Idempotenzdaten (Isolation auf Datenebene).
+- Audit-Adapter schreibt JSONL append-only mit Zeitstempel für forensische Nachvollziehbarkeit.
+- Presign-Adapter signiert Upload-URLs und bindet Objektpfade strikt an Tenant/Job-Kontext.
+
+
+## WP-3.3 Kontrollkonkretisierung (Complete-Upload + Queueing)
+- `complete-upload` akzeptiert nur tenant-/job-konsistente `object_key`-Werte und SHA256-Prüfsummenformat.
+- Cross-Tenant-Zugriffe führen zu neutralem `job.not_found` ohne Existenzleck.
+- Idempotenz ist tenant-scoped verpflichtend; Payload-Mismatch führt zu Konfliktablehnung.
+- Queue-Publikation erfolgt über Outbox + Dispatcher zur Absicherung gegen Persist/Publish-Teilfehler.
+- Auditierbarkeit: Outbox-Event `job.queued` enthält `tenant_id`, `actor_id`, `job_id`, `queue`.
+
+
+## WP-3.4 Kontrollkonkretisierung (GET Job-Status)
+- Tenant-Isolation im Read-Pfad: Lookup ausschließlich über `(tenant_id, job_id)`.
+- Enumerationsschutz: tenant-fremde Job-IDs liefern neutralen Not-Found-Fehler ohne Existenzdetails.
+- AuthN/AuthZ-Pflicht auch für Read-Operationen bleibt aktiv (Bearer + Claim-Prüfung via zentraler Auth-Policy).
+- Response-Härtung: nur vertraglich definierte Felder (`job_id`, `status`, `progress`, `retention_until`).

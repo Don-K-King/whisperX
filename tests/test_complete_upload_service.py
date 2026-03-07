@@ -1,0 +1,194 @@
+import unittest
+
+from evodox.jobs.complete_upload_service import (
+    CompleteUploadInput,
+    CompleteUploadValidationError,
+    InMemoryCompleteUploadIdempotencyStore,
+    InMemoryJobStore,
+    InMemoryObjectStorage,
+    InMemoryOutbox,
+    QueueSelectionPolicy,
+    complete_upload,
+)
+
+
+class CompleteUploadServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.jobs = InMemoryJobStore()
+        self.storage = InMemoryObjectStorage()
+        self.outbox = InMemoryOutbox()
+        self.idempotency = InMemoryCompleteUploadIdempotencyStore()
+        self.queue_policy = QueueSelectionPolicy()
+
+        self.jobs.add_job(
+            {
+                "job_id": "job_1",
+                "tenant_id": "tenant-a",
+                "status": "uploaded",
+                "content_type": "video/mp4",
+                "size_bytes": 1_000_000,
+            }
+        )
+        self.storage.put("tenant/tenant-a/job_1/hearing.mp4", checksum_sha256="a" * 64)
+
+    def test_happy_path_queues_job_and_writes_outbox_event(self):
+        response = complete_upload(
+            CompleteUploadInput(
+                job_id="job_1",
+                upload_session_id="up_1",
+                object_key="tenant/tenant-a/job_1/hearing.mp4",
+                checksum_sha256="a" * 64,
+                idempotency_key="cpl-idempotent-1",
+            ),
+            tenant_id="tenant-a",
+            actor_id="u-1",
+            job_store=self.jobs,
+            object_storage=self.storage,
+            outbox=self.outbox,
+            idempotency_store=self.idempotency,
+            queue_policy=self.queue_policy,
+        )
+
+        self.assertEqual(response.status, "queued")
+        self.assertEqual(response.queue, "gpu-standard")
+        self.assertEqual(self.jobs.get("tenant-a", "job_1")["status"], "queued")
+        self.assertEqual(len(self.outbox.events), 1)
+        self.assertEqual(self.outbox.events[0]["event_type"], "job.queued")
+
+    def test_idempotent_repeat_returns_same_response_without_duplicate_event(self):
+        request = CompleteUploadInput(
+            job_id="job_1",
+            upload_session_id="up_1",
+            object_key="tenant/tenant-a/job_1/hearing.mp4",
+            checksum_sha256="a" * 64,
+            idempotency_key="cpl-idempotent-repeat",
+        )
+
+        first = complete_upload(
+            request,
+            tenant_id="tenant-a",
+            actor_id="u-1",
+            job_store=self.jobs,
+            object_storage=self.storage,
+            outbox=self.outbox,
+            idempotency_store=self.idempotency,
+            queue_policy=self.queue_policy,
+        )
+        second = complete_upload(
+            request,
+            tenant_id="tenant-a",
+            actor_id="u-1",
+            job_store=self.jobs,
+            object_storage=self.storage,
+            outbox=self.outbox,
+            idempotency_store=self.idempotency,
+            queue_policy=self.queue_policy,
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.outbox.events), 1)
+
+    def test_idempotency_conflict_for_changed_payload(self):
+        complete_upload(
+            CompleteUploadInput(
+                job_id="job_1",
+                upload_session_id="up_1",
+                object_key="tenant/tenant-a/job_1/hearing.mp4",
+                checksum_sha256="a" * 64,
+                idempotency_key="cpl-idempotent-conflict",
+            ),
+            tenant_id="tenant-a",
+            actor_id="u-1",
+            job_store=self.jobs,
+            object_storage=self.storage,
+            outbox=self.outbox,
+            idempotency_store=self.idempotency,
+            queue_policy=self.queue_policy,
+        )
+
+        with self.assertRaises(CompleteUploadValidationError) as exc_info:
+            complete_upload(
+                CompleteUploadInput(
+                    job_id="job_1",
+                    upload_session_id="up_1",
+                    object_key="tenant/tenant-a/job_1/other.mp4",
+                    checksum_sha256="a" * 64,
+                    idempotency_key="cpl-idempotent-conflict",
+                ),
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_store=self.jobs,
+                object_storage=self.storage,
+                outbox=self.outbox,
+                idempotency_store=self.idempotency,
+                queue_policy=self.queue_policy,
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.complete_upload.idempotency_conflict")
+
+    def test_rejects_cross_tenant_job_access_without_leak(self):
+        with self.assertRaises(CompleteUploadValidationError) as exc_info:
+            complete_upload(
+                CompleteUploadInput(
+                    job_id="job_1",
+                    upload_session_id="up_1",
+                    object_key="tenant/tenant-b/job_1/hearing.mp4",
+                    checksum_sha256="a" * 64,
+                    idempotency_key="cpl-idempotent-2",
+                ),
+                tenant_id="tenant-b",
+                actor_id="u-2",
+                job_store=self.jobs,
+                object_storage=self.storage,
+                outbox=self.outbox,
+                idempotency_store=self.idempotency,
+                queue_policy=self.queue_policy,
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.not_found")
+
+    def test_rejects_when_storage_object_is_missing(self):
+        with self.assertRaises(CompleteUploadValidationError) as exc_info:
+            complete_upload(
+                CompleteUploadInput(
+                    job_id="job_1",
+                    upload_session_id="up_1",
+                    object_key="tenant/tenant-a/job_1/missing.mp4",
+                    checksum_sha256="a" * 64,
+                    idempotency_key="cpl-idempotent-3",
+                ),
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_store=self.jobs,
+                object_storage=self.storage,
+                outbox=self.outbox,
+                idempotency_store=self.idempotency,
+                queue_policy=self.queue_policy,
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.complete_upload.object_missing")
+
+    def test_rejects_invalid_checksum(self):
+        with self.assertRaises(CompleteUploadValidationError) as exc_info:
+            complete_upload(
+                CompleteUploadInput(
+                    job_id="job_1",
+                    upload_session_id="up_1",
+                    object_key="tenant/tenant-a/job_1/hearing.mp4",
+                    checksum_sha256="invalid",
+                    idempotency_key="cpl-idempotent-4",
+                ),
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_store=self.jobs,
+                object_storage=self.storage,
+                outbox=self.outbox,
+                idempotency_store=self.idempotency,
+                queue_policy=self.queue_policy,
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.complete_upload.invalid_checksum")
+
+
+if __name__ == "__main__":
+    unittest.main()

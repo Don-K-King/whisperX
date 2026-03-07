@@ -57,3 +57,33 @@ Diese Spezifikation definiert die verpflichtenden Test-Gates für die Realisieru
 - Race Case: Upload finalisiert, Objekt fehlt im Storage → definierter Fehler ohne inkonsistenten Job-Status.
 - Duplicate Event Delivery führt nicht zu mehrfacher fachlicher Verarbeitung.
 - Reconciliation-Szenario bei Publish/Persist-Teilfehler wird getestet und dokumentiert.
+
+
+## Implementierungsstand Schritt 3 (WP-3.1)
+- Abgedeckt: Manipulierte/fehlende Claims, Token-Expiry, Tenant-Mismatch, Rollen-Deny und Happy Path im zentralen AuthZ-Entry-Point.
+- Nachweisdatei: `tests/test_auth_tenant_context.py`.
+- Ergebnisstand: Testfälle grün, geeignet als Blocker-Gate vor WP-3.2.
+
+
+## Implementierungsstand Schritt 3 (WP-3.2)
+- Abgedeckt: Job-Create-Validierung inkl. Retention-Range und Input-Härtung, tenant-scoped Upload-Session, Audit-Event-Erzeugung.
+- Idempotenzfall getestet: Wiederholung mit gleichem Payload erzeugt keine Duplikate; Payload-Mismatch führt zu Konfliktfehler.
+- Nachweisdatei: `tests/test_job_create_service.py`.
+
+
+## Implementierungsstand Adapter-Layer (HTTP + Infrastruktur)
+- FastAPI-Adapter für `POST /api/v1/jobs` mit Header-/Payload-Verarbeitung, Auth-Delegation und Fehlerabbildung umgesetzt.
+- Persistente Adapter für Job/Idempotenz/Audit/Presign implementiert und mit Integrationstests abgesichert.
+- Umgebungsgrenze dokumentiert: FastAPI-Integrationstest ist abhängig von installierten Runtime-Dependencies.
+
+
+## Implementierungsstand Schritt 3 (WP-3.3)
+- Abgedeckt: `POST /jobs/{id}/complete-upload` mit tenant-scope, Objekt-/Checksum-Validierung und idempotenter Wirkung.
+- Outbox-Reconciliation-Basis umgesetzt: Eventpersistenz (`job.queued`) und Dispatcher-Pfad.
+- Nachweisdateien: `tests/test_complete_upload_service.py`, `tests/test_complete_upload_infrastructure.py`, `tests/test_complete_upload_http_adapter.py`.
+
+
+## Implementierungsstand Schritt 3 (WP-3.4)
+- Abgedeckt: `GET /jobs/{id}` tenant-scoped mit neutralem Not-Found-Verhalten.
+- Response umfasst `job_id`, `status`, `progress`, `retention_until`.
+- Nachweisdateien: `tests/test_job_status_service.py`, `tests/test_job_status_http_adapter.py`, `tests/test_fastapi_http_adapter_integration.py`.
