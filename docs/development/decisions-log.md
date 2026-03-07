@@ -17,3 +17,4 @@
 - Frontend-Stack für Phase 1 festgelegt: React + TypeScript + Vite als architekturkonforme Umsetzungslinie.
 - Konsequenz: UI-Spezifikation in `docs/product/frontend-ui-spec-v1.md` als ergänzende Umsetzungsspezifikation eingeführt; API/Security/Test-v1 bleiben führende Primärreferenzen.
 - Governance ergänzt: Screenshot-Pflicht für UI/Design-Änderungen in `AGENTS.md` als DoD-relevantes PR-Kriterium verankert.
+

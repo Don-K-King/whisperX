@@ -36,3 +36,10 @@ Verbindliche Sicherheitskontrollen für Phase 1 mit Zuordnung zu Systemkomponent
    - **Behandlung:** Konfigurations-Tests als Deployment-Gate.
 2. **Restrisiko:** GPU-Ressourcenengpässe unter Last.
    - **Behandlung:** Queue-Isolation, Worker-Concurrency-Caps, Monitoring-Alerts.
+
+## Fehleroffenlegungsrichtlinie (Security by Default)
+- Antworten enthalten immer `error_code` und `correlation_id` für Debug-Fähigkeit.
+- Sensible Interna dürfen nie ausgeliefert werden (Stacktraces, interne Pfade, Secret-Werte, Query-Fragmente).
+- Bei Tenant-bezogenen Zugriffen müssen Fehler so gestaltet sein, dass keine Existenzfakten fremder Ressourcen offengelegt werden.
+- `401` nur für AuthN-Fehler (fehlend/ungültig/abgelaufenes Token), `403` für AuthZ-Fehler; `404` nur gemäß Endpoint-Vertrag und ohne Informationsleck.
+- UI darf kategorisierte Fehlerdetails anzeigen, aber keine Roh-Exception-Texte.

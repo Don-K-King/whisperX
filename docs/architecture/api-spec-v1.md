@@ -10,6 +10,12 @@ Diese Spezifikation definiert die bindenden HTTP-Contracts für Phase 1.
 - Idempotenz: `POST /jobs`, `POST /jobs/{id}/complete-upload`, `POST /jobs/{id}/export` akzeptieren `Idempotency-Key` Header.
 - Fehlerformat: RFC7807-ähnliches Problem-JSON.
 
+## Normiertes Fehlerprofil (verbindlich)
+- Alle Fehlerantworten enthalten mindestens: `type`, `title`, `status`, `error_code`, `correlation_id`.
+- `detail` ist sanitisiert und darf keine internen Implementierungsdetails enthalten.
+- Tenant-sensitive Endpunkte dürfen keine Antworttexte liefern, die Ressourcenenumeration ermöglichen.
+- Für Frontend-Debugbarkeit ist `correlation_id` in jeder Fehlersituation Pflicht.
+
 ## Fehlerformat
 ```json
 {

@@ -12,6 +12,7 @@
 3. Denial-of-Service durch große Dateien
 4. Manipulation von Exporten/Löschfristen
 5. Queue Poisoning / Retry Storms
+6. Error Information Disclosure (Verbose Error Messages)
 
 ## Komponentenbezogene Risiken
 - **Frontend:** XSS über Transcript-Inhalte, Token-Handling.
@@ -39,3 +40,9 @@
 | Cross-Tenant Zugriff | Tenant-Scoped Query Guards | Integration/E2E Tenant-Isolation-Tests | `access.denied` mit `tenant_id` |
 | Upload MIME/Extension Spoofing | MIME+Magic-Bytes + Größenlimits | Upload-Fuzzing/Validation-Tests | `upload.rejected` mit Validierungsgrund |
 | Replay auf `complete-upload` | Idempotency-Key + fachliche Idempotenzprüfung | Integrationstest wiederholte Requests | `job.queue.publish` mit idempotency_status |
+
+
+## Ergänzende Bedrohung Schritt 3
+| Bedrohung | Control-Referenz | Test-Nachweis (Soll) | Audit-Nachweis |
+|---|---|---|---|
+| Error Information Disclosure | Sicheres Fehlerprofil + Enumerationsschutz | Verbose-Error-Abuse-Tests auf 401/403/404/422 | `authz.deny`/`request.rejected` mit `correlation_id` |
