@@ -172,6 +172,8 @@ Für Schritt 3A ist die „Keycloak-Integration Inputs v1“-Vorlage vollständi
 - `docs/architecture/api-spec-v1.md`
 - `docs/security/security-spec-v1.md`
 - `docs/testing/test-spec-v1.md`
+- `docs/security/keycloak-integration-profile-v1.md`
+- `docs/security/keycloak-integration-inputs-v1.md`
 
 ### Abnahmekriterium für 3A (Gate)
 - **Kein offener Auth-/Tenant-Entscheidungspunkt mehr vor Start der Implementierung.**
@@ -186,16 +188,21 @@ Für Schritt 3A ist die „Keycloak-Integration Inputs v1“-Vorlage vollständi
 - Vor dem Start von Schritt 3 ist zusätzlich das **Implementation Playbook v1** vollständig anzuwenden:
   - `docs/development/implementation-playbook-v1.md`
 - Schritt 3 startet nur bei erfüllt dokumentierter **Definition of Ready (DoR)** für alle Work Packages des Vertical Slices.
+- Nachweis über `docs/development/step3-dor-checklist.md` ist verpflichtend.
 
 ## 10) Optimaler nächster Entwicklungsschritt (nach 3A)
 **Schritt 3: Implementierungsstart „Auth + Upload Vertical Slice“ (TDD, ohne Funktionslücken)**
 
 ### Einordnung „Frontend-Spezifikation“ vor Realisierung
-Eine zusätzliche, getrennte Frontend-Hauptspezifikation als weiteres Primärdokument wird bewusst **nicht** eingeführt (Vermeidung doppelter Wahrheiten).
-Stattdessen ist vor Realisierungsstart ein verbindlicher **Frontend/API-Contract-Check** gegen diese bestehenden Referenzen durchzuführen:
+Eine zusätzliche Frontend-Spezifikation ist als **ergänzende Umsetzungsspezifikation** zulässig, bleibt jedoch den v1-Primärspezifikationen untergeordnet.
+Verbindliche UI-Referenz für Phase 1:
+- `docs/product/frontend-ui-spec-v1.md`
+
+Der verbindliche **Frontend/API-Contract-Check** bleibt vor Realisierungsstart Pflicht gegen diese führenden Referenzen:
 - `docs/architecture/api-spec-v1.md`
 - `docs/security/security-spec-v1.md`
 - `docs/testing/test-spec-v1.md`
+- `docs/testing/frontend-api-contract-check-v1.md`
 
 **Abnahme für den Contract-Check:**
 - kein offener Endpoint-/Payload-/Fehlercode-Delta zwischen Frontend-Flows und API-Spezifikation,

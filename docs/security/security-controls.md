@@ -41,3 +41,9 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
   - Tenant-Isolation im Datenzugriff → Isolationstests API/DB/Export → `access.denied`
   - Upload-Validation → Edge-Fuzzing-Tests → `upload.rejected`
   - Idempotenzschutz bei Queueing → Replay-/Duplicate-Tests → `job.queue.publish`
+
+
+## Ergänzende Controls für Schritt 3A/3
+- Sicheres Fehlerprofil: standardisierte Fehlerobjekte mit `error_code`/`correlation_id`, ohne sensitive Interna.
+- Enumerationsschutz auf tenant-sensitiven Endpunkten (`403/404`-Verhalten gemäß API-Vertrag).
+- Verifikationspflicht über Abuse-Tests gegen verbose Fehlerantworten.

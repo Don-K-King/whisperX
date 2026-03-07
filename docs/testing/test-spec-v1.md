@@ -40,6 +40,11 @@ Diese Spezifikation definiert die verpflichtenden Test-Gates für die Realisieru
 - Manipulierte JWT claims/abgelaufene Tokens.
 - Prompt-/Instruction-Injection in Transcript-Content.
 - Retry-Storm/Poison-Message Verhalten mit DLQ.
+- Verbose Error Probing: keine Stacktraces/Secrets/tenant-fremden Existenzhinweise in 401/403/404/422-Responses.
+
+## Zusätzliche Sicherheits-Contract-Checks
+- Fehlerobjekt enthält immer `error_code` + `correlation_id`.
+- Tenant-sensitive Endpunkte werden auf Enumerationsresistenz getestet (neutrale Fehlerantworten).
 
 ## Regression
 - Für diese Dokumentationsänderung nicht erforderlich.
