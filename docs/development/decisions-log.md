@@ -8,3 +8,9 @@
 
 - ADR-0002 angenommen: Phase-1 Spezifikationsfreeze mit verbindlichen Fach-, API-, Event-, Datenmodell-, Security- und Test-Spezifikationen.
 - Konsequenz: Implementierungsstart nur über Vertical Slice `Auth + Upload` mit TDD- und Security-Gates.
+
+
+## 2026-03-07
+- ADR-0003 angenommen: Verbindliches Implementation Playbook v1 als Gate zwischen Spezifikationsphase und Implementierung.
+- Konsequenz: Schritt 3 startet nur bei vollständig erfüllter Definition of Ready (DoR) je Work Package.
+- Konsequenz: Threat→Control→Test-Traceability sowie reproduzierbare Build-/Test-Nachweise sind verpflichtende Freigabekriterien.

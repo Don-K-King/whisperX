@@ -90,3 +90,26 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 - API-Operationen vollständig mit AuthZ/Tenant/Validierung dokumentiert.
 - Datenentitäten vollständig mit Retention/Audit-Regeln dokumentiert.
 - Kritische Risiken mit Gegenmaßnahmen und Testfällen hinterlegt.
+
+
+## 7) Gate-Profile (CI-Blocker) je Entwicklungsschritt
+
+### Schritt 3 (Auth + Upload)
+- Pflicht-Gates: Lint/Schema, Unit, Integration, Contract, Security/Abuse.
+- Blocker: Jeder fehlgeschlagene Cross-Tenant-, Claim-Manipulations- oder Upload-Validation-Test.
+- Verantwortlich: API-Team + Security + QA.
+
+### Schritt 4 (Pipeline + Queue + Worker)
+- Pflicht-Gates: Lint/Schema, Unit, Integration, Contract, Security/Abuse, Regression.
+- Blocker: DLQ/Retry/Poison-Message-Resilience-Test schlägt fehl; Tenant-Fairness nicht erfüllt.
+- Verantwortlich: Worker-Team + Ops + QA.
+
+### Schritt 5 (Edit + Export)
+- Pflicht-Gates: Lint/Schema, Unit, Integration, Contract, Security/Abuse, E2E.
+- Blocker: XSS/Injection-/Export-AuthZ-Test fehlgeschlagen.
+- Verantwortlich: API/Frontend + Security + QA.
+
+### Schritt 6 (Retention + Compliance)
+- Pflicht-Gates: Lint/Schema, Unit, Integration, Security/Abuse, E2E/Operations-Drills, Regression.
+- Blocker: fehlender Audit-Nachweis für Löschpfade oder Restore-Konsistenzverletzung.
+- Verantwortlich: Ops + API + Security + QA.

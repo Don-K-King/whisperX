@@ -181,6 +181,12 @@ Für Schritt 3A ist die „Keycloak-Integration Inputs v1“-Vorlage vollständi
 - Ohne 3A entstehen vermeidbare Architekturkonflikte (inkonsistente Claims, instabile AuthZ-Policy, nachträgliche Tenant-Refactorings).
 - 3A reduziert Sicherheitsrisiken frühzeitig (falsche Audience-Prüfung, Claim-Vertrauen ohne Validierung, unklare Recovery bei Key-Rotation).
 
+
+### Verbindliche Ausführungsreferenz vor Implementierung
+- Vor dem Start von Schritt 3 ist zusätzlich das **Implementation Playbook v1** vollständig anzuwenden:
+  - `docs/development/implementation-playbook-v1.md`
+- Schritt 3 startet nur bei erfüllt dokumentierter **Definition of Ready (DoR)** für alle Work Packages des Vertical Slices.
+
 ## 10) Optimaler nächster Entwicklungsschritt (nach 3A)
 **Schritt 3: Implementierungsstart „Auth + Upload Vertical Slice“ (TDD, ohne Funktionslücken)**
 

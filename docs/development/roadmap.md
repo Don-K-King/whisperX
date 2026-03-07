@@ -10,6 +10,11 @@
 - Docker-Compose On-Prem Baseline bereitstellen
 - Infra-Edge-Tests: Hardening, Rate-Limit, Fehlkonfigurationsprüfungen
 
+## Schritt 2.5 (Gate)
+- Implementation Playbook v1 finalisieren und freigeben
+- DoR/DoD und Testqualitygates als CI-Blocker operationalisieren
+- Reproduzierbare Build-/Testumgebung inkl. Nachweisschema fixieren
+
 ## Schritt 3
 - Auth + Upload Skeleton TDD-implementieren
 - Tenant-Isolation-Tests und Retention-Basis einführen

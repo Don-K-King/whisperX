@@ -7,3 +7,14 @@
 ## Letzte Änderungen
 - 2026-03-06: Teststrategie um Edge-/Abuse-Tests pro Entwicklungsschritt erweitert (Dokumentationsänderung, keine Codepfade geändert, daher keine Regression ausgeführt).
 - 2026-03-06: Spezifikationsfreeze v1 (fachlich/API/Event/Datenmodell/Security/Test) dokumentiert; keine Implementierungsänderung, daher keine Runtime-Regression ausgeführt.
+
+
+## Vorlage Regressionseintrag (verbindlich für pflichtige Regressionen)
+- Datum/Zeit:
+- Release-Kandidat / Commit SHA:
+- Betroffener Änderungstyp (Pipeline/Build/Architektur/Struktur):
+- Testumgebung (Versionen + Container-Digests):
+- Ausgeführte Gate-Stufen:
+- Ergebnis je Gate:
+- Offene Risiken / Abweichungen:
+- Freigabe durch (Rolle/Name):

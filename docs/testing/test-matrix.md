@@ -12,3 +12,18 @@
 | Retention + Audit | Ja | Ja | Nein | Optional | Manipulation `retention_months`, Audit-Vollständigkeit | P0 | Muss grün |
 | Prompt-Injection-Resilienz | Ja | Ja | Nein | Optional | „Ignore instructions“-Payloads als Daten behandeln | P0 | Muss grün |
 | On-Prem Docker Betrieb | Nein | Ja | Nein | Optional | Fehlkonfig, offene Ports, Secret-Leaks | P1 | Muss grün |
+
+
+## Gate-Reihenfolge und Freigabenachweis
+1. Lint/Schema-Validation
+2. Unit
+3. Integration
+4. Contract
+5. Security/Abuse
+6. E2E/Regression (verpflichtend bei Pipeline/Build/Architektur/Strukturänderungen)
+
+### Nachweispflicht pro Gate
+- Verantwortliches Team
+- Verwendete Testumgebung
+- Commit SHA und Build-Artefakt
+- Ergebnis (Pass/Fail) und ggf. Risikoeinschätzung

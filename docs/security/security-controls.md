@@ -32,3 +32,12 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - AuthN/AuthZ: Contract + Integration.
 - Upload-Härtung: Edge-/Abuse-Tests.
 - Retention/Audit: Unit + Integration mit Nachweisfällen.
+
+
+## Control-to-Test-Mapping (verbindlich)
+- Jede sicherheitsrelevante Änderung benötigt eine Zuordnung: **Control → Testfall → Audit-Ereignis**.
+- Pflicht für Schritt 3:
+  - JWT- und Claim-Validierung → Auth-Abuse-Tests → `auth.denied`/`auth.accepted`
+  - Tenant-Isolation im Datenzugriff → Isolationstests API/DB/Export → `access.denied`
+  - Upload-Validation → Edge-Fuzzing-Tests → `upload.rejected`
+  - Idempotenzschutz bei Queueing → Replay-/Duplicate-Tests → `job.queue.publish`
