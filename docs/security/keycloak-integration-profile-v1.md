@@ -1,9 +1,9 @@
-# Keycloak-Integrationsprofil v1 (Schritt 3A Gate)
+# Keycloak-Integrationsprofil v1 (Schritt 3A)
 
 ## Status
 - **Dokumenttyp:** Verbindliches Sicherheits-/Integrationsprofil für AuthN/AuthZ.
-- **Geltung:** Schritt 3A Gate vor Implementierungsstart von Schritt 3.
-- **Freigabestatus:** In Prüfung, Sign-off ausstehend (siehe `docs/security/keycloak-integration-inputs-v1.md`).
+- **Geltung:** Technische Referenz für die Implementierung von Schritt 3.
+- **Freigabestatus:** Technisch abgestimmt, ohne personenbezogene Sign-off-Einträge.
 
 ## 1) Ziel und Scope
 Dieses Profil definiert die technische Integration zwischen Frontend/API und Keycloak für OIDC Authorization Code + PKCE in Phase 1.
@@ -97,8 +97,5 @@ Regeln:
 - Abuse: Claim-Manipulation, Cross-Tenant-Zugriffe, Replay
 - Contract: konsistente `401/403` mit normiertem Fehlerobjekt
 
-## 10) Sign-off
-- Security Lead: ☐ offen
-- API Lead: ☐ offen
-- Keycloak Lead: ☐ offen
-- Geplantes Sign-off-Datum: `YYYY-MM-DD`
+## 10) Abstimmhinweis
+- Dieses Dokument enthält keine personenbezogenen Sign-off-Einträge.

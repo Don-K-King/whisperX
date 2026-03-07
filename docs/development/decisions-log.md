@@ -18,3 +18,8 @@
 - Konsequenz: UI-Spezifikation in `docs/product/frontend-ui-spec-v1.md` als ergänzende Umsetzungsspezifikation eingeführt; API/Security/Test-v1 bleiben führende Primärreferenzen.
 - Governance ergänzt: Screenshot-Pflicht für UI/Design-Änderungen in `AGENTS.md` als DoD-relevantes PR-Kriterium verankert.
 
+
+
+## 2026-03-07
+- Schritt-3 Arbeitsdokumente auf neutrale technische Referenzen ohne formale Gate-/Freigabeentscheidungen umgestellt.
+- Personenbezogene Sign-off-Einträge aus den Keycloak-Integrationsvorlagen entfernt; Fokus auf technische Parameter und Sicherheitsanforderungen.
