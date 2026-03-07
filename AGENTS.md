@@ -110,3 +110,11 @@ PR-Beschreibung muss enthalten:
 - Testumfang inkl. Regression (falls verpflichtend)
 - Dokumentationsänderungen
 
+## 10) Verbindliche Screenshot-Pflicht bei UI/Design-Änderungen (Realisierungsphase)
+- Bei **jeder** Änderung an visuellen Komponenten (Layout, Styles, Komponenten, Interaktionen) müssen Screenshots im PR enthalten sein.
+- Mindestens ein Screenshot pro betroffenem Hauptscreen bzw. relevantem Zustand:
+  - Default-Zustand,
+  - Fehler-/Validierungszustand,
+  - responsive Darstellung (wenn die Änderung responsive Verhalten betrifft).
+- Wenn die Screenshot-Erstellung technisch nicht möglich ist, muss der PR eine kurze Begründung sowie nachvollziehbare Reproduktionsschritte enthalten.
+- Diese Pflicht ist Teil der DoD-Prüfung für Frontend-/UI-Tickets.
