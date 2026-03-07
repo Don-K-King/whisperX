@@ -44,3 +44,11 @@ Diese Spezifikation definiert die verpflichtenden Test-Gates für die Realisieru
 ## Regression
 - Für diese Dokumentationsänderung nicht erforderlich.
 - Für nachfolgende Architektur-/Pipeline-Implementierung verpflichtend (vollständige Regression).
+
+
+## State-Machine- und Idempotenz-Pflichttests (Schritt 3/4)
+- `POST /jobs/{id}/complete-upload` ist fachlich idempotent (kein Doppel-Queueing bei Wiederholung).
+- Ungültige Zustandsübergänge werden konsistent abgewiesen und auditierbar protokolliert.
+- Race Case: Upload finalisiert, Objekt fehlt im Storage → definierter Fehler ohne inkonsistenten Job-Status.
+- Duplicate Event Delivery führt nicht zu mehrfacher fachlicher Verarbeitung.
+- Reconciliation-Szenario bei Publish/Persist-Teilfehler wird getestet und dokumentiert.

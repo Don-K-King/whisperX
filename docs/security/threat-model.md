@@ -30,3 +30,12 @@
 ## Restrisiken
 - On-Prem Fehlkonfiguration bleibt möglich; wird durch Deployment-Gates und Runbooks reduziert.
 - Lastspitzen bei großen Medien können Latenzen erhöhen; durch Queue-Klassen + Skalierungsregeln begrenzt.
+
+
+## Threat-Traceability für Schritt 3 (Auth + Upload Vertical Slice)
+| Bedrohung | Control-Referenz | Test-Nachweis (Soll) | Audit-Nachweis |
+|---|---|---|---|
+| Claim-Manipulation / Role Escalation | JWT-Validierung + RBAC Default-Deny | AuthN/AuthZ Abuse-Tests (`iss/aud/exp`, manipulierte Claims) | `auth.denied` mit `reason` |
+| Cross-Tenant Zugriff | Tenant-Scoped Query Guards | Integration/E2E Tenant-Isolation-Tests | `access.denied` mit `tenant_id` |
+| Upload MIME/Extension Spoofing | MIME+Magic-Bytes + Größenlimits | Upload-Fuzzing/Validation-Tests | `upload.rejected` mit Validierungsgrund |
+| Replay auf `complete-upload` | Idempotency-Key + fachliche Idempotenzprüfung | Integrationstest wiederholte Requests | `job.queue.publish` mit idempotency_status |

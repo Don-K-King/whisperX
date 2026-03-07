@@ -177,3 +177,25 @@ Fehlercodes: `400, 401, 403`.
 - `format`: enum `txt|json|srt|vtt`.
 - `language`: ISO-639-1 sofern gesetzt.
 - Pfad-/Header-Injections, Nullbytes, doppelte Extensions werden verworfen.
+
+
+## Verbindliche Job-Zustandsmaschine (State Machine)
+### Zustände
+`created` → `upload_pending` → `uploaded` → `queued` → `processing` → `completed`
+
+Fehlerpfade:
+- `processing` → `failed_retryable` → `queued` (bei Retry)
+- `processing` → `failed_terminal` (nach Retry-Limit)
+
+### Erlaubte Übergänge
+- `POST /jobs`: `created`/`upload_pending`
+- `POST /jobs/{id}/complete-upload`: `uploaded` → `queued`
+- Worker Start: `queued` → `processing`
+- Worker Erfolg: `processing` → `completed`
+- Worker Fehler: `processing` → `failed_retryable|failed_terminal`
+
+### Idempotenz- und Race-Condition-Regeln
+- Requests mit identischem `Idempotency-Key` und semantisch gleichem Payload müssen dieselbe fachliche Wirkung liefern.
+- Wiederholte `complete-upload`-Aufrufe dürfen keine zweite Queue-Publikation erzeugen.
+- Falls Objekt im Storage fehlt, ist `complete-upload` mit konsistentem Fehler zu beantworten (`409/422` je Ursache), ohne Statuskorruption.
+- DB-Statuswechsel und Event-Publikation sind so auszuführen, dass bei Teilfehlern Recovery ohne Doppelverarbeitung möglich ist (Outbox-/Reconciliation-Prinzip).

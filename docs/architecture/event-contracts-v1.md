@@ -114,3 +114,10 @@ Payload:
 - Backoff: `2^n * base_delay` mit Jitter.
 - DLQ Event enthält Original-Event + Fehlerkontext.
 - DLQ-Verarbeitung nur durch Admin-Betriebsprozess, vollständig auditierbar.
+
+
+## Lebenszyklus- und Duplikatregeln (verbindlich)
+- `job.queued` darf pro fachlichem Upload-Abschluss nur einmal als wirksames Event verarbeitet werden.
+- Consumer müssen Duplikate anhand `event_id` und idempotenter Geschäftsregeln erkennen und neutral verarbeiten.
+- Bei Teilfehlern zwischen Persistenz und Publish ist ein Reconciliation-Lauf verpflichtend.
+- Reihenfolgegarantie ist nicht global, daher müssen Handler zustandsbasiert gegen verfrühte/späte Events robust sein.

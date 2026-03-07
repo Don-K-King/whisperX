@@ -12,3 +12,9 @@
 - DLQ-Einträge > 0
 - wiederholte AuthZ-Fehler (potenziell Angriff)
 - ausstehende Retention-Löschungen
+
+
+## Reproduzierbarkeits-Metriken
+- Build-Provenance vollständig vorhanden (ja/nein)
+- Drift zwischen Soll- und Ist-Versionen (Toolchain/Images)
+- Wiederholbarkeit kritischer Testläufe (Passrate in Referenzumgebung)
