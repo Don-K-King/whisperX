@@ -18,5 +18,3 @@
 - Konsequenz: UI-Spezifikation in `docs/product/frontend-ui-spec-v1.md` als ergänzende Umsetzungsspezifikation eingeführt; API/Security/Test-v1 bleiben führende Primärreferenzen.
 - Governance ergänzt: Screenshot-Pflicht für UI/Design-Änderungen in `AGENTS.md` als DoD-relevantes PR-Kriterium verankert.
 
-- Decision Update: Die frühere Planungsformulierung „kein separates Frontend-Primärdokument“ bleibt gültig; `docs/product/frontend-ui-spec-v1.md` ist explizit als ergänzende Umsetzungsspezifikation unter den v1-Primär-Contracts eingeordnet.
-- Schritt-3A-Artefakte und DoR/Contract-Check-Nachweise als verbindliche Startdokumente eingeführt (`keycloak-integration-profile-v1`, `keycloak-integration-inputs-v1`, `step3-dor-checklist`, `frontend-api-contract-check-v1`).
