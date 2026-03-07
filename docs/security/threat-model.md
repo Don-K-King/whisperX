@@ -46,3 +46,36 @@
 | Bedrohung | Control-Referenz | Test-Nachweis (Soll) | Audit-Nachweis |
 |---|---|---|---|
 | Error Information Disclosure | Sicheres Fehlerprofil + Enumerationsschutz | Verbose-Error-Abuse-Tests auf 401/403/404/422 | `authz.deny`/`request.rejected` mit `correlation_id` |
+
+
+## Ergänzung 2026-03-07 – Adapter-Layer Risiken
+- **Threat:** Manipulation/Replay auf `POST /api/v1/jobs` durch fehlenden oder wiederverwendeten Idempotency-Key.
+  - **Control:** Pflichtheader + tenant-scoped Idempotenzspeicher mit Payload-Hash-Konflikterkennung.
+  - **Test:** `tests/test_job_create_service.py` (Konfliktfall), `tests/test_fastapi_http_adapter_integration.py` (HTTP-Pfad).
+- **Threat:** Tenant-Leak über Objektpfadbildung im Upload-Storage.
+  - **Control:** Objekt-Key-Template `tenant/<tenant_id>/<job_id>/<filename>` ausschließlich serverseitig.
+  - **Test:** `tests/test_job_infra_adapters.py` (tenant-scoped key assertion).
+- **Threat:** Nicht-auditierbare Sicherheitsereignisse im neuen Adapter-Layer.
+  - **Control:** Append-only JSONL Audit-Logger mit Pflichtfeldern und Zeitstempel.
+  - **Test:** `tests/test_job_infra_adapters.py` (Audit append verification).
+
+
+## Ergänzung 2026-03-07 – WP-3.3 Risiken
+- **Threat:** Doppel-Queueing/Replay bei wiederholtem `complete-upload`.
+  - **Control:** tenant-scoped Idempotenzstore mit Payload-Hash-Bindung.
+  - **Test:** `tests/test_complete_upload_service.py` (repeat + conflict).
+- **Threat:** Inkonsistenz zwischen Statuswechsel und Queue-Publish.
+  - **Control:** Outbox-Persistenz + separater Dispatcher.
+  - **Test:** `tests/test_complete_upload_infrastructure.py` (dispatch + mark_published).
+- **Threat:** Information Disclosure bei tenant-fremder Job-ID.
+  - **Control:** tenant-scoped Lookup mit neutralem `job.not_found`.
+  - **Test:** `tests/test_complete_upload_service.py` (cross-tenant deny).
+
+
+## Ergänzung 2026-03-07 – WP-3.4 Risiken
+- **Threat:** Enumerationsangriffe auf Job-IDs über Statusendpoint.
+  - **Control:** tenant-scoped Lookup + neutrales `job.not_found`.
+  - **Test:** `tests/test_job_status_service.py` (cross-tenant not found).
+- **Threat:** Unklare Status-/Progress-Semantik führt zu fehlerhaften Operator-Entscheidungen.
+  - **Control:** normierte Fallback-Progresslogik und explizites Response-Mapping.
+  - **Test:** `tests/test_job_status_service.py`, `tests/test_job_status_http_adapter.py`.

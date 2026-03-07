@@ -121,3 +121,18 @@ Payload:
 - Consumer müssen Duplikate anhand `event_id` und idempotenter Geschäftsregeln erkennen und neutral verarbeiten.
 - Bei Teilfehlern zwischen Persistenz und Publish ist ein Reconciliation-Lauf verpflichtend.
 - Reihenfolgegarantie ist nicht global, daher müssen Handler zustandsbasiert gegen verfrühte/späte Events robust sein.
+
+
+## Event `job.queued` – Konkretisierung für WP-3.3
+Pflichtfelder:
+- `event_type`: `job.queued`
+- `tenant_id`
+- `job_id`
+- `queue`
+- `object_key`
+- `checksum_sha256`
+- `upload_session_id`
+
+Semantik:
+- Event wird initial in Outbox persistiert und danach in Broker publiziert.
+- Wiederholte `complete-upload`-Requests mit identischem Idempotency-Key erzeugen kein Duplikat-Event.
