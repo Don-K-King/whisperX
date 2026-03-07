@@ -147,8 +147,54 @@ Die Anforderungsbasis für Phase 1 wurde in verbindliche Spezifikationen überf�
 4. Kritische Security-Risiken mit Gegenmaßnahmen und Verifikation hinterlegt.
 5. Happy Path + Edge/Abuse-Pfade in Test-Spezifikation abgedeckt.
 
-## 9) Optimaler nächster Entwicklungsschritt (jetzt starten)
+## 9) Verbindlicher vorgeschalteter Teilschritt 3A: AuthN/AuthZ-Spezifikationsklärung
+**Schritt 3A (Gate vor Schritt 3): Vollständige Klärung der AuthN/AuthZ-Spezifikation für die Implementierung.**
+
+### Ziel
+Vor Start des Implementierungsschritts 3 werden alle offenen Entscheidungen für Authentifizierung, Autorisierung und Tenant-Isolation verbindlich geklärt, dokumentiert und von Keycloak-Team sowie API-Team freigegeben.
+
+### Verbindliche Lieferobjekte für 3A
+1. **Keycloak-Integrationsprofil v1** (Realm, Clients, Flows, Token-Laufzeiten, JWKS/Issuer/Audience).
+2. **Rollen-/Claim-Mapping v1** (`user`, `reviewer`, `admin`, `tenant_id`) inkl. **Default-Deny-Regeln**.
+3. **Fehler- und Recovery-Verhalten** für Auth-Fälle (401/403, Token-Expiry, Key-Rotation, Clock-Skew).
+4. **Security-Testgates für AuthN/AuthZ** (Claim-Manipulation, Cross-Tenant-Zugriffe, Replay).
+
+### Verbindliche Inputs / Abstimmungsvorlage (auszufüllen + freizugeben)
+Für Schritt 3A ist die „Keycloak-Integration Inputs v1“-Vorlage vollständig und ohne Platzhalter durch Keycloak-Team und API-Team zu befüllen. Dazu gehören insbesondere:
+- Metadaten, Ownership, SLA und **beidseitiger Sign-off**.
+- Realm-/Client-Parameter je Umgebung (dev/stage/prod), Redirect-/Logout-URIs, Web Origins, Scopes.
+- Issuer/JWKS/Audience, Token-Policies, NotBefore, Clock-Skew, Key-Rotation-Strategie.
+- Exakte Claim-Spezifikation inkl. Tenant-Quellen, Konfliktregeln und Beispiel-JWTs (user/reviewer/admin je Tenant).
+- Mandantenmodell/Admin-Scope, MFA/Step-up, Session/Logout/Revocation, Audit-Korrelation.
+- Nicht-produktive Testzugänge, Betriebs-/Eskalationskontakte, offene Risiken mit Zieltermin.
+
+### Referenzen auf bestehende Spezifikationen
+- `docs/architecture/api-spec-v1.md`
+- `docs/security/security-spec-v1.md`
+- `docs/testing/test-spec-v1.md`
+
+### Abnahmekriterium für 3A (Gate)
+- **Kein offener Auth-/Tenant-Entscheidungspunkt mehr vor Start der Implementierung.**
+- Schritt 3 darf erst starten, wenn alle Pflichtfelder der Abstimmungsvorlage befüllt sind, die JWT-Beispiele pro Tenant vorliegen, sicherheitsrelevante Parameter bestätigt sind und der Sign-off von Keycloak-Team + API-Team vorliegt.
+
+### Architektur- und Security-Hinweis
+- Ohne 3A entstehen vermeidbare Architekturkonflikte (inkonsistente Claims, instabile AuthZ-Policy, nachträgliche Tenant-Refactorings).
+- 3A reduziert Sicherheitsrisiken frühzeitig (falsche Audience-Prüfung, Claim-Vertrauen ohne Validierung, unklare Recovery bei Key-Rotation).
+
+## 10) Optimaler nächster Entwicklungsschritt (nach 3A)
 **Schritt 3: Implementierungsstart „Auth + Upload Vertical Slice“ (TDD, ohne Funktionslücken)**
+
+### Einordnung „Frontend-Spezifikation“ vor Realisierung
+Eine zusätzliche, getrennte Frontend-Hauptspezifikation als weiteres Primärdokument wird bewusst **nicht** eingeführt (Vermeidung doppelter Wahrheiten).
+Stattdessen ist vor Realisierungsstart ein verbindlicher **Frontend/API-Contract-Check** gegen diese bestehenden Referenzen durchzuführen:
+- `docs/architecture/api-spec-v1.md`
+- `docs/security/security-spec-v1.md`
+- `docs/testing/test-spec-v1.md`
+
+**Abnahme für den Contract-Check:**
+- kein offener Endpoint-/Payload-/Fehlercode-Delta zwischen Frontend-Flows und API-Spezifikation,
+- keine offene AuthN/AuthZ- oder Tenant-Unklarheit im Frontend-Flow,
+- Testfälle für Happy Path + Edge/Abuse vollständig auf den Vertical Slice gemappt.
 
 ### Ziel
 Ein minimaler, produktionsnaher End-to-End-Flow im Tenant-Scope:
