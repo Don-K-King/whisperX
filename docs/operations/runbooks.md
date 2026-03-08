@@ -80,3 +80,68 @@
   - `RETENTION_SCHEDULER_HEARTBEAT_SECONDS`
 - Fail-fast-Check: Start muss fehlschlagen, wenn `heartbeat >= lease_ttl` oder Pflichtparameter fehlen.
 - Betreiberhinweis: `lock_owner` muss pro Instanz stabil/eindeutig sein (z. B. Pod/Host + PID).
+
+## 2026-03-08 – Runbook: Dedizierter Retention-Scheduler-Runner
+### Startkommando (dedizierter Prozess)
+```bash
+python -m evodox.runtime.retention_scheduler_runner
+```
+
+### Pflicht-ENVs
+- `RETENTION_DB_PATH` (Pfad zur produktiven SQLite-Datei, kein `:memory:`)
+- `RETENTION_SCHEDULER_LOCK_OWNER` (stabiler eindeutiger Owner pro Instanz)
+- `RETENTION_SCHEDULER_INTERVAL_SECONDS` (>0)
+- `RETENTION_SCHEDULER_BATCH_SIZE` (>0)
+- `RETENTION_SCHEDULER_LEASE_TTL_SECONDS` (>0)
+- `RETENTION_SCHEDULER_HEARTBEAT_SECONDS` (>0 und `< RETENTION_SCHEDULER_LEASE_TTL_SECONDS`)
+
+### Shutdown-/Recovery-Verhalten
+1. Bei `SIGTERM`/`SIGINT` setzt der Runner einen kontrollierten Stop-Request und beendet den aktuellen Tick zuerst.
+2. Es werden keine neuen Ticks gestartet, sobald Shutdown angefordert wurde.
+3. Lease-Zustand bleibt konsistent, da laufende Ticks regulär über `mark_ran(...)` abschließen; Crash-Fälle werden über TTL-Recovery abgefangen.
+4. Bei Startfehlern durch Konfiguration bricht der Prozess fail-fast mit Exit-Code `2` ab und schreibt strukturierte Fehl-Logs ohne Secret-Ausgabe.
+
+### Betriebsrisiko / Architekturkonflikt
+- Ein eingebetteter Scheduler im API-Prozess koppelt API-Liveness und Retention-Liveness ungewollt.
+- Der dedizierte Runner entkoppelt Verantwortlichkeiten und erlaubt horizontale Skalierung mit eindeutigen Lease-Ownern.
+
+## 2026-03-08 – Bootstrap-Runbook: Produktiver Retention-Runner-Entrypoint
+### Zusätzliche Pflicht-ENVs für produktives Wiring
+- `RETENTION_TENANT_IDS` (CSV erlaubter Tenant-IDs für Retention-Job)
+- `RETENTION_AUDIT_LOG_PATH` (Pfad zur JSONL-Auditdatei)
+- `RETENTION_OBJECT_STORAGE_ROOT` (Root-Verzeichnis für lokale Objektlöschung)
+- Optional:
+  - `RETENTION_POLICY_MIN_MONTHS` (Default `1`)
+  - `RETENTION_POLICY_MAX_MONTHS` (Default `120`)
+  - `RETENTION_POLICY_FALLBACK_MONTHS` (Default `12`)
+  - `RETENTION_SCHEDULER_MAX_TICKS` (nur für kontrollierte Smoke-Starts/Testbetrieb)
+
+### Validierungs-/Fail-Fast-Regeln
+1. Start bricht mit Exit-Code `2` ab, wenn Tenant-Liste, Audit-Log-Pfad oder Storage-Root fehlen.
+2. Start bricht mit Exit-Code `2` ab, wenn Policy-Grenzen inkonsistent sind (`max < min` oder `fallback` außerhalb der Grenzen).
+3. Start bricht mit Exit-Code `2` ab, wenn Runtime-Settings ungültig sind (z. B. fehlender Lock-Owner, ungültige TTL/Heartbeat-Kombination).
+
+### Security-Hinweis (Dateisystem-Löschung)
+- Objektlöschung ist auf `RETENTION_OBJECT_STORAGE_ROOT` begrenzt; Prefix-Path-Traversal außerhalb des Roots wird verworfen.
+
+## 2026-03-08 – Runbook: Storage-Backend-Strategie und Preflight
+### Backend-Auswahl
+- `RETENTION_OBJECT_STORAGE_BACKEND=filesystem`
+  - Pflicht: `RETENTION_OBJECT_STORAGE_ROOT`
+- `RETENTION_OBJECT_STORAGE_BACKEND=s3`
+  - Pflicht: `RETENTION_OBJECT_STORAGE_S3_BUCKET`, `RETENTION_OBJECT_STORAGE_S3_ENDPOINT`, `RETENTION_OBJECT_STORAGE_S3_REGION`, `RETENTION_OBJECT_STORAGE_S3_ACCESS_KEY`, `RETENTION_OBJECT_STORAGE_S3_SECRET_KEY`
+  - Optional: `RETENTION_OBJECT_STORAGE_S3_FORCE_PATH_STYLE=true` (für MinIO empfohlen)
+
+### Deployment-Preflight (vor Container-Start)
+```bash
+RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_runner
+```
+- Exit `0`: Konfiguration gültig.
+- Exit `2`: Pflichtparameter/Regeln verletzt; Deployment abbrechen.
+
+### Recovery-Governance
+- Aktuelle Mapping-Version: `RETENTION_RECOVERY_MAPPING_VERSION=v1`.
+- Unterstützte Failure-Klassen in `v1`:
+  - `storage_delete_failed`
+  - `db_mark_failed`
+- Unbekannte Klassen werden absichtlich **nicht** als recovered markiert (fail-safe) und verbleiben im Retry-Backlog bis Governance-Update.
