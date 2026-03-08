@@ -107,3 +107,15 @@ Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
 - `transcript/transcript_version`: löschbar erst bei Job-Retention, Audit-Event Pflicht.
 - `export_artifact`: löschen nach Retention oder expliziter Löschanforderung, Audit-Event Pflicht.
 - `audit_event`: nicht vor Compliance-Frist löschen (separate Policy, nicht Nutzer-überschreibbar).
+
+
+## WP-4 Statuspräzisierung
+- Job-Statuswerte für Worker-Lifecycle werden präzisiert auf: `upload_pending|uploaded|queued|processing|completed|failed_retryable|failed_terminal|retention_due|deleted`.
+- Retry-Pfad: `processing -> failed_retryable -> queued`.
+- Terminal-Pfad: `processing -> failed_terminal` (kein automatisches Requeue).
+
+
+## WP-5 Präzisierung
+- `transcript.current_version` ist monotonic steigend und Grundlage für Optimistic Locking.
+- `transcript_version.version_number` wird je erfolgreichem Edit um genau `+1` erhöht; Konflikte erzeugen keinen Schreibvorgang.
+- `export_artifact.format` bleibt strikt `txt|json|srt|vtt`; nicht erlaubte Formate sind fachlich ungültig.

@@ -34,3 +34,11 @@
 - Implementierungsfortschritt Schritt 3 (WP-3.3): `complete-upload` mit idempotentem Queueing, tenant-scoped Objektprüfung und Outbox-basierter Publish-Strategie ergänzt.
 
 - Implementierungsfortschritt Schritt 3 (WP-3.4): tenant-sicherer Job-Statusabruf (`GET /jobs/{id}`) mit Progress- und Retention-Information ergänzt.
+
+## 2026-03-08
+- Implementierungsfortschritt Schritt 4 (WP-4.1): Outbox-Dispatcher um RabbitMQ-Publisher-Adapter, Retry/Backoff mit Jitter, DLQ-Routing und Duplicate-Delivery-Handling erweitert.
+- Betreiberrelevante Monitoring-Erweiterung: Metrik-Hooks für Queue-Lag, Retry-Rate, DLQ-Count und Duplicate-Events in der Queue-Dispatch-Pipeline ergänzt.
+
+- Implementierungsfortschritt Schritt 4 (WP-4.2/WP-4.3): Worker-Processing-Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz sowie Tenant-Fairness/Backpressure-Policy ergänzt.
+
+- Implementierungsfortschritt Schritt 5 (WP-5.1/WP-5.2): Transkript-Versionierung mit Optimistic Locking und sichere Export-Pipeline (`txt|json|srt|vtt`) im Tenant-Kontext ergänzt.

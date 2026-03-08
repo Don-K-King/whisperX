@@ -12,6 +12,14 @@ from evodox.jobs.complete_upload_service import (
 )
 from evodox.jobs.create_service import CreateJobInput, ValidationError, create_job
 from evodox.jobs.get_job_status_service import JobStatusNotFoundError, get_job_status
+from evodox.jobs.transcript_service import (
+    TranscriptConflictError,
+    TranscriptValidationError,
+    UpdateTranscriptInput,
+    get_transcript,
+    update_transcript,
+)
+from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,18 @@ def map_job_status_response(response: Any) -> dict[str, Any]:
     }
 
 
+def map_transcript_response(response: Any) -> dict[str, Any]:
+    return {"job_id": response.job_id, "version": response.version, "segments": response.segments}
+
+
+def map_transcript_update_response(response: Any) -> dict[str, Any]:
+    return {"job_id": response.job_id, "version": response.version, "saved_at": response.saved_at}
+
+
+def map_export_response(response: Any) -> dict[str, Any]:
+    return {"export_id": response.export_id, "status": response.status}
+
+
 def create_fastapi_app(
     *,
     settings: FastAPIAdapterSettings,
@@ -62,6 +82,8 @@ def create_fastapi_app(
     object_storage: Any,
     outbox: Any,
     queue_policy: QueueSelectionPolicy | None = None,
+    transcript_repository: Any | None = None,
+    export_artifact_store: Any | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException
@@ -84,6 +106,21 @@ def create_fastapi_app(
         upload_session_id: str = Field(min_length=1)
         object_key: str = Field(min_length=1)
         checksum_sha256: str = Field(min_length=64, max_length=64)
+
+
+    class TranscriptUpdateSegment(BaseModel):
+        segment_id: str = Field(min_length=1)
+        speaker: str = Field(min_length=1, max_length=32)
+        text: str = Field(min_length=1, max_length=5000)
+
+    class TranscriptUpdatePayload(BaseModel):
+        base_version: int
+        segments: list[TranscriptUpdateSegment]
+        edit_reason: str = Field(min_length=3, max_length=255)
+
+    class ExportPayload(BaseModel):
+        format: str
+        transcript_version: int
 
     def _require_auth(authorization: str | None):
         if not authorization or not authorization.lower().startswith("bearer "):
@@ -195,5 +232,100 @@ def create_fastapi_app(
             ) from exc
         except JobStatusNotFoundError as exc:
             raise HTTPException(status_code=404, detail={"error_code": exc.error_code}) from exc
+
+    @app.get("/api/v1/jobs/{job_id}/transcript")
+    def get_job_transcript(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = get_transcript(tenant_id=auth_context.tenant_id, job_id=job_id, transcript_repo=transcript_repository)
+            return map_transcript_response(result)
+        except AuthzError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
+            ) from exc
+        except TranscriptValidationError as exc:
+            status_code = 404 if exc.error_code == "transcript.not_found" else 422
+            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+
+    @app.put("/api/v1/jobs/{job_id}/transcript")
+    def put_job_transcript(
+        job_id: str,
+        payload: TranscriptUpdatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = update_transcript(
+                UpdateTranscriptInput(
+                    job_id=job_id,
+                    base_version=payload.base_version,
+                    segments=[item.model_dump() for item in payload.segments],
+                    edit_reason=payload.edit_reason,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                audit_log=audit_log,
+            )
+            return map_transcript_update_response(result)
+        except AuthzError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
+            ) from exc
+        except TranscriptConflictError as exc:
+            raise HTTPException(status_code=409, detail={"error_code": exc.error_code}) from exc
+        except TranscriptValidationError as exc:
+            status_code = 404 if exc.error_code == "transcript.not_found" else 422
+            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/export")
+    def post_job_export(
+        job_id: str,
+        payload: ExportPayload,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None or export_artifact_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "export.unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = queue_export(
+                ExportRequestInput(
+                    job_id=job_id,
+                    transcript_version=payload.transcript_version,
+                    format=payload.format,
+                    idempotency_key=idempotency_key or "",
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                export_store=export_artifact_store,
+                audit_log=audit_log,
+            )
+            return map_export_response(result)
+        except AuthzError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
+            ) from exc
+        except ExportValidationError as exc:
+            status_code = 404 if exc.error_code == "export.transcript_not_found" else 422
+            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+
 
     return app

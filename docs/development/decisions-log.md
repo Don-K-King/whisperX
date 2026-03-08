@@ -66,3 +66,26 @@
 - Progress-Rückgabe normiert: expliziter `progress` aus Datenquelle oder statusbasierter Fallback (`completed`=100, sonst 0).
 - Retention-Information wird als `retention_until` aus `created_at` und `retention_months` abgeleitet.
 - Architekturkonflikt adressiert: einfache Endpoint-Implementierung vs. wartbarer Read-Service; Entscheidung zugunsten separater Service-Schicht.
+
+
+## 2026-03-08 – WP-4.1 Implementierung: Queue Routing + Retry/DLQ Governance
+- Outbox-Dispatcher auf Governance-Modell erweitert: Retryable vs. Terminal Fehlerklassifikation, Backoff mit Jitter und DLQ-Routing bei Terminal-/Retry-Exhaustion-Fällen.
+- Duplicate-Delivery wird als erwarteter Zustand behandelt und idempotent als bereits verarbeitet markiert (kein DLQ, kein erneuter Publish).
+- Architekturkonflikt adressiert: direkte Broker-Kopplung in Business-Services wurde verworfen; stattdessen bleibt Outbox/Dispatcher als entkoppelte Reliability-Schicht bestehen.
+- RabbitMQ-Anbindung über dedizierten Infrastruktur-Adapter (`RabbitMQQueuePublisher`) umgesetzt, inkl. persistenter Messages und Routing-Key-gebundenem Queue-Binding.
+
+
+## 2026-03-08 – WP-4.2/4.3 Implementierung: Worker-Pipeline + Tenant-Fairness
+- Worker-Verarbeitungskette (`ASR -> Alignment -> Diarization`) als separater Applikationsservice umgesetzt; Fachlogik bleibt von Broker-Implementierung entkoppelt.
+- Sicherheitskontrolle ergänzt: Worker akzeptiert nur tenant-/job-scoped Objektpfade (`tenant/<tenant_id>/<job_id>/...`), Scope-Verletzungen werden terminal abgewiesen.
+- Fehlerklassifikation für Worker-Lauf explizit: retryable Fehler führen zu `failed_retryable`, terminale Fehler zu `failed_terminal`.
+- Tenant-Fairness + Backpressure als eigene Policy mit globalen/per-tenant Inflight-Limits und Round-Robin-Scheduling ergänzt.
+- Architekturentscheidung über ADR-0005 dokumentiert (`/docs/adr/ADR-0005-worker-pipeline-fairness-backpressure.md`).
+
+
+## 2026-03-08 – WP-5.1/5.2 Implementierung: Transcript-Versionierung + Export-Pipeline
+- Optimistic Locking für Transcript-Edits umgesetzt (`base_version`), Konflikte führen deterministisch zu `transcript.version_conflict`.
+- Architekturkonflikt adressiert: globale Locks wurden verworfen; Versionierung per compare-and-swap verbessert Skalierbarkeit und verhindert Lost Updates.
+- Export-Service ergänzt mit Format-Validation (`txt|json|srt|vtt`) und tenant-scoped Transcript-Read als AuthZ-Schutz auf Datenebene.
+- Security-Härtung: textbasierte Exportformate escapen untrusted Inhalte, um XSS/Markup-Injection-Risiken zu reduzieren.
+- Architekturentscheidung über ADR-0006 dokumentiert (`/docs/adr/ADR-0006-transcript-versionierung-und-export-pipeline.md`).

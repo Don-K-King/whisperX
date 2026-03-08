@@ -59,3 +59,25 @@
 - Unit/Integration: `tests/test_job_status_service.py` (tenant-scoped read, progress fallback, not-found ohne Leak).
 - Contract/Core HTTP: `tests/test_job_status_http_adapter.py` (Response-Mapping).
 - Integration (HTTP/optional): `tests/test_fastapi_http_adapter_integration.py` ergänzt um GET-Status-Fall.
+
+
+## WP-4.1 Nachweis (Queue Routing + Retry/DLQ Governance)
+- Unit/Integration: `tests/test_complete_upload_infrastructure.py` deckt Retry/Backoff+Jitter, DLQ-Routing, Duplicate-Delivery-Handling und Dispatcher-Statusübergänge ab.
+- Infrastruktur/Adapter: `tests/test_job_infra_adapters.py` prüft RabbitMQ-Adapter-Fehlerabbildung auf Retryable-Fehlerklasse.
+- Regression: vollständiger `unittest`-Discover-Lauf über `tests/` nach struktureller Infrastrukturänderung durchgeführt.
+
+
+## WP-4.2 Nachweis (Worker Processing Chain)
+- Unit/Integration: `tests/test_worker_pipeline_service.py` prüft Happy Path, malformed-media Terminalpfad, retryable Fehlerpfad und tenant-scope Object-Key-Abuse-Fall.
+
+## WP-4.3 Nachweis (Tenant-Fairness + Backpressure)
+- Unit/Integration: `tests/test_tenant_fairness_policy.py` prüft globale/per-tenant Backpressure und starvation-armes Round-Robin-Scheduling.
+
+
+## WP-5.1 Nachweis (Transcript-Versionierung)
+- Unit/Integration: `tests/test_transcript_service.py` deckt Read, optimistic-lock Konflikt und Abuse-Fall (ungültige Segmenttexte) ab.
+- Contract/Core HTTP: `tests/test_transcript_http_adapter.py` prüft Mapping für GET/PUT-Transcript-Responses.
+
+## WP-5.2 Nachweis (Export-Pipeline)
+- Unit/Integration: `tests/test_export_service.py` deckt Export-Queueing, SRT-Rendering und Format-Validierung ab.
+- Contract/Core HTTP: `tests/test_export_http_adapter.py` prüft Mapping des Export-Responseschemas.
