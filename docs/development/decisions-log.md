@@ -89,3 +89,19 @@
 - Export-Service ergänzt mit Format-Validation (`txt|json|srt|vtt`) und tenant-scoped Transcript-Read als AuthZ-Schutz auf Datenebene.
 - Security-Härtung: textbasierte Exportformate escapen untrusted Inhalte, um XSS/Markup-Injection-Risiken zu reduzieren.
 - Architekturentscheidung über ADR-0006 dokumentiert (`/docs/adr/ADR-0006-transcript-versionierung-und-export-pipeline.md`).
+
+
+## 2026-03-08 – WP-6.1 Implementierung: Retention Enforcement Job
+- Retention-Policy als separater Resolver umgesetzt (`RetentionPolicyResolver`) mit Tenant-Default, globalen Grenzen und Clamping bei manipulierten Werten.
+- Periodischer Enforcement-Service (`RetentionEnforcementJob`) eingeführt, der tenant-scoped Kandidaten verarbeitet und Lösch-/Skip-Entscheidungen auditiert.
+- Harte Tenant-Isolation in Infrastrukturadaptern ergänzt: Candidate-Query und Delete/Anonymize-Update nutzen verpflichtend `(tenant_id, job_id)`.
+- Architekturkonflikt adressiert: direkte Endpoint-Löschung verworfen; stattdessen entkoppelter Worker/Job-Service für skalierbaren Batch-Betrieb.
+- Referenz: ADR-0007 (`/docs/adr/ADR-0007-retention-enforcement-worker.md`).
+
+
+## 2026-03-08 – WP-6.2 Implementierung: Restore + Konsistenzprüfung
+- Kritischer Architekturhinweis vorgezogen umgesetzt: `RetentionScheduler` ergänzt (Intervallsteuerung + idempotenter Retry-Recovery-Pfad je Teilfehlerklasse).
+- Restore-Workflow als eigener Applikationsservice (`execute_restore`) implementiert, inkl. deterministischer Tabellen-Reihenfolge und tenant-scope Guards für Request/Object-Keys.
+- Konsistenzprüfung nach Restore (`RestoreConsistencyChecker`) validiert Referenzen `Job ↔ Transcript ↔ Export ↔ Audit` und meldet Findings als expliziten Status.
+- Architekturkonflikt adressiert: ad-hoc Restore-Skripte wurden verworfen; stattdessen strukturierter Workflow mit Audit und prüfbarem Ergebnis.
+- Referenz: ADR-0008 (`/docs/adr/ADR-0008-retention-scheduler-und-tenant-restore-konsistenz.md`).

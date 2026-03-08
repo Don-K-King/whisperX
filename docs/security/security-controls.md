@@ -107,3 +107,19 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Export-Format ist strikt allowlisted (`txt|json|srt|vtt`); unbekannte Formate werden geblockt.
 - Textbasierte Exportformate behandeln Transcript-Inhalte als Daten (Escaping), um XSS-/Markup-Injection zu erschweren.
 - Tenant-scoped Transcript-Lookup vor Export verhindert Cross-Tenant-Datenabfluss.
+
+
+## WP-6.1 Kontrollkonkretisierung (Retention Enforcement)
+- Retention-Resolver validiert Eingabewerte strikt (Integer-Pflicht) und begrenzt auf globale Min/Max-Werte, um manipulierte Fristen zu neutralisieren.
+- Löschpfad ist tenant-scoped verpflichtend (`tenant_id` + `job_id`), Candidate- und Execution-Query ohne Tenant-Kontext sind unzulässig.
+- Clock-Skew-Toleranz reduziert Risiko verfrühter Löschung bei Zeitdrift zwischen Worker und Datenquelle.
+- Jede Entscheidung/Ausführung wird auditiert (`retention.decision`, `retention.execution`, `retention.execution.failed`) zur forensischen Nachvollziehbarkeit.
+- Teilfehler werden explizit als Sicherheits-/Betriebsrisiko behandelt und dürfen nicht stillschweigend als Erfolg markiert werden.
+
+
+## WP-6.2 Kontrollkonkretisierung (Restore + Recovery)
+- Restore akzeptiert ausschließlich tenant-konsistente Requests (`tenant_id`-Match zum Auth-Context).
+- Wiederherzustellende Objektpfade müssen strikt tenant-präfixiert sein (`tenant/<tenant_id>/...`).
+- Post-Restore-Konsistenzprüfung ist verpflichtend; fehlende Job-Referenzen in Transcript/Export/Audit gelten als Blocker für Freigabe.
+- Scheduler-Recovery behandelt Teilfehler klassenbasiert und idempotent; unbegrenzte Blind-Retries sind verboten.
+- Restore- und Recovery-Aktionen sind auditpflichtig und müssen forensisch zeitlich korreliert werden können.

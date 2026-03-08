@@ -1,18 +1,24 @@
 import json
+import sqlite3
 import sys
 import tempfile
-import unittest
 from pathlib import Path
+import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from evodox.jobs.create_service import CreateJobResponse, IdempotencyRecord, UploadSession
 from evodox.jobs.infrastructure import (
+    InMemoryRetentionObjectStorage,
     JsonlAuditLog,
     LocalPresignUploadSessionFactory,
     RabbitMQQueuePublisher,
     RetryablePublishError,
     SQLiteIdempotencyStore,
     SQLiteJobRepository,
+    SQLiteOutbox,
+    SQLiteRetentionCandidateRepository,
+    SQLiteRetentionExecutionRepository,
 )
 
 
@@ -107,6 +113,101 @@ class InfrastructureAdaptersTests(unittest.TestCase):
                 sys.modules["pika"] = previous
             else:
                 del sys.modules["pika"]
+
+
+    def test_retention_candidate_repo_is_tenant_scoped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            job_repo = SQLiteJobRepository(db_path)
+            job_repo.create(
+                {
+                    "job_id": "job_1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.mp3",
+                    "content_type": "audio/mpeg",
+                    "size_bytes": 12,
+                    "retention_months": 1,
+                    "status": "completed",
+                }
+            )
+            job_repo.create(
+                {
+                    "job_id": "job_2",
+                    "tenant_id": "tenant-b",
+                    "actor_id": "u-2",
+                    "filename": "audio2.mp3",
+                    "content_type": "audio/mpeg",
+                    "size_bytes": 12,
+                    "retention_months": 1,
+                    "status": "completed",
+                }
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("UPDATE jobs SET created_at = '2020-01-01T00:00:00+00:00'")
+
+            repo = SQLiteRetentionCandidateRepository(db_path)
+            due = repo.list_due_for_tenant(tenant_id="tenant-a", now=datetime(2026, 1, 1, tzinfo=timezone.utc), limit=100)
+
+            self.assertEqual(len(due), 1)
+            self.assertEqual(due[0].tenant_id, "tenant-a")
+            self.assertEqual(due[0].job_id, "job_1")
+
+    def test_retention_execution_repo_marks_deleted_and_prunes_outbox_for_tenant(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            job_repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            job_repo.create(
+                {
+                    "job_id": "job_1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.mp3",
+                    "content_type": "audio/mpeg",
+                    "size_bytes": 12,
+                    "retention_months": 1,
+                    "status": "completed",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_1",
+                    "queue": "gpu-standard",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-b",
+                    "job_id": "job_1",
+                    "queue": "gpu-standard",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                }
+            )
+
+            storage = InMemoryRetentionObjectStorage()
+            repo = SQLiteRetentionExecutionRepository(db_path, object_storage=storage)
+            ok = repo.delete_storage(tenant_id="tenant-a", job_id="job_1")
+            marked = repo.mark_deleted(
+                tenant_id="tenant-a",
+                job_id="job_1",
+                deleted_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(ok)
+            self.assertTrue(marked)
+            row = job_repo.get("tenant-a", "job_1")
+            self.assertEqual(row["status"], "deleted")
+            self.assertEqual(row["filename"], "[redacted]")
+            self.assertEqual(storage.deleted_prefixes[0], ("tenant-a", "tenant/tenant-a/job_1/"))
+            dlq_rows = outbox.list_pending(limit=10)
+            self.assertEqual(len(dlq_rows), 1)
+            self.assertEqual(dlq_rows[0]["tenant_id"], "tenant-b")
 
 
 if __name__ == "__main__":

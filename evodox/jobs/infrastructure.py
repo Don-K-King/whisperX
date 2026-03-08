@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from .complete_upload_service import CompleteUploadIdempotencyRecord, CompleteUploadResponse
 from .create_service import CreateJobResponse, IdempotencyRecord, UploadSession
+from .retention_service import RetentionCandidate
 
 
 class SQLiteJobRepository:
@@ -38,10 +39,14 @@ class SQLiteJobRepository:
                     size_bytes INTEGER NOT NULL,
                     retention_months INTEGER NOT NULL,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at TEXT
                 )
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "deleted_at" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN deleted_at TEXT")
 
     def create(self, job: Any) -> None:
         payload = _to_dict(job)
@@ -86,6 +91,86 @@ class SQLiteJobRepository:
                 "SELECT * FROM jobs WHERE tenant_id = ? ORDER BY created_at", (tenant_id,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+
+class SQLiteRetentionCandidateRepository:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def list_due_for_tenant(self, *, tenant_id: str, now: datetime, limit: int) -> list[RetentionCandidate]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT tenant_id, job_id, retention_months, created_at
+                FROM jobs
+                WHERE tenant_id = ?
+                  AND deleted_at IS NULL
+                  AND datetime(created_at, printf('+%d days', retention_months * 30)) <= datetime(?)
+                ORDER BY created_at
+                LIMIT ?
+                """,
+                (tenant_id, now.isoformat(), limit),
+            ).fetchall()
+        return [
+            RetentionCandidate(
+                tenant_id=row["tenant_id"],
+                job_id=row["job_id"],
+                requested_retention_months=int(row["retention_months"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+
+class SQLiteRetentionExecutionRepository:
+    def __init__(self, db_path: Path, *, object_storage: Any) -> None:
+        self._db_path = str(db_path)
+        self.object_storage = object_storage
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def delete_storage(self, *, tenant_id: str, job_id: str) -> bool:
+        object_prefix = f"tenant/{tenant_id}/{job_id}/"
+        if not hasattr(self.object_storage, "delete_prefix"):
+            return False
+        return bool(self.object_storage.delete_prefix(tenant_id=tenant_id, object_prefix=object_prefix))
+
+    def mark_deleted(self, *, tenant_id: str, job_id: str, deleted_at: datetime) -> bool:
+        with self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'deleted',
+                    filename = '[redacted]',
+                    actor_id = 'retention-worker',
+                    deleted_at = ?
+                WHERE tenant_id = ? AND job_id = ? AND deleted_at IS NULL
+                """,
+                (deleted_at.isoformat(), tenant_id, job_id),
+            )
+            conn.execute(
+                "DELETE FROM outbox_events WHERE tenant_id = ? AND job_id = ?",
+                (tenant_id, job_id),
+            )
+        return updated.rowcount == 1
+
+
+class InMemoryRetentionObjectStorage:
+    def __init__(self, *, fail_for: set[str] | None = None) -> None:
+        self.fail_for = fail_for or set()
+        self.deleted_prefixes: list[tuple[str, str]] = []
+
+    def delete_prefix(self, *, tenant_id: str, object_prefix: str) -> bool:
+        self.deleted_prefixes.append((tenant_id, object_prefix))
+        return object_prefix not in self.fail_for
 
 
 class SQLiteIdempotencyStore:

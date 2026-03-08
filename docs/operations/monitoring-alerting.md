@@ -54,3 +54,29 @@
 - Alarmempfehlungen:
   - Warnung bei stark steigendem `transcript_update_conflict_total` (UI/UX- oder Kollaborationsproblem),
   - Kritisch bei erhöhtem `export_reject_total` durch potenzielle Abuse-/Probe-Muster.
+
+
+## Retention Monitoring (WP-6.1)
+- Pflichtmetriken:
+  - `retention_deleted_total` (gelöschte/anonymisierte Datensätze),
+  - `retention_failed_total` (Teil-/Fehlversuche),
+  - `retention_backlog_total` (fällige, noch nicht verarbeitete Kandidaten),
+  - `retention_duration_seconds` (Joblaufzeit),
+  - `retention_clock_skew_skipped_total` (bewusst verzögerte Löschungen).
+- Alarmempfehlungen:
+  - Kritisch bei `retention_failed_total > 0` über mehrere Läufe,
+  - Warnung bei kontinuierlich steigendem `retention_backlog_total`,
+  - Kritisch bei anomalen Tenant-Verteilungen (ein Tenant dominiert Löschrate ungewöhnlich).
+
+
+## Restore/Scheduler Monitoring (WP-6.2)
+- Pflichtmetriken:
+  - `retention_scheduler_runs_total`,
+  - `retention_recovery_recovered_total`,
+  - `retention_recovery_retry_scheduled_total`,
+  - `restore_runs_total`,
+  - `restore_consistency_findings_total`.
+- Alarmempfehlungen:
+  - Kritisch bei ausbleibenden Scheduler-Runs über > 2 Intervalle,
+  - Kritisch bei dauerhaft steigendem `retention_recovery_retry_scheduled_total`,
+  - Kritisch bei `restore_consistency_findings_total > 0` in Produktionsrestores.
