@@ -89,3 +89,13 @@
 - Recovery-Failure-Klassen werden versioniert über `RETENTION_RECOVERY_MAPPING_VERSION` gesteuert (aktuell `v1`).
 - Neuer Betriebsmodus zur Deployment-Härtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
 - Neue vollständige Konfigurationsvorlage: `.env.example`.
+
+## 2026-03-08 – Frontend Phase-1 Oberfläche implementiert
+- Neue browserbasierte Frontend-Oberfläche mit Login, Dashboard, Job-Erstellung (inkl. Drag&Drop/File-Picker), Job-Detail und Audit-Ansicht ergänzt.
+- Light/Dark-Theme, Sprachumschalter (de/en) sowie Tenant-Badge im globalen Header eingeführt.
+- Fehlerdarstellung auf `error_code` + `correlation_id` normalisiert, um debug-freundlich ohne Secret-Leakage zu bleiben.
+
+## 2026-03-08 – Frontend UI-Refresh (Modern + Branding + Darkmode)
+- Header um sichtbares EvidoX-Branding erweitert (Logo-Monogramm + Produktbeschriftung), um die markenprägende Vorgabe explizit abzubilden.
+- Modernisierte UI mit Hover-Effekten für Navigation, Buttons, Karten und Dropzone umgesetzt.
+- Darkmode-Darstellung und responsive Optimierung verfeinert; visuelle Zustände wurden als Screenshots nachgewiesen.
