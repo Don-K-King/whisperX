@@ -1,12 +1,16 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from evodox.jobs.create_service import CreateJobResponse, IdempotencyRecord, UploadSession
 from evodox.jobs.infrastructure import (
     JsonlAuditLog,
     LocalPresignUploadSessionFactory,
+    RabbitMQQueuePublisher,
+    RetryablePublishError,
     SQLiteIdempotencyStore,
     SQLiteJobRepository,
 )
@@ -79,6 +83,30 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             payload = json.loads(lines[0])
             self.assertEqual(payload["action"], "job.create")
+
+    def test_rabbitmq_publisher_maps_broker_failure_to_retryable_error(self):
+        publisher = RabbitMQQueuePublisher(amqp_url="amqp://guest:guest@localhost:5672/%2F")
+        fake_pika = SimpleNamespace(
+            URLParameters=lambda url: url,
+            BasicProperties=lambda **kwargs: kwargs,
+            BlockingConnection=lambda params: (_ for _ in ()).throw(RuntimeError(f"cannot connect {params}")),
+        )
+        previous = sys.modules.get("pika")
+        sys.modules["pika"] = fake_pika
+        try:
+            with self.assertRaises(RetryablePublishError) as ctx:
+                publisher.publish(
+                    "gpu-standard",
+                    {"event_type": "job.queued"},
+                    message_id="evt_1",
+                    headers={"tenant_id": "tenant-a"},
+                )
+            self.assertEqual(ctx.exception.error_code, "broker.unavailable")
+        finally:
+            if previous is not None:
+                sys.modules["pika"] = previous
+            else:
+                del sys.modules["pika"]
 
 
 if __name__ == "__main__":

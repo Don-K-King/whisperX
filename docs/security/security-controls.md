@@ -84,3 +84,26 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Enumerationsschutz: tenant-fremde Job-IDs liefern neutralen Not-Found-Fehler ohne Existenzdetails.
 - AuthN/AuthZ-Pflicht auch für Read-Operationen bleibt aktiv (Bearer + Claim-Prüfung via zentraler Auth-Policy).
 - Response-Härtung: nur vertraglich definierte Felder (`job_id`, `status`, `progress`, `retention_until`).
+
+
+## WP-4.1 Kontrollkonkretisierung (Queue Routing + Retry/DLQ Governance)
+- Fehlerklassifikation ist verbindlich: Retryable-Fehler triggern begrenzte Requeue-Strategie, Terminal-Fehler gehen direkt in DLQ (Poison-Message-Isolation).
+- Duplicate-Delivery wird explizit abgefangen und als bereits verarbeitet markiert, um Replay-/At-least-once-Effekte sicher zu neutralisieren.
+- Backoff nutzt Jitter zur Vermeidung von Retry-Stürmen und korrelierten Lastspitzen nach Broker-Störungen.
+- Queue-Publish nutzt stabile `message_id` je Outbox-Event für deduplizierbare Zustellung und forensische Nachvollziehbarkeit.
+- Monitoring-Pflicht: Queue-Lag, Retry- und DLQ-Metriken werden für Security/Operations-Audits erhoben.
+
+
+## WP-4.2/4.3 Kontrollkonkretisierung (Worker Chain + Fairness/Backpressure)
+- Worker verarbeitet nur erlaubte Quellzustände (`queued`, `failed_retryable`) und tenant-scoped `object_key`-Präfixe; Scope-Verletzungen werden terminal beendet.
+- Fehlerklassifikation minimiert Fehlstrategien: transient (`failed_retryable`) vs. irreparabel (`failed_terminal`) wird explizit getrennt.
+- Tenant-Fairness-Policy begrenzt gleichzeitige Verarbeitung global und pro Tenant zur Vermeidung von Ressourcen-Monopolisierung (DoS-Risiko).
+- Worker-Audit-Events (`start`, `completed`, `failed`) sind verpflichtend für forensische Nachvollziehbarkeit.
+
+
+## WP-5.1/5.2 Kontrollkonkretisierung (Transcript-Edit + Export)
+- Optimistic Locking erzwingt konsistente Parallel-Edits (`base_version`), Konflikte werden ohne stilles Überschreiben abgewiesen.
+- Segmenttexte werden auf unzulässige Steuerzeichen geprüft; missbräuchliche Inhalte werden abgelehnt.
+- Export-Format ist strikt allowlisted (`txt|json|srt|vtt`); unbekannte Formate werden geblockt.
+- Textbasierte Exportformate behandeln Transcript-Inhalte als Daten (Escaping), um XSS-/Markup-Injection zu erschweren.
+- Tenant-scoped Transcript-Lookup vor Export verhindert Cross-Tenant-Datenabfluss.

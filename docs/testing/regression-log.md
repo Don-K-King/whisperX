@@ -39,3 +39,24 @@
 - Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
 - Ergebnis: Grün, 34 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
 - Bewertung: Keine Regression in WP-3.1/3.2/3.3; Read-Pfad tenant-sicher erweitert.
+
+
+## 2026-03-08 – Regression nach WP-4.1 Queue-Governance-Erweiterung
+- Anlass: strukturelle Erweiterung der Queue-Infrastruktur (Retry/DLQ/Fehlerklassifikation/RabbitMQ-Adapter).
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 38 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: keine Regression in bestehenden WP-3.x-Flows; Queue-Failure-Pfade sind deterministisch abgedeckt.
+
+
+## 2026-03-08 – Regression nach WP-4 Vollständigung (WP-4.2/WP-4.3)
+- Anlass: strukturelle Erweiterung um Worker-Pipeline-Service und Fairness/Backpressure-Scheduling.
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 44 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: keine Regression in WP-3.x/WP-4.1; Worker-Fehlerpfade und Fairnessregeln testseitig abgesichert.
+
+
+## 2026-03-08 – Regression nach Schritt-5 Strukturänderung (Transcript/Export Services)
+- Anlass: neue Services und HTTP-Adapter-Pfade für Transcript-Versionierung und Export-Pipeline.
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 52 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: keine Regression in WP-3/WP-4; Schritt-5 Kernpfade inkl. Konflikt- und Abuse-Fällen abgedeckt.

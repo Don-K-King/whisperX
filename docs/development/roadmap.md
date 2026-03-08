@@ -32,3 +32,14 @@
 ## Schritt 6
 - Retention-/Compliance-Automation finalisieren
 - Auditierbare Lösch- und Restore-Konsistenztests etablieren
+
+
+## Schritt 4 (Umsetzungsstand 2026-03-08)
+- WP-4.1 abgeschlossen: Queue Routing + Retry/DLQ Governance.
+- WP-4.2 abgeschlossen: Worker Processing Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz und Fehlerklassifikation.
+- WP-4.3 abgeschlossen: Tenant-Fairness + Backpressure-Baseline mit globalen/per-tenant Inflight-Limits und Round-Robin-Scheduling.
+
+
+## Schritt 5 (Umsetzungsstand 2026-03-08)
+- WP-5.1 abgeschlossen: Transcript-Versionierung mit Optimistic Locking.
+- WP-5.2 abgeschlossen: Export-Pipeline (`txt|json|srt|vtt`) mit tenant-scoped Sicherheitsprüfungen.

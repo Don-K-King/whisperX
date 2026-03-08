@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta, timezone
+import random
 import hashlib
 import hmac
 import json
@@ -211,26 +212,48 @@ class SQLiteOutbox:
                 """
                 CREATE TABLE IF NOT EXISTS outbox_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_uid TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     tenant_id TEXT NOT NULL,
                     job_id TEXT NOT NULL,
                     queue TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending',
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT,
+                    last_error_code TEXT,
+                    last_error_class TEXT,
+                    dlq_reason TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    published_at TEXT
+                    published_at TEXT,
+                    dlq_at TEXT,
+                    publish_attempted_at TEXT,
+                    UNIQUE(event_uid)
                 )
                 """
             )
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(outbox_events)").fetchall()
+            }
+            _add_column_if_missing(conn, columns, "event_uid", "TEXT")
+            _add_column_if_missing(conn, columns, "retry_count", "INTEGER NOT NULL DEFAULT 0")
+            _add_column_if_missing(conn, columns, "next_attempt_at", "TEXT")
+            _add_column_if_missing(conn, columns, "last_error_code", "TEXT")
+            _add_column_if_missing(conn, columns, "last_error_class", "TEXT")
+            _add_column_if_missing(conn, columns, "dlq_reason", "TEXT")
+            _add_column_if_missing(conn, columns, "dlq_at", "TEXT")
+            _add_column_if_missing(conn, columns, "publish_attempted_at", "TEXT")
 
     def append(self, event: dict[str, Any]) -> None:
+        event_uid = event.get("event_id") or _stable_event_uid(event)
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO outbox_events (event_type, tenant_id, job_id, queue, payload_json, status)
-                VALUES (?, ?, ?, ?, ?, 'pending')
+                INSERT OR IGNORE INTO outbox_events (event_uid, event_type, tenant_id, job_id, queue, payload_json, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
+                    event_uid,
                     event["event_type"],
                     event["tenant_id"],
                     event["job_id"],
@@ -248,10 +271,36 @@ class SQLiteOutbox:
         return [
             {
                 "event_id": row["event_id"],
+                "event_uid": row["event_uid"],
                 "event_type": row["event_type"],
                 "tenant_id": row["tenant_id"],
                 "job_id": row["job_id"],
                 "queue": row["queue"],
+                "retry_count": int(row["retry_count"] or 0),
+                "next_attempt_at": row["next_attempt_at"],
+                "payload": json.loads(row["payload_json"]),
+            }
+            for row in rows
+        ]
+
+    def list_dlq(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM outbox_events WHERE status = 'dlq' ORDER BY event_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "event_uid": row["event_uid"],
+                "event_type": row["event_type"],
+                "tenant_id": row["tenant_id"],
+                "job_id": row["job_id"],
+                "queue": row["queue"],
+                "retry_count": int(row["retry_count"] or 0),
+                "last_error_code": row["last_error_code"],
+                "last_error_class": row["last_error_class"],
+                "dlq_reason": row["dlq_reason"],
                 "payload": json.loads(row["payload_json"]),
             }
             for row in rows
@@ -260,31 +309,283 @@ class SQLiteOutbox:
     def mark_published(self, event_id: int) -> None:
         with self._connect() as conn:
             conn.execute(
-                "UPDATE outbox_events SET status = 'published', published_at = ? WHERE event_id = ?",
-                (datetime.now(tz=timezone.utc).isoformat(), event_id),
+                "UPDATE outbox_events SET status = 'published', published_at = ?, publish_attempted_at = ?, next_attempt_at = NULL WHERE event_id = ?",
+                (datetime.now(tz=timezone.utc).isoformat(), datetime.now(tz=timezone.utc).isoformat(), event_id),
+            )
+
+    def mark_duplicate(self, event_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE outbox_events SET status = 'published', published_at = ?, publish_attempted_at = ?, last_error_code = 'duplicate.delivery', last_error_class = 'duplicate', next_attempt_at = NULL WHERE event_id = ?",
+                (
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    event_id,
+                ),
+            )
+
+    def mark_retry(self, event_id: int, *, error_code: str, next_attempt_at: datetime) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE outbox_events
+                SET retry_count = retry_count + 1,
+                    last_error_code = ?,
+                    last_error_class = 'retryable',
+                    publish_attempted_at = ?,
+                    next_attempt_at = ?
+                WHERE event_id = ?
+                """,
+                (error_code, datetime.now(tz=timezone.utc).isoformat(), next_attempt_at.isoformat(), event_id),
+            )
+
+    def mark_dlq(self, event_id: int, *, reason: str, error_code: str, error_class: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE outbox_events
+                SET status = 'dlq',
+                    dlq_reason = ?,
+                    last_error_code = ?,
+                    last_error_class = ?,
+                    dlq_at = ?,
+                    publish_attempted_at = ?,
+                    next_attempt_at = NULL
+                WHERE event_id = ?
+                """,
+                (
+                    reason,
+                    error_code,
+                    error_class,
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    event_id,
+                ),
             )
 
 
+class RetryablePublishError(Exception):
+    def __init__(self, error_code: str):
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
+class TerminalPublishError(Exception):
+    def __init__(self, error_code: str):
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
+class DuplicateDeliveryError(Exception):
+    def __init__(self, error_code: str = "duplicate.delivery"):
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
+class InMemoryQueueDispatchMetrics:
+    def __init__(self) -> None:
+        self.published_count = 0
+        self.retry_count = 0
+        self.dlq_count = 0
+        self.duplicate_count = 0
+        self.queue_lag: list[float] = []
+
+    def record_published(self) -> None:
+        self.published_count += 1
+
+    def record_retry(self) -> None:
+        self.retry_count += 1
+
+    def record_dlq(self) -> None:
+        self.dlq_count += 1
+
+    def record_duplicate(self) -> None:
+        self.duplicate_count += 1
+
+    def record_queue_lag_seconds(self, lag_seconds: float) -> None:
+        self.queue_lag.append(max(0.0, lag_seconds))
+
+
 class OutboxQueueDispatcher:
-    def __init__(self, *, outbox: SQLiteOutbox, queue_publisher: Any) -> None:
+    def __init__(
+        self,
+        *,
+        outbox: SQLiteOutbox,
+        queue_publisher: Any,
+        max_retries: int = 5,
+        base_backoff_seconds: float = 1.0,
+        max_backoff_seconds: float = 60.0,
+        jitter_factory: Any | None = None,
+        now_factory: Any | None = None,
+        metrics: Any | None = None,
+    ) -> None:
         self.outbox = outbox
         self.queue_publisher = queue_publisher
+        self.max_retries = max_retries
+        self.base_backoff_seconds = base_backoff_seconds
+        self.max_backoff_seconds = max_backoff_seconds
+        self.jitter_factory = jitter_factory or random.uniform
+        self.now_factory = now_factory or (lambda: datetime.now(tz=timezone.utc))
+        self.metrics = metrics
 
     def dispatch_pending(self, *, limit: int = 100) -> int:
         published = 0
         for event in self.outbox.list_pending(limit=limit):
-            self.queue_publisher.publish(event["queue"], event["payload"])
-            self.outbox.mark_published(event["event_id"])
-            published += 1
+            if not _is_due(event.get("next_attempt_at"), now=self.now_factory()):
+                continue
+            self._record_queue_lag(event)
+            try:
+                self.queue_publisher.publish(
+                    event["queue"],
+                    event["payload"],
+                    message_id=event["event_uid"],
+                    headers={"tenant_id": event["tenant_id"], "event_type": event["event_type"]},
+                )
+                self.outbox.mark_published(event["event_id"])
+                _metric(self.metrics, "record_published")
+                published += 1
+            except DuplicateDeliveryError:
+                self.outbox.mark_duplicate(event["event_id"])
+                _metric(self.metrics, "record_duplicate")
+            except RetryablePublishError as exc:
+                if event.get("retry_count", 0) + 1 > self.max_retries:
+                    self.outbox.mark_dlq(
+                        event["event_id"],
+                        reason="retry_exhausted",
+                        error_code=exc.error_code,
+                        error_class="retryable",
+                    )
+                    _metric(self.metrics, "record_dlq")
+                    continue
+                next_attempt_at = self.now_factory() + timedelta(
+                    seconds=self._calculate_backoff(event.get("retry_count", 0))
+                )
+                self.outbox.mark_retry(event["event_id"], error_code=exc.error_code, next_attempt_at=next_attempt_at)
+                _metric(self.metrics, "record_retry")
+            except TerminalPublishError as exc:
+                self.outbox.mark_dlq(
+                    event["event_id"],
+                    reason="terminal_publish_error",
+                    error_code=exc.error_code,
+                    error_class="terminal",
+                )
+                _metric(self.metrics, "record_dlq")
         return published
+
+    def _calculate_backoff(self, retry_count: int) -> float:
+        upper = min(self.max_backoff_seconds, self.base_backoff_seconds * (2**retry_count))
+        return float(self.jitter_factory(0.0, upper))
+
+    def _record_queue_lag(self, event: dict[str, Any]) -> None:
+        created_at = event.get("payload", {}).get("timestamp")
+        if not isinstance(created_at, str):
+            return
+        try:
+            ts = datetime.fromisoformat(created_at)
+        except ValueError:
+            return
+        lag = (self.now_factory() - ts).total_seconds()
+        if self.metrics is not None:
+            self.metrics.record_queue_lag_seconds(lag)
 
 
 class InMemoryQueuePublisher:
     def __init__(self) -> None:
         self.messages: list[tuple[str, dict[str, Any]]] = []
 
-    def publish(self, queue_name: str, payload: dict[str, Any]) -> None:
+    def publish(
+        self,
+        queue_name: str,
+        payload: dict[str, Any],
+        *,
+        message_id: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        del message_id, headers
         self.messages.append((queue_name, dict(payload)))
+
+
+class RabbitMQQueuePublisher:
+    def __init__(self, *, amqp_url: str, exchange: str = "evodox.jobs") -> None:
+        self.amqp_url = amqp_url
+        self.exchange = exchange
+
+    def publish(
+        self,
+        queue_name: str,
+        payload: dict[str, Any],
+        *,
+        message_id: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        try:
+            import pika
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("RabbitMQ Publisher benötigt das Paket 'pika'.") from exc
+        body = json.dumps(payload, sort_keys=True).encode("utf-8")
+        properties = pika.BasicProperties(
+            content_type="application/json",
+            delivery_mode=2,
+            message_id=message_id,
+            headers=headers or {},
+        )
+        connection = None
+        try:
+            params = pika.URLParameters(self.amqp_url)
+            connection = pika.BlockingConnection(params)
+            channel = connection.channel()
+            channel.exchange_declare(exchange=self.exchange, exchange_type="direct", durable=True)
+            channel.queue_declare(queue=queue_name, durable=True)
+            channel.queue_bind(queue=queue_name, exchange=self.exchange, routing_key=queue_name)
+            published = channel.basic_publish(
+                exchange=self.exchange,
+                routing_key=queue_name,
+                body=body,
+                properties=properties,
+                mandatory=True,
+            )
+            if not published:
+                raise RetryablePublishError("broker.publish_not_confirmed")
+        except RetryablePublishError:
+            raise
+        except Exception as exc:
+            raise RetryablePublishError("broker.unavailable") from exc
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, columns: set[str], column_name: str, ddl: str) -> None:
+    if column_name in columns:
+        return
+    conn.execute(f"ALTER TABLE outbox_events ADD COLUMN {column_name} {ddl}")
+
+
+def _stable_event_uid(event: dict[str, Any]) -> str:
+    canonical = json.dumps(event, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _metric(metrics: Any, method: str) -> None:
+    if metrics is None:
+        return
+    recorder = getattr(metrics, method, None)
+    if recorder is None:
+        return
+    recorder()
+
+
+def _is_due(next_attempt_at: str | None, *, now: datetime) -> bool:
+    if not next_attempt_at:
+        return True
+    try:
+        next_attempt = datetime.fromisoformat(next_attempt_at)
+    except ValueError:
+        return True
+    return next_attempt <= now
 
 
 class LocalPresignUploadSessionFactory:
