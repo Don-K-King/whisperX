@@ -80,3 +80,36 @@
   - Kritisch bei ausbleibenden Scheduler-Runs über > 2 Intervalle,
   - Kritisch bei dauerhaft steigendem `retention_recovery_retry_scheduled_total`,
   - Kritisch bei `restore_consistency_findings_total > 0` in Produktionsrestores.
+
+
+## 2026-03-08 – Alerts für Scheduler-Lease und Recovery-Queue
+- **Alert: retention_scheduler_lease_stale**
+  - Bedingung: `last_run_at` älter als 2x Intervall und Queue hat due Einträge.
+  - Schweregrad: High.
+- **Alert: retention_recovery_backlog_high**
+  - Bedingung: `status in (pending,retry_scheduled)` > Schwellwert pro Tenant.
+  - Schweregrad: Medium/High (tenantabhängig).
+- **Alert: retention_recovery_attempt_spike**
+  - Bedingung: starke Zunahme `attempts` innerhalb kurzer Zeit.
+  - Schweregrad: Medium; Hinweis auf persistente Teilfehler oder Misskonfiguration.
+- **Security Alert: retry_dataset_invalid**
+  - Bedingung: ungültige Datensätze (negative Attempts/leere IDs) erkannt.
+  - Schweregrad: High; potenzieller Manipulationsversuch.
+
+
+## 2026-03-08 – Alert-Ergänzung für invalid Quarantine
+- **Alert: retention_recovery_invalid_backlog_high**
+  - Bedingung: `status='invalid'` über Schwellwert (gesamt oder tenant-spezifisch).
+  - Schweregrad: High (potenzieller Manipulations- oder Datenintegritätsvorfall).
+- **Alert: retention_scheduler_heartbeat_stalled**
+  - Bedingung: `lock_owner` aktiv, `lock_until` wird innerhalb Heartbeat-Fenster nicht erneuert.
+  - Schweregrad: High.
+
+
+## 2026-03-08 – Runtime-Konfigurationsalerts
+- **Alert: retention_scheduler_config_invalid**
+  - Bedingung: Scheduler startet wegen Runtime-Konfigurationsfehler nicht.
+  - Schweregrad: High.
+- **Alert: retention_scheduler_lock_owner_missing**
+  - Bedingung: Start ohne expliziten `lock_owner` versucht.
+  - Schweregrad: High (Deployment-Fehlkonfiguration).

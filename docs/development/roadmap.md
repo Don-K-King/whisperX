@@ -43,3 +43,7 @@
 ## Schritt 5 (Umsetzungsstand 2026-03-08)
 - WP-5.1 abgeschlossen: Transcript-Versionierung mit Optimistic Locking.
 - WP-5.2 abgeschlossen: Export-Pipeline (`txt|json|srt|vtt`) mit tenant-scoped Sicherheitsprüfungen.
+
+
+## Schritt 6 (Umsetzungsstand 2026-03-08)
+- WP-6.3 abgeschlossen: Runtime-Orchestrierung des Retention-Schedulers mit fail-fast Konfigurationsprofil und verbindlichem SQLite-Wiring.

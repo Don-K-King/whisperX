@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from .complete_upload_service import CompleteUploadIdempotencyRecord, CompleteUploadResponse
 from .create_service import CreateJobResponse, IdempotencyRecord, UploadSession
+from .retention_scheduler import RetentionFailureRecord
 from .retention_service import RetentionCandidate
 
 
@@ -161,6 +162,275 @@ class SQLiteRetentionExecutionRepository:
                 (tenant_id, job_id),
             )
         return updated.rowcount == 1
+
+
+class SQLiteSchedulerLeaseStore:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        lease_name: str = "retention_scheduler",
+        lock_owner: str,
+        lease_ttl: timedelta = timedelta(minutes=5),
+    ) -> None:
+        self._db_path = str(db_path)
+        self.lease_name = lease_name
+        self.lock_owner = lock_owner
+        self.lease_ttl = lease_ttl
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scheduler_leases (
+                    lease_name TEXT PRIMARY KEY,
+                    last_run_at TEXT,
+                    lock_owner TEXT,
+                    lock_until TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO scheduler_leases (lease_name, last_run_at, lock_owner, lock_until)
+                VALUES (?, NULL, NULL, NULL)
+                """,
+                (self.lease_name,),
+            )
+
+    def should_run(self, *, now: datetime, interval: timedelta) -> bool:
+        now_iso = now.isoformat()
+        lock_until_iso = (now + self.lease_ttl).isoformat()
+        interval_seconds = int(interval.total_seconds())
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_run_at, lock_owner, lock_until FROM scheduler_leases WHERE lease_name = ?",
+                (self.lease_name,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO scheduler_leases (lease_name, last_run_at, lock_owner, lock_until) VALUES (?, NULL, NULL, NULL)",
+                    (self.lease_name,),
+                )
+                row = conn.execute(
+                    "SELECT last_run_at, lock_owner, lock_until FROM scheduler_leases WHERE lease_name = ?",
+                    (self.lease_name,),
+                ).fetchone()
+
+            due = row["last_run_at"] is None or bool(
+                conn.execute(
+                    "SELECT datetime(?) >= datetime(?, printf('+%d seconds', ?))",
+                    (now_iso, row["last_run_at"], interval_seconds),
+                ).fetchone()[0]
+            )
+            lease_free = row["lock_until"] is None or bool(
+                conn.execute("SELECT datetime(?) >= datetime(?)", (now_iso, row["lock_until"])).fetchone()[0]
+            )
+            lease_owned = row["lock_owner"] == self.lock_owner
+
+            if not due or not (lease_free or lease_owned):
+                return False
+
+            updated = conn.execute(
+                """
+                UPDATE scheduler_leases
+                SET lock_owner = ?,
+                    lock_until = ?
+                WHERE lease_name = ?
+                  AND (lock_until IS NULL OR datetime(lock_until) <= datetime(?) OR lock_owner = ?)
+                """,
+                (self.lock_owner, lock_until_iso, self.lease_name, now_iso, self.lock_owner),
+            )
+        return updated.rowcount == 1
+
+    def mark_ran(self, *, now: datetime) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE scheduler_leases
+                SET last_run_at = ?,
+                    lock_owner = NULL,
+                    lock_until = NULL
+                WHERE lease_name = ? AND lock_owner = ?
+                """,
+                (now.isoformat(), self.lease_name, self.lock_owner),
+            )
+
+    def renew_lock(self, *, now: datetime) -> bool:
+        with self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE scheduler_leases
+                SET lock_until = ?
+                WHERE lease_name = ? AND lock_owner = ?
+                """,
+                ((now + self.lease_ttl).isoformat(), self.lease_name, self.lock_owner),
+            )
+        return updated.rowcount == 1
+
+
+class SQLiteRetentionRetryStore:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS retention_retry_queue (
+                    failure_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    failure_class TEXT NOT NULL,
+                    first_failed_at TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    invalid_reason TEXT,
+                    PRIMARY KEY (failure_id, failure_class)
+                )
+                """
+            )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(retention_retry_queue)").fetchall()
+            }
+            if "invalid_reason" not in columns:
+                conn.execute("ALTER TABLE retention_retry_queue ADD COLUMN invalid_reason TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retention_retry_tenant_id ON retention_retry_queue(tenant_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retention_retry_status_due ON retention_retry_queue(status, next_attempt_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retention_retry_next_attempt_at ON retention_retry_queue(next_attempt_at)"
+            )
+
+    def upsert_failure(self, record: RetentionFailureRecord, *, status: str = "pending") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO retention_retry_queue (
+                    failure_id, tenant_id, job_id, failure_class, first_failed_at, attempts, next_attempt_at, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(failure_id, failure_class)
+                DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    job_id = excluded.job_id,
+                    first_failed_at = excluded.first_failed_at,
+                    attempts = CASE
+                        WHEN retention_retry_queue.status = 'recovered' THEN retention_retry_queue.attempts
+                        ELSE excluded.attempts
+                    END,
+                    next_attempt_at = CASE
+                        WHEN retention_retry_queue.status = 'recovered' THEN retention_retry_queue.next_attempt_at
+                        ELSE excluded.next_attempt_at
+                    END,
+                    status = CASE
+                        WHEN retention_retry_queue.status = 'recovered' THEN retention_retry_queue.status
+                        ELSE excluded.status
+                    END
+                """,
+                (
+                    record.failure_id,
+                    record.tenant_id,
+                    record.job_id,
+                    record.failure_class,
+                    record.first_failed_at.isoformat(),
+                    int(record.attempts),
+                    record.next_attempt_at.isoformat(),
+                    status,
+                ),
+            )
+
+    def list_due(self, *, now: datetime, limit: int) -> list[RetentionFailureRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT failure_id, tenant_id, job_id, failure_class, first_failed_at, attempts, next_attempt_at
+                FROM retention_retry_queue
+                WHERE status IN ('pending', 'retry_scheduled')
+                  AND datetime(next_attempt_at) <= datetime(?)
+                ORDER BY datetime(next_attempt_at) ASC, failure_id ASC
+                LIMIT ?
+                """,
+                (now.isoformat(), limit),
+            ).fetchall()
+        return [
+            RetentionFailureRecord(
+                failure_id=row["failure_id"],
+                tenant_id=row["tenant_id"],
+                job_id=row["job_id"],
+                failure_class=row["failure_class"],
+                first_failed_at=datetime.fromisoformat(row["first_failed_at"]),
+                next_attempt_at=datetime.fromisoformat(row["next_attempt_at"]),
+                attempts=int(row["attempts"]),
+            )
+            for row in rows
+        ]
+
+    def mark_recovered(self, failure_id: str, *, failure_class: str | None = None) -> None:
+        if failure_class is None:
+            raise ValueError("failure_class ist erforderlich, um idempotente Recovery eindeutig zu adressieren.")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE retention_retry_queue
+                SET status = 'recovered',
+                    invalid_reason = NULL
+                WHERE failure_id = ? AND failure_class = ?
+                """,
+                (failure_id, failure_class),
+            )
+
+    def mark_retry_scheduled(
+        self,
+        failure_id: str,
+        *,
+        failure_class: str | None = None,
+        next_attempt_at: datetime,
+    ) -> None:
+        if failure_class is None:
+            raise ValueError("failure_class ist erforderlich, um idempotente Retry-Planung eindeutig zu adressieren.")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE retention_retry_queue
+                SET status = 'retry_scheduled',
+                    attempts = attempts + 1,
+                    next_attempt_at = ?,
+                    invalid_reason = NULL
+                WHERE failure_id = ? AND failure_class = ?
+                """,
+                (next_attempt_at.isoformat(), failure_id, failure_class),
+            )
+
+    def mark_invalid(self, failure_id: str, *, failure_class: str | None = None, reason: str) -> None:
+        if failure_class is None:
+            raise ValueError("failure_class ist erforderlich, um invalid records eindeutig zu adressieren.")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE retention_retry_queue
+                SET status = 'invalid',
+                    invalid_reason = ?
+                WHERE failure_id = ? AND failure_class = ?
+                """,
+                (reason, failure_id, failure_class),
+            )
 
 
 class InMemoryRetentionObjectStorage:

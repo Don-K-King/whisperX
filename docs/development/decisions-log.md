@@ -105,3 +105,22 @@
 - Konsistenzprüfung nach Restore (`RestoreConsistencyChecker`) validiert Referenzen `Job ↔ Transcript ↔ Export ↔ Audit` und meldet Findings als expliziten Status.
 - Architekturkonflikt adressiert: ad-hoc Restore-Skripte wurden verworfen; stattdessen strukturierter Workflow mit Audit und prüfbarem Ergebnis.
 - Referenz: ADR-0008 (`/docs/adr/ADR-0008-retention-scheduler-und-tenant-restore-konsistenz.md`).
+
+
+## 2026-03-08 – ADR-0009 Persistente Scheduler-Leases + idempotente Recovery-Queue
+- Architekturentscheidung: `RetentionScheduler` produktiv auf persistente SQLite-Adapter umgestellt (`SQLiteSchedulerLeaseStore`, `SQLiteRetentionRetryStore`) statt In-Memory-State.
+- Idempotenzhärtung: Recovery-Eindeutigkeit wird per DB-Constraint `PRIMARY KEY (failure_id, failure_class)` erzwungen.
+- Skalierungsbezug: Due-Abfragen für Recovery-Backlog durch Indizes auf `tenant_id`, `status`, `next_attempt_at` abgesichert.
+- Referenz: ADR-0009 (`/docs/adr/ADR-0009-retention-scheduler-sqlite-lease-und-idempotente-recovery-queue.md`).
+
+
+## 2026-03-08 – ADR-0010 Quarantäne für invalid Retry-Datensätze + Lease-Heartbeat
+- Sicherheitskonflikt adressiert: ungültige/manipulierte Retry-Datensätze werden nicht mehr als `recovered` klassifiziert, sondern als `invalid` quarantänisiert.
+- Betriebskonflikt adressiert: Lease-Heartbeat (`renew_lock`) für lange Scheduler-Batches eingeführt, um Lease-Expiry-Races zu reduzieren.
+- Referenz: ADR-0010 (`/docs/adr/ADR-0010-retention-scheduler-invalid-quarantine-und-lease-heartbeat.md`).
+
+
+## 2026-03-08 – ADR-0011 Runtime-Orchestrierung Retention-Scheduler
+- `RetentionSchedulerRuntimeSettings.from_env(...)` eingeführt: fail-fast Validierung für DB-Pfad, Lock-Owner, Intervalle, Batchsize, Lease-TTL und Heartbeat.
+- `RetentionSchedulerRuntime` ergänzt: verbindliches produktives Wiring des Schedulers auf SQLite-Lease/Retry-Adapter ohne In-Memory-Fallback.
+- Referenz: ADR-0011 (`/docs/adr/ADR-0011-retention-scheduler-runtime-orchestrierung-fail-fast-konfiguration.md`).

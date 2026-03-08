@@ -123,3 +123,21 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Post-Restore-Konsistenzprüfung ist verpflichtend; fehlende Job-Referenzen in Transcript/Export/Audit gelten als Blocker für Freigabe.
 - Scheduler-Recovery behandelt Teilfehler klassenbasiert und idempotent; unbegrenzte Blind-Retries sind verboten.
 - Restore- und Recovery-Aktionen sind auditpflichtig und müssen forensisch zeitlich korreliert werden können.
+
+
+## 2026-03-08 – Controls für Retention-Scheduler-Lease und Recovery-Idempotenz
+- **Control: Lease-Kollision verhindern.** Scheduler-Run wird nur ausgeführt, wenn Lease fällig und Lock frei/owning ist (`lock_until` + `lock_owner`), sonst Default-Deny.
+- **Control: Idempotenz pro Failure-Klasse.** Retry-Queue erzwingt Eindeutigkeit über `(failure_id, failure_class)`, um Mehrfachausführung bei Duplikaten zu unterbinden.
+- **Control: Tenant-Kontext im Recovery-Pfad.** Jeder Retry-Datensatz enthält `tenant_id`; Monitoring/Audit-Auswertungen müssen tenant-scoped erfolgen.
+- **Control: Manipulationsresistenz.** Ungültige/inkonsistente Retry-Einträge (z. B. negative Attempts, leere IDs) werden nicht ausgeführt.
+
+
+## 2026-03-08 – Ergänzung: Quarantäne für ungültige Retry-Datensätze
+- **Control: Invalid-Quarantine statt Success-Marking.** Ungültige Retry-Einträge werden als `invalid` mit `invalid_reason` markiert und nicht als `recovered` verbucht.
+- **Control: Lease-Heartbeat.** Längere Scheduler-Läufe erneuern das Lease periodisch, um parallele Ausführung bei TTL-Expiry zu verhindern.
+
+
+## 2026-03-08 – Runtime-Config Controls (Retention-Scheduler)
+- **Control: Fail-fast Runtime-Konfiguration.** Scheduler-Start wird bei fehlenden/inkonsistenten Parametern abgebrochen (kein stilles Weiterlaufen).
+- **Control: Heartbeat/TTL-Konsistenz.** `heartbeat_seconds < lease_ttl_seconds` ist verpflichtend, um Lease-Race-Risiken zu minimieren.
+- **Control: Eindeutiger Lock-Owner.** Jede Instanz muss einen expliziten `lock_owner` setzen; anonyme Defaults sind untersagt.
