@@ -140,3 +140,9 @@
 - Recovery-Failure-Klassen versioniert (`RETENTION_RECOVERY_MAPPING_VERSION=v1`), unbekannte Klassen bleiben fail-safe im Retry.
 - Deployment-Hardening ergänzt: Preflight-Validierung über `RETENTION_VALIDATE_ENV_ONLY=true` für Manifest-/Init-Checks.
 - Referenz: ADR-0013 (`/docs/adr/ADR-0013-retention-runner-storage-backend-und-recovery-governance.md`).
+
+## 2026-03-08 – ADR-0014 Zielbetrieb Compose + Preflight-Gating
+- ADR-0014 angenommen: verbindliche Deployment-Referenz für API/Worker/Retention-Runner + Plattformdienste in `deploy/docker-compose.target.yml`.
+- Verbindliches Preflight-Gate eingeführt: `retention-preflight` (Compose one-shot) und CI-Job `deployment-preflight.yml` mit `RETENTION_VALIDATE_ENV_ONLY=true`.
+- Betriebsprofile vereinheitlicht über `.env.example` und `.env.production.example` (Pflicht-/Optional-Variablen je Service).
+- Monitoring/Alerting an konkrete Deploy-Objekte gekoppelt (Service-Namen, Jobs, Probes, Alert-Rules).

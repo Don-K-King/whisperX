@@ -1,0 +1,158 @@
+name: evodox-target
+
+services:
+  db:
+    image: postgres:16.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-evodox}
+      POSTGRES_USER: ${POSTGRES_USER:-evodox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  broker:
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-evodox}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?required}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  object-storage:
+    image: minio/minio:RELEASE.2025-02-18T16-25-55Z
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  auth:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?required}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-evodox}
+      KC_DB_USERNAME: ${POSTGRES_USER:-evodox}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  retention-preflight:
+    image: ${EVODOX_IMAGE:?required}
+    restart: "no"
+    command: ["/bin/sh", "-lc", "RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_runner"]
+    environment:
+      RETENTION_VALIDATE_ENV_ONLY: "true"
+      RETENTION_DB_PATH: /runtime/jobs.db
+      RETENTION_SCHEDULER_LOCK_OWNER: ${RETENTION_SCHEDULER_LOCK_OWNER:-retention-runner-01}
+      RETENTION_SCHEDULER_INTERVAL_SECONDS: ${RETENTION_SCHEDULER_INTERVAL_SECONDS:-300}
+      RETENTION_SCHEDULER_BATCH_SIZE: ${RETENTION_SCHEDULER_BATCH_SIZE:-100}
+      RETENTION_SCHEDULER_LEASE_TTL_SECONDS: ${RETENTION_SCHEDULER_LEASE_TTL_SECONDS:-300}
+      RETENTION_SCHEDULER_HEARTBEAT_SECONDS: ${RETENTION_SCHEDULER_HEARTBEAT_SECONDS:-60}
+      RETENTION_TENANT_IDS: ${RETENTION_TENANT_IDS:?required}
+      RETENTION_AUDIT_LOG_PATH: /runtime/audit/retention-audit.jsonl
+      RETENTION_OBJECT_STORAGE_BACKEND: s3
+      RETENTION_OBJECT_STORAGE_S3_BUCKET: ${RETENTION_OBJECT_STORAGE_S3_BUCKET:-evodox-jobs}
+      RETENTION_OBJECT_STORAGE_S3_ENDPOINT: http://object-storage:9000
+      RETENTION_OBJECT_STORAGE_S3_REGION: ${RETENTION_OBJECT_STORAGE_S3_REGION:-us-east-1}
+      RETENTION_OBJECT_STORAGE_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?required}
+      RETENTION_OBJECT_STORAGE_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?required}
+      RETENTION_OBJECT_STORAGE_S3_FORCE_PATH_STYLE: "true"
+      RETENTION_RECOVERY_MAPPING_VERSION: v1
+    depends_on:
+      object-storage:
+        condition: service_healthy
+
+  api:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    command: ["uv", "run", "uvicorn", "evodox.web.fastapi_adapter:create_fastapi_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      retention-preflight:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/docs"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "evodox.jobs.worker_pipeline_service"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      retention-preflight:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('worker healthy')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  retention-runner:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "evodox.runtime.retention_scheduler_runner"]
+    env_file:
+      - .env
+    environment:
+      RETENTION_VALIDATE_ENV_ONLY: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+      retention-preflight:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; Path('/tmp/retention-runner-health').touch(); print('ok')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  minio-data:
