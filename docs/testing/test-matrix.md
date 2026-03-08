@@ -93,3 +93,7 @@
 - Unit/Integration: `tests/test_restore_service.py` validiert Restore-Reihenfolge, tenant-guards und Konsistenzfindings.
 - Unit/Integration: `tests/test_retention_scheduler.py` validiert Intervallsteuerung und idempotente Recovery je Teilfehlerklasse.
 - Security/Abuse: Cross-Tenant-Restore und tenant-fremde Object-Keys als Negativpfade getestet.
+
+## E2E-Nachweis (Job Lifecycle Kernfluss)
+- E2E/Integration: `tests/test_job_lifecycle_e2e.py` deckt den tenant-scoped End-to-End-Kernfluss `create_job` → `complete_upload` → `OutboxQueueDispatcher.dispatch_pending` → `get_job_status` in einer realen SQLite-Infrastrukturkette ab.
+- Security-Fokus: Objektpfad bleibt tenant/job-gebunden, Queue-Message enthält Tenant-Kontext, Statusabfrage erfolgt weiterhin tenant-isoliert.

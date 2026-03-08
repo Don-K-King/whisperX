@@ -68,6 +68,7 @@
 
 
 ## 2026-03-08
+- E2E-Testabdeckung für den Kern-Lifecycle ergänzt (`create_job` → `complete_upload` → Outbox-Dispatch → Statusabruf) und ein Status-Gap behoben: `complete_upload` akzeptiert jetzt auch frisch erzeugte Jobs im Zustand `upload_pending` (ohne Queue-/Tenant-Sicherheitsregeln zu lockern).
 - Retention-Scheduler verfügt jetzt über ein verbindliches Runtime-Startprofil mit fail-fast Konfigurationsvalidierung (DB-Pfad, Lock-Owner, Intervall, TTL/Heartbeat).
 - Der produktive Startpfad verdrahtet den Scheduler explizit auf persistente SQLite-Adapter und vermeidet implizite In-Memory-Fallbacks.
 

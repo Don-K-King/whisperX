@@ -5,7 +5,7 @@ import hashlib
 import re
 from typing import Any
 
-ALLOWED_SOURCE_STATUSES = frozenset({"uploaded", "queued"})
+ALLOWED_SOURCE_STATUSES = frozenset({"upload_pending", "uploaded", "queued"})
 CHECKSUM_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
