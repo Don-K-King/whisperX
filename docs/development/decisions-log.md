@@ -141,7 +141,3 @@
 - Deployment-Hardening ergänzt: Preflight-Validierung über `RETENTION_VALIDATE_ENV_ONLY=true` für Manifest-/Init-Checks.
 - Referenz: ADR-0013 (`/docs/adr/ADR-0013-retention-runner-storage-backend-und-recovery-governance.md`).
 
-## 2026-03-08 – Frontend-Implementierung Phase 1 (UI-Flow vollständig)
-- Frontend-Flows gemäß UI-Spezifikation umgesetzt: Login, Dashboard, Job-Wizard, Job-Detail-Timeline und rollenbasierte Audit-Ansicht.
-- Architekturkonflikt benannt: Spezifikation fordert React+TypeScript, Umgebung blockiert Paketbezug (`npm 403`), daher temporär standardskonforme No-Build-ESM-Implementierung als Übergang für lauffähige End-to-End-Abnahme.
-- Sicherheitsentscheidung: Fehler-UI zeigt ausschließlich sanitisiertes `error_code` und `correlation_id`; keine Ausgabe interner Details/Secrets.

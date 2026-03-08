@@ -149,3 +149,43 @@
 - **Alert: retention_storage_backend_misconfig**
   - Bedingung: Runner-Startfehler bei `RETENTION_OBJECT_STORAGE_BACKEND` oder backend-spezifischen Pflichtparametern.
   - Schweregrad: High.
+
+## 2026-03-08 – Deploy-Objekt-Zuordnung (Compose Zielbetrieb)
+### Service-Mapping
+- docker compose service `api`
+  - Probe: HTTP-Healthcheck `GET /docs` (container-internal).
+  - Alerts:
+    - `api_healthcheck_failing` bei `unhealthy` > 3 Intervalle.
+    - `api_authz_error_spike` bei anomalen 401/403-Raten.
+- docker compose service `worker`
+  - Probe: Prozess-Healthcheck (`python -c ...`).
+  - Alerts:
+    - `worker_job_failures_high` bei dauerhaft steigenden terminalen Fehlern.
+    - `worker_queue_starvation` bei hohem `tenant_queue_wait_seconds`.
+- docker compose service `retention-runner`
+  - Probe: Runner-Liveness via Tick-Logs + Compose-Healthcheck.
+  - Alerts:
+    - Alert-Rule `retention_runner_preflight_failed` (aus CI/Preflight-Job).
+    - Alert-Rule `retention_scheduler_config_invalid` (CrashLoop/Exit-Code `2`).
+    - Alert-Rule `retention_scheduler_heartbeat_stalled` (Lease wird nicht erneuert).
+- docker compose service `db`
+  - Probe: `pg_isready`.
+  - Alerts: `postgres_unavailable`, `postgres_replication_lag_high` (falls Replikation aktiv).
+- docker compose service `broker`
+  - Probe: `rabbitmq-diagnostics check_running`.
+  - Alerts: `rabbitmq_queue_lag_high`, `rabbitmq_dlq_entries_detected`.
+- docker compose service `object-storage`
+  - Probe: MinIO readiness.
+  - Alerts: `object_storage_unavailable`, `retention_storage_backend_misconfig`.
+- docker compose service `auth`
+  - Probe: Keycloak readiness endpoint.
+  - Alerts: `auth_realm_unavailable`, `auth_token_issuance_failures_high`.
+
+### Job-Mapping
+- Preflight-Job: `retention-preflight` (one-shot Container mit `RETENTION_VALIDATE_ENV_ONLY=true`).
+  - Blockiert `api`, `worker` und `retention-runner` via `service_completed_successfully`.
+- CI-Stage: `.github/workflows/deployment-preflight.yml` / Job `retention-preflight`.
+  - Muss vor produktivem Rollout grün sein.
+
+### Alert-Rules-Quelle
+- Referenzregeln liegen in `deploy/prometheus/alerts-targetbetrieb.yml` und müssen in die zentrale Alertmanager-Pipeline importiert werden.

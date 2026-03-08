@@ -113,11 +113,4 @@
 - Ergebnis: Grün, 92 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
 - Bewertung: Keine Regression in bestehenden Servicepfaden; neuer Backend-/Governance-/Preflight-Pfad ist testseitig abgedeckt.
 
-## 2026-03-08 – Frontend Phase-1 Regression/Smoke
-- Unit: `node --test tests/*.test.js` (Token-Claim-Mapping, sanitisierte Fehlerdarstellung).
-- E2E-Smokeflow (Browser-Playwright): Login → Dashboard → Audit-Ansicht inklusive API-Mocks und Screenshot-Artefakten.
-- Architekturhinweis: Vollständige Build-/Pipeline-Regression für React/Vite ausstehend, solange Registry-Zugriff in der Umgebung blockiert ist.
 
-## 2026-03-08 – Frontend UI-Refresh Visual Validation
-- Unit: `node --test tests/*.test.js` weiterhin grün.
-- Browser-E2E-Visual-Smoke: Dashboard im Darkmode, Login-Fehlerzustand und responsive Darkmode-Darstellung per Playwright im Browser-Container verifiziert.

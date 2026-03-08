@@ -1,0 +1,42 @@
+groups:
+  - name: evodox-targetbetrieb
+    rules:
+      - alert: retention_runner_preflight_failed
+        expr: increase(ci_job_failures_total{job="retention-preflight"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: retention-preflight
+        annotations:
+          summary: "Retention-Preflight fehlgeschlagen"
+          description: "Deployment blockieren bis RETENTION_VALIDATE_ENV_ONLY=true ohne Fehler durchläuft."
+
+      - alert: retention_scheduler_config_invalid
+        expr: increase(container_exit_code_total{service="retention-runner",exit_code="2"}[10m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: retention-runner
+        annotations:
+          summary: "Retention-Runner Konfigurationsfehler"
+          description: "Runner beendet mit Exit-Code 2 (fail-fast ConfigError)."
+
+      - alert: api_healthcheck_failing
+        expr: probe_success{service="api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API Healthcheck fehlgeschlagen"
+          description: "Compose-Service api liefert keinen erfolgreichen Healthcheck."
+
+      - alert: worker_queue_starvation
+        expr: histogram_quantile(0.95, sum(rate(tenant_queue_wait_seconds_bucket[5m])) by (le)) > 30
+        for: 10m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: "Worker-Starvation erkannt"
+          description: "tenant_queue_wait_seconds p95 liegt länger als 10 Minuten über 30s."
