@@ -70,3 +70,22 @@
 ## 2026-03-08
 - Retention-Scheduler verfügt jetzt über ein verbindliches Runtime-Startprofil mit fail-fast Konfigurationsvalidierung (DB-Pfad, Lock-Owner, Intervall, TTL/Heartbeat).
 - Der produktive Startpfad verdrahtet den Scheduler explizit auf persistente SQLite-Adapter und vermeidet implizite In-Memory-Fallbacks.
+
+## 2026-03-08 – Betreiberupdate: Dedizierter Retention-Scheduler-Prozess
+- Neu: Retention-Scheduler wird als dedizierter Runner-Prozess betrieben statt als eingebettete Nebenfunktion.
+- Auswirkungen für Betrieb:
+  - eigener Startpfad mit fail-fast Konfigurationschecks,
+  - strukturierte Start-/Tick-/Shutdown-Logs,
+  - kontrollierter Graceful-Shutdown via `SIGTERM`/`SIGINT`.
+- Erwarteter Nutzen: klare Verantwortlichkeit, bessere Skalierbarkeit und geringere Kopplung zwischen API-Lifecycle und Retention-Lifecycle.
+
+## 2026-03-08 – Betriebsupdate: produktiver Runner-Bootstrap vervollständigt
+- Der dedizierte Retention-Runner besitzt nun einen ausführbaren Entrypoint (`python -m evodox.runtime.retention_scheduler_runner`) mit produktivem Dependency-Wiring.
+- Neu sind fail-fast Bootstrap-Checks für Tenant-Liste, Audit-Log-Pfad, Storage-Root und Retention-Policy-Grenzen.
+- Recovery-Pfad wurde für bekannte Teilfehlerklassen (`storage_delete_failed`, `db_mark_failed`) konkretisiert; unbekannte Klassen bleiben fail-safe im Retry.
+
+## 2026-03-08 – Betreiberupdate: S3/MinIO-Backend + Recovery-Governance + Preflight
+- Retention-Runner unterstützt jetzt neben lokalem Filesystem ein dediziertes `s3`-Backend (MinIO-kompatibel) mit gleicher Prefix-Delete-Semantik.
+- Recovery-Failure-Klassen werden versioniert über `RETENTION_RECOVERY_MAPPING_VERSION` gesteuert (aktuell `v1`).
+- Neuer Betriebsmodus zur Deployment-Härtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
+- Neue vollständige Konfigurationsvorlage: `.env.example`.

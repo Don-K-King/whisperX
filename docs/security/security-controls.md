@@ -141,3 +141,16 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Fail-fast Runtime-Konfiguration.** Scheduler-Start wird bei fehlenden/inkonsistenten Parametern abgebrochen (kein stilles Weiterlaufen).
 - **Control: Heartbeat/TTL-Konsistenz.** `heartbeat_seconds < lease_ttl_seconds` ist verpflichtend, um Lease-Race-Risiken zu minimieren.
 - **Control: Eindeutiger Lock-Owner.** Jede Instanz muss einen expliziten `lock_owner` setzen; anonyme Defaults sind untersagt.
+
+## 2026-03-08 – Runtime-Sicherheitskontrollen für Retention-Runner-Bootstrap
+- **Control: Fail-fast Bootstrap-Validierung.** Runner-Start wird bei fehlenden Pflicht-ENVs (`RETENTION_TENANT_IDS`, `RETENTION_AUDIT_LOG_PATH`, `RETENTION_OBJECT_STORAGE_ROOT`) und inkonsistenten Policy-Grenzen sofort abgebrochen.
+- **Control: Nicht-sensitive Structured Logging.** Start-/Shutdown-/Tick-Logs enthalten ausschließlich operative Nicht-Secret-Felder.
+- **Control: Path-Traversal-Schutz bei lokaler Objektlöschung.** Löschpfade werden gegen den konfigurierten Storage-Root aufgelöst; Pfade außerhalb des Roots werden abgewiesen.
+- **Control: Fail-safe Recovery-Semantik.** Unbekannte Retry-Failure-Klassen gelten als nicht recoverbar und werden nicht fälschlich als erfolgreich markiert.
+
+## 2026-03-08 – Controls für S3/MinIO-Adapter und Recovery-Governance
+- **Control: Backend-spezifische Pflichtvalidierung.** Storage-Backend (`filesystem|s3`) erzwingt jeweils vollständige Pflichtparameter (fail-fast).
+- **Control: Prefix-Delete-Semantik backend-konsistent.** Sowohl Filesystem- als auch S3-Adapter akzeptieren nur sichere tenant-präfixierte Schlüssel; Traversal-/Prefix-Manipulation wird verworfen.
+- **Control: Versionierte Recovery-Governance.** Recovery-Failure-Klassen werden über Mapping-Version (`v1`) kontrolliert und nicht implizit erweitert.
+- **Control: Unknown-Class Fail-Safe.** Unbekannte Failure-Klassen führen zu Warnsignal und verbleiben im Retry-Backlog.
+- **Control: Preflight als Deployment-Guard.** `RETENTION_VALIDATE_ENV_ONLY=true` muss vor Start in Pipeline/Init-Checks ausgeführt werden.

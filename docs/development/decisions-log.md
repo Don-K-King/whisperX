@@ -124,3 +124,19 @@
 - `RetentionSchedulerRuntimeSettings.from_env(...)` eingeführt: fail-fast Validierung für DB-Pfad, Lock-Owner, Intervalle, Batchsize, Lease-TTL und Heartbeat.
 - `RetentionSchedulerRuntime` ergänzt: verbindliches produktives Wiring des Schedulers auf SQLite-Lease/Retry-Adapter ohne In-Memory-Fallback.
 - Referenz: ADR-0011 (`/docs/adr/ADR-0011-retention-scheduler-runtime-orchestrierung-fail-fast-konfiguration.md`).
+
+## 2026-03-08 – ADR-0012 Dedizierter Retention-Scheduler-Runner
+- Architekturkonflikt explizit entschieden: eingebetteter API-Scheduler verworfen, dedizierter Runner eingeführt.
+- Neuer Runtime-Entrypoint ergänzt: fail-fast Startvalidierung, strukturierte nicht-sensitive Startlogs, Graceful Shutdown via `SIGTERM`/`SIGINT`.
+- Referenz: ADR-0012 (`/docs/adr/ADR-0012-dedizierter-retention-scheduler-runner.md`).
+
+## 2026-03-08 – Runner-Bootstrap konkretisiert (operationalisierter Entrypoint)
+- ADR-0012 in der Umsetzung vervollständigt: ausführbarer Runner-Entrypoint (`python -m ...`) baut produktive Abhängigkeiten für Retention-Job und Recovery-Executor auf.
+- Sicherheitsentscheidung: Dateisystem-Löschpfad wird auf konfigurierten Root begrenzt (Path-Traversal-Guard) statt permissiver Löschpfad-Auflösung.
+- Betriebsentscheidung: unbekannte Recovery-Failure-Klassen bleiben fail-safe im Retry-Pfad und werden nicht als erfolgreich markiert.
+
+## 2026-03-08 – ADR-0013 Storage-Backend-Strategie + Recovery-Governance
+- Retention-Runner um explizite Backend-Strategie erweitert: `filesystem` und `s3` (MinIO-kompatibel) mit konsistenter `delete_prefix`-Semantik.
+- Recovery-Failure-Klassen versioniert (`RETENTION_RECOVERY_MAPPING_VERSION=v1`), unbekannte Klassen bleiben fail-safe im Retry.
+- Deployment-Hardening ergänzt: Preflight-Validierung über `RETENTION_VALIDATE_ENV_ONLY=true` für Manifest-/Init-Checks.
+- Referenz: ADR-0013 (`/docs/adr/ADR-0013-retention-runner-storage-backend-und-recovery-governance.md`).

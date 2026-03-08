@@ -113,3 +113,39 @@
 - **Alert: retention_scheduler_lock_owner_missing**
   - Bedingung: Start ohne expliziten `lock_owner` versucht.
   - Schweregrad: High (Deployment-Fehlkonfiguration).
+
+## 2026-03-08 – Monitoring: Dedizierter Retention-Scheduler-Runner
+### Runner-Liveness
+- Metrik/Signal: periodisches Log-Event `retention_scheduler.runner.tick_completed`.
+- Alert (kritisch): Kein Tick-Event innerhalb von `2 * RETENTION_SCHEDULER_INTERVAL_SECONDS`.
+- Alert (warnend): Wiederholte `executed=false`-Ticks bei gleichzeitig steigendem Due-Backlog.
+
+### Config-Startfehler
+- Metrik/Signal: Log-Event `retention_scheduler.runner.config_error` + Prozess-Exit-Code `2`.
+- Alert (kritisch): Runner-Prozess startet nicht oder restartet in CrashLoop mit ConfigError.
+- Gegenmaßnahme: Pflicht-ENV-Validierung im Deployment-Template, vor Start syntaktisch prüfen.
+
+### Tick-Ausfälle
+- Metrik/Signal: Log-Event `retention_scheduler.runner.tick_failed`.
+- Alert (kritisch): >= 3 Tick-Fehler in Folge.
+- Alert (warnend): anhaltend erhöhte Tick-Fehlerrate bei konstantem Backlog.
+- Security-Hinweis: Fehlermeldungen dürfen keine Secrets enthalten; nur nicht-sensitive Runtime-Parameter loggen.
+
+## 2026-03-08 – Bootstrap-Observability für produktives Runner-Wiring
+- Pflicht-Startsignal:
+  - `retention_scheduler.runner.started` mit nicht-sensitiven Feldern inkl. `lock_owner`, `db_path`, Intervalle/TTL/Heartbeat.
+- Bootstrap-Fehlersignal:
+  - `retention_scheduler.runner.config_error` bei fehlender Tenant-Liste/Audit-Log-/Storage-Root-Config oder ungültigen Policy-Parametern.
+- Security-Alert-Empfehlung:
+  - Erhöhte Rate fehlgeschlagener Recovery-Ticks (`tick_failed`) zusammen mit persistentem Retry-Backlog als Indikator für Daten-/Storage-Inkonsistenz.
+
+## 2026-03-08 – Alerts für Storage-Backend und Recovery-Governance
+- **Alert: retention_runner_preflight_failed**
+  - Bedingung: Preflight-Job (`RETENTION_VALIDATE_ENV_ONLY=true`) endet mit Exit-Code `2`.
+  - Schweregrad: High (Deployment blockieren).
+- **Alert: retention_recovery_failure_class_unknown**
+  - Bedingung: Log-Event `retention_scheduler.runner.recovery_failure_class_unknown` tritt auf.
+  - Schweregrad: Medium/High (Governance-Lücke in Failure-Class-Mapping).
+- **Alert: retention_storage_backend_misconfig**
+  - Bedingung: Runner-Startfehler bei `RETENTION_OBJECT_STORAGE_BACKEND` oder backend-spezifischen Pflichtparametern.
+  - Schweregrad: High.
