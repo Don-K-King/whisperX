@@ -112,3 +112,9 @@
 - Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
 - Ergebnis: Grün, 92 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
 - Bewertung: Keine Regression in bestehenden Servicepfaden; neuer Backend-/Governance-/Preflight-Pfad ist testseitig abgedeckt.
+
+## 2026-03-08 – Regression nach Zielbetriebs-/Deploy-Artefakt-Erweiterung
+- Anlass: strukturelle Betriebsänderung (Compose-Target-Stack, Preflight-Gating, CI-Preflight-Stage, Umgebungsprofile).
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 95 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: Keine Regression in bestehenden Servicepfaden; neue Deploy-/Runbook-Artefakte und Governance-Checks sind testseitig abgesichert.

@@ -145,3 +145,73 @@ RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_ru
   - `storage_delete_failed`
   - `db_mark_failed`
 - Unbekannte Klassen werden absichtlich **nicht** als recovered markiert (fail-safe) und verbleiben im Retry-Backlog bis Governance-Update.
+
+## 2026-03-08 – Zielbetrieb mit Docker Compose (API/Worker/Retention)
+### 1) Provisioning
+1. Infrastruktur vorbereiten: persistente Volumes für `db`, `broker`, `object-storage` anlegen und auf Host-Ebene verschlüsseln.
+2. Zielartefakte bereitstellen:
+   - `deploy/docker-compose.target.yml`
+   - `.env.production.example` als Basis für produktive `.env`.
+3. Service-Image pinnen (`EVODOX_IMAGE` mit release-tag statt `latest`).
+4. Auth-Baseline sichern: Keycloak-Realm/Clients vor Start vorbereiten (`API_AUTH_ISSUER`, `API_AUTH_AUDIENCE`).
+
+### 2) Secret-Handling
+1. Secrets **nicht** in `.env` committen; nur über Secret-Manager/CI-Injected Environment setzen.
+2. Pflicht-Secrets:
+   - `POSTGRES_PASSWORD`, `RABBITMQ_DEFAULT_PASS`, `MINIO_ROOT_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`
+   - `RETENTION_OBJECT_STORAGE_S3_ACCESS_KEY`, `RETENTION_OBJECT_STORAGE_S3_SECRET_KEY`
+3. Rotation:
+   - Quartalsweise Rotation für Datenbank/Broker/Object-Storage.
+   - Sofortrotation bei Incident oder verdächtigen Audit-Ereignissen.
+4. Least-Privilege:
+   - API/Worker mit separaten DB-/Broker-Credentials betreiben.
+   - Retention-Runner nur Delete-Rechte im konfigurierten Bucket-Prefix.
+
+### 3) Startreihenfolge
+1. Preflight ausführen (blockierend):
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml run --rm retention-preflight
+   ```
+2. Plattformdienste starten:
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml up -d db broker object-storage auth
+   ```
+3. Anwendung starten:
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml up -d api worker retention-runner
+   ```
+4. Sicherstellen, dass `retention-preflight` erfolgreich war; bei Exit-Code `2` Deployment abbrechen.
+
+### 4) Healthchecks
+1. Compose-Status prüfen:
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml ps
+   ```
+2. Pflicht-Healthchecks:
+   - `db`: `pg_isready`
+   - `broker`: `rabbitmq-diagnostics check_running`
+   - `object-storage`: MinIO readiness
+   - `auth`: `http://localhost:8080/health/ready`
+   - `api`: `http://localhost:8000/docs`
+3. Runner-Validierung:
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml logs --tail=200 retention-runner
+   ```
+   Erwartet wird `retention_scheduler.runner.started` ohne ConfigError.
+
+### 5) Rollback
+1. Bei fehlschlagendem Deploy sofort Traffic auf vorherigen API-Release umschalten.
+2. Neue Services stoppen:
+   ```bash
+   docker compose -f deploy/docker-compose.target.yml down
+   ```
+3. Letztes stabiles Image re-pinnen (`EVODOX_IMAGE=<last-known-good>`), dann kontrolliert neu starten.
+4. Nach Rollback:
+   - Queue-Backlog prüfen,
+   - Retention-Retry-Queue auf inkonsistente Zustände prüfen,
+   - Security-Audit-Events auf auffällige AuthZ-/Tenant-Issues prüfen.
+
+### Architekturhinweis / Konfliktanalyse
+- **Konflikt:** Compose-`depends_on` garantiert nur Startreihenfolge, nicht fachliche Readiness der Anwendung.
+- **Absicherung:** Harte Vorbedingung über `retention-preflight` mit `RETENTION_VALIDATE_ENV_ONLY=true` und zusätzliche Runtime-Healthchecks.
+- **Alternative (für höhere Reifegrade):** Migration auf Kubernetes mit `initContainers`, `readinessProbes` und getrennten ServiceAccounts für strengere Isolation.
