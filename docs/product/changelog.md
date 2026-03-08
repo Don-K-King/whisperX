@@ -90,8 +90,4 @@
 - Neuer Betriebsmodus zur Deployment-Härtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
 - Neue vollständige Konfigurationsvorlage: `.env.example`.
 
-## 2026-03-08 – Betreiberupdate: Zielbetriebs-Artefakte und Deployment-Gates
-- Neuer Zielbetriebs-Stack als Compose-Referenz (`deploy/docker-compose.target.yml`) für API, Worker, Retention-Runner, DB, Broker, Object-Storage und Auth.
-- Verbindliche Preflight-Prüfung vor Start eingeführt (`retention-preflight` + CI-Job `deployment-preflight.yml`) mit `RETENTION_VALIDATE_ENV_ONLY=true`.
-- Umgebungsprofile erweitert: `.env.example` und `.env.production.example` dokumentieren Pflicht-/Optional-Variablen je Service.
-- Runbook und Monitoring-Runbook konkretisiert (Provisioning, Secret-Handling, Startreihenfolge, Healthchecks, Rollback, Alert-Regeln je Deploy-Objekt).
+

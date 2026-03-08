@@ -154,3 +154,12 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Versionierte Recovery-Governance.** Recovery-Failure-Klassen werden über Mapping-Version (`v1`) kontrolliert und nicht implizit erweitert.
 - **Control: Unknown-Class Fail-Safe.** Unbekannte Failure-Klassen führen zu Warnsignal und verbleiben im Retry-Backlog.
 - **Control: Preflight als Deployment-Guard.** `RETENTION_VALIDATE_ENV_ONLY=true` muss vor Start in Pipeline/Init-Checks ausgeführt werden.
+
+## 2026-03-08 – Frontend Security Controls (Phase-1 UI)
+- Bearer-Token wird ausschließlich im Laufzeitspeicher gehalten (kein LocalStorage/SessionStorage Persistenzpfad).
+- Upload-Flow führt clientseitige Vorvalidierung (Dateigröße, Typfilter) aus; serverseitige Validierung bleibt maßgeblich.
+- Fehlerdarstellung ist sanitisiert (`error_code`, `correlation_id`) und unterdrückt intern-sensible Details.
+
+## 2026-03-08 – Ergänzende UI-Sicherheitskontrollen (Visual Refresh)
+- Branding/Styling-Update ohne Erweiterung der Datenrechte: Audit-Navigation bleibt strikt rollenbasiert (`admin`-only visibility).
+- Fehlerdarstellung im Login bleibt kontrolliert auf Codes (kein internes Debug/Stacktrace-Leak) auch im neuen UI-Layout.
