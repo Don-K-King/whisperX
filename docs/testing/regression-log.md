@@ -60,3 +60,17 @@
 - Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
 - Ergebnis: Grün, 52 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
 - Bewertung: keine Regression in WP-3/WP-4; Schritt-5 Kernpfade inkl. Konflikt- und Abuse-Fällen abgedeckt.
+
+
+## 2026-03-08 – Regression nach WP-6.1 Strukturänderung (Retention Worker + Adapter)
+- Anlass: neue Retention-Service-Schicht und zusätzliche SQLite-Infrastrukturadapter für tenant-scoped Löschpfade.
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 61 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: keine Regression in WP-3 bis WP-5; Retention-Entscheidungspfad inkl. Teilfehler-Audits ist testseitig abgedeckt.
+
+
+## 2026-03-08 – Regression nach WP-6.2 Strukturänderung (Restore-Service + Scheduler)
+- Anlass: neue Architekturmodule `evodox.jobs.restore_service` und `evodox.jobs.retention_scheduler`.
+- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: Grün, 67 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- Bewertung: keine Regression in WP-3 bis WP-6.1; Restore- und Recovery-Pfade sind testseitig isoliert abgesichert.

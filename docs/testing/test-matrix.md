@@ -81,3 +81,15 @@
 ## WP-5.2 Nachweis (Export-Pipeline)
 - Unit/Integration: `tests/test_export_service.py` deckt Export-Queueing, SRT-Rendering und Format-Validierung ab.
 - Contract/Core HTTP: `tests/test_export_http_adapter.py` prüft Mapping des Export-Responseschemas.
+
+
+## WP-6.1 Nachweis (Retention Enforcement)
+- Unit/Integration: `tests/test_retention_service.py` deckt Policy-Resolver (Tenant-Default + Clamp), tenant-isolierte Verarbeitung, Clock-Skew-Schutz sowie Teilfehlerfälle (Storage/DB) ab.
+- Infrastruktur/Integration: `tests/test_job_infra_adapters.py` erweitert um tenant-scoped Candidate-Query und delete/anonymize-Pfad in SQLite-Adaptern.
+- Security/Abuse: manipulierte Retention-Werte und Cross-Tenant-Delete-Fehlstrategie als Negativpfade getestet.
+
+
+## WP-6.2 Nachweis (Restore + Konsistenzprüfung + Scheduler)
+- Unit/Integration: `tests/test_restore_service.py` validiert Restore-Reihenfolge, tenant-guards und Konsistenzfindings.
+- Unit/Integration: `tests/test_retention_scheduler.py` validiert Intervallsteuerung und idempotente Recovery je Teilfehlerklasse.
+- Security/Abuse: Cross-Tenant-Restore und tenant-fremde Object-Keys als Negativpfade getestet.

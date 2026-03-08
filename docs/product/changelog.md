@@ -42,3 +42,15 @@
 - Implementierungsfortschritt Schritt 4 (WP-4.2/WP-4.3): Worker-Processing-Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz sowie Tenant-Fairness/Backpressure-Policy ergänzt.
 
 - Implementierungsfortschritt Schritt 5 (WP-5.1/WP-5.2): Transkript-Versionierung mit Optimistic Locking und sichere Export-Pipeline (`txt|json|srt|vtt`) im Tenant-Kontext ergänzt.
+
+
+## 2026-03-08
+- Schritt 6.1 umgesetzt: Retention Enforcement Job eingeführt (Policy-Resolver + periodischer Löschlauf) inkl. Audit-Events pro Entscheidung und Ausführung.
+- Sicherheitsrelevante Härtung: tenant-scoped Löschqueries, Clock-Skew-Schutz gegen verfrühte Löschung und Teilfehler-Nachweis bei Storage/DB-Inkonsistenzen.
+- Infrastruktur erweitert: SQLite-Retention-Candidate/Execution-Adapter mit Anonymisierung (`filename` redacted, Status `deleted`) und tenant-spezifischem Outbox-Pruning.
+
+
+## 2026-03-08
+- Schritt 6.2 umgesetzt: tenant-sicherer Restore-Workflow mit fester Restore-Reihenfolge und automatischer Konsistenzprüfung (`Job↔Transcript↔Export↔Audit`) eingeführt.
+- Betriebsrelevante Härtung: periodischer Retention-Scheduler mit idempotentem Retry-Recovery-Pfad für Teilfehlerklassen ergänzt.
+- Sicherheitsrelevante Absicherung: Restore-Guards gegen Cross-Tenant-Scopes und verpflichtende Restore-Audit-Events (`restore.started`, `restore.completed`) ergänzt.
