@@ -48,3 +48,35 @@
   2. Audit-/Backup-Artefakte unveränderlich sichern.
   3. Tenant-spezifische Eingrenzung und Auswirkungsanalyse durchführen.
   4. Hotfix + Regression + gezielter Restore-Drill vor Re-Enable.
+
+
+## 2026-03-08 – Runbook-Ergänzung Retention-Scheduler (SQLite-Lease/Retry)
+1. **Lease-Health prüfen:**
+   - SQL: `SELECT lease_name,last_run_at,lock_owner,lock_until FROM scheduler_leases;`
+   - Stale Lease liegt vor, wenn `lock_until` deutlich in der Vergangenheit und `last_run_at` nicht fortschreitet.
+2. **Recovery-Backlog prüfen:**
+   - SQL: `SELECT tenant_id,status,COUNT(*) FROM retention_retry_queue GROUP BY tenant_id,status;`
+   - Due-Backlog: `SELECT * FROM retention_retry_queue WHERE status IN ('pending','retry_scheduled') AND datetime(next_attempt_at) <= datetime('now');`
+3. **Korrekturmaßnahme bei Crash/Teilfehler:**
+   - Scheduler-Prozess neu starten (Lease und Queue bleiben persistent).
+   - Keine manuellen Duplikat-Inserts mit gleicher `(failure_id, failure_class)` durchführen.
+4. **Sicherheitsmaßnahme:**
+   - Tenant-übergreifende Recovery-Bulk-Updates sind untersagt; nur tenant-scoped Incident-Queries.
+
+
+## 2026-03-08 – Betriebsupdate zu `invalid`-Status und Lease-Heartbeat
+- `retention_retry_queue.status = 'invalid'` ist als Security-/Data-Quality-Fund zu behandeln (nicht auto-retryen).
+- Abfrage: `SELECT failure_id, failure_class, tenant_id, invalid_reason FROM retention_retry_queue WHERE status='invalid';`
+- Heartbeat-Überwachung: Wenn `lock_owner` gesetzt ist, aber `lock_until` nicht fortgeschrieben wird, Scheduler-Instanz auf Blockade/Absturz prüfen.
+
+
+## 2026-03-08 – Runtime-Startprofil für Retention-Scheduler
+- Pflicht-Umgebungsvariablen:
+  - `RETENTION_DB_PATH`
+  - `RETENTION_SCHEDULER_LOCK_OWNER`
+  - `RETENTION_SCHEDULER_INTERVAL_SECONDS`
+  - `RETENTION_SCHEDULER_BATCH_SIZE`
+  - `RETENTION_SCHEDULER_LEASE_TTL_SECONDS`
+  - `RETENTION_SCHEDULER_HEARTBEAT_SECONDS`
+- Fail-fast-Check: Start muss fehlschlagen, wenn `heartbeat >= lease_ttl` oder Pflichtparameter fehlen.
+- Betreiberhinweis: `lock_owner` muss pro Instanz stabil/eindeutig sein (z. B. Pod/Host + PID).

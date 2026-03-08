@@ -54,3 +54,19 @@
 - Schritt 6.2 umgesetzt: tenant-sicherer Restore-Workflow mit fester Restore-Reihenfolge und automatischer Konsistenzprüfung (`Job↔Transcript↔Export↔Audit`) eingeführt.
 - Betriebsrelevante Härtung: periodischer Retention-Scheduler mit idempotentem Retry-Recovery-Pfad für Teilfehlerklassen ergänzt.
 - Sicherheitsrelevante Absicherung: Restore-Guards gegen Cross-Tenant-Scopes und verpflichtende Restore-Audit-Events (`restore.started`, `restore.completed`) ergänzt.
+
+
+## 2026-03-08
+- Retention-Scheduler läuft produktiv jetzt mit persistentem SQLite-Lease statt In-Memory-Zustand; Scheduler-Intervall und Recovery-Fortschritt bleiben über Prozessneustarts erhalten.
+- Retry-Recovery-Queue ist persistent und idempotent pro `failure_id + failure_class`; Duplikate lösen keine Mehrfachausführung mehr aus.
+- Betriebsseitig wurden neue Monitoring-/Alerting-Anforderungen für Lease-Stale und Recovery-Backlog eingeführt.
+
+
+## 2026-03-08
+- Ungültige/manipulierte Retention-Retry-Datensätze werden nun explizit als `invalid` quarantänisiert (statt implizit als `recovered`).
+- Für lange Scheduler-Läufe wurde ein Lease-Heartbeat ergänzt, um konkurrierende Parallel-Ausführung bei Lease-Expiry zu vermeiden.
+
+
+## 2026-03-08
+- Retention-Scheduler verfügt jetzt über ein verbindliches Runtime-Startprofil mit fail-fast Konfigurationsvalidierung (DB-Pfad, Lock-Owner, Intervall, TTL/Heartbeat).
+- Der produktive Startpfad verdrahtet den Scheduler explizit auf persistente SQLite-Adapter und vermeidet implizite In-Memory-Fallbacks.

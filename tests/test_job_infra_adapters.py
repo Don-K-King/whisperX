@@ -4,7 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from evodox.jobs.create_service import CreateJobResponse, IdempotencyRecord, UploadSession
@@ -19,7 +19,10 @@ from evodox.jobs.infrastructure import (
     SQLiteOutbox,
     SQLiteRetentionCandidateRepository,
     SQLiteRetentionExecutionRepository,
+    SQLiteRetentionRetryStore,
+    SQLiteSchedulerLeaseStore,
 )
+from evodox.jobs.retention_scheduler import RetentionFailureRecord
 
 
 class InfrastructureAdaptersTests(unittest.TestCase):
@@ -208,6 +211,64 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             dlq_rows = outbox.list_pending(limit=10)
             self.assertEqual(len(dlq_rows), 1)
             self.assertEqual(dlq_rows[0]["tenant_id"], "tenant-b")
+
+    def test_scheduler_lease_store_persists_last_run_and_lock(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            lease_a = SQLiteSchedulerLeaseStore(db_path, lock_owner="owner-a")
+            lease_b = SQLiteSchedulerLeaseStore(db_path, lock_owner="owner-b")
+            now = datetime(2026, 3, 8, 12, 0, tzinfo=timezone.utc)
+
+            self.assertTrue(lease_a.should_run(now=now, interval=timedelta(minutes=1)))
+            self.assertFalse(lease_b.should_run(now=now, interval=timedelta(minutes=1)))
+            lease_a.mark_ran(now=now)
+            self.assertFalse(lease_b.should_run(now=now + timedelta(seconds=5), interval=timedelta(minutes=1)))
+            self.assertFalse(lease_b.renew_lock(now=now + timedelta(seconds=5)))
+            self.assertFalse(lease_a.renew_lock(now=now + timedelta(seconds=5)))
+            self.assertTrue(lease_b.should_run(now=now + timedelta(minutes=2), interval=timedelta(minutes=1)))
+
+    def test_retention_retry_store_enforces_idempotency_and_due_indexing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteRetentionRetryStore(db_path)
+            now = datetime(2026, 3, 8, 12, 0, tzinfo=timezone.utc)
+            record = RetentionFailureRecord(
+                failure_id="f-1",
+                tenant_id="tenant-a",
+                job_id="job-1",
+                failure_class="db_mark_failed",
+                first_failed_at=now - timedelta(minutes=10),
+                next_attempt_at=now - timedelta(minutes=1),
+                attempts=0,
+            )
+
+            store.upsert_failure(record)
+            store.upsert_failure(record)
+            due = store.list_due(now=now, limit=10)
+
+            self.assertEqual(len(due), 1)
+            store.mark_retry_scheduled("f-1", failure_class="db_mark_failed", next_attempt_at=now + timedelta(minutes=5))
+            pending_early = store.list_due(now=now + timedelta(minutes=2), limit=10)
+            self.assertEqual(pending_early, [])
+            pending_late = store.list_due(now=now + timedelta(minutes=6), limit=10)
+            self.assertEqual(len(pending_late), 1)
+            store.mark_invalid("f-1", failure_class="db_mark_failed", reason="invalid.retry_record")
+            self.assertEqual(store.list_due(now=now + timedelta(minutes=7), limit=10), [])
+            store.mark_recovered("f-1", failure_class="db_mark_failed")
+            self.assertEqual(store.list_due(now=now + timedelta(minutes=7), limit=10), [])
+
+            with sqlite3.connect(db_path) as conn:
+                invalid_reason = conn.execute(
+                    "SELECT invalid_reason FROM retention_retry_queue WHERE failure_id = ? AND failure_class = ?",
+                    ("f-1", "db_mark_failed"),
+                ).fetchone()[0]
+            self.assertIsNone(invalid_reason)
+
+            with sqlite3.connect(db_path) as conn:
+                idx_names = {row[1] for row in conn.execute("PRAGMA index_list(retention_retry_queue)").fetchall()}
+            self.assertIn("idx_retention_retry_tenant_id", idx_names)
+            self.assertIn("idx_retention_retry_status_due", idx_names)
+            self.assertIn("idx_retention_retry_next_attempt_at", idx_names)
 
 
 if __name__ == "__main__":
