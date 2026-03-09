@@ -93,6 +93,4 @@
 
 
 
-## 2026-03-09
-- Betreiberrelevante Deployment-Härtung: interne Service-Ports in `deploy/docker-compose.target.yml` konfliktpräventiv auf `18080` (Auth) und `18000` (API) umgestellt, inkl. angepasster Healthchecks.
-- Dokumentation ergänzt: Port-Konfliktanalyse gegen bestehende Zielinstanz in `docs/operations/port-conflict-report-2026-03-09.md`.
+

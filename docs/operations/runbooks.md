@@ -215,3 +215,120 @@ RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_ru
 - **Konflikt:** Compose-`depends_on` garantiert nur Startreihenfolge, nicht fachliche Readiness der Anwendung.
 - **Absicherung:** Harte Vorbedingung über `retention-preflight` mit `RETENTION_VALIDATE_ENV_ONLY=true` und zusätzliche Runtime-Healthchecks.
 - **Alternative (für höhere Reifegrade):** Migration auf Kubernetes mit `initContainers`, `readinessProbes` und getrennten ServiceAccounts für strengere Isolation.
+
+
+## 2026-03-09 – Schritt-für-Schritt: GitHub-Installation + Docker-Deploy mit Prüfmechanismen
+### Ziel und Deployment-Flows
+Dieser Ablauf verbindet die Operator-Schritte in einer reproduzierbaren Reihenfolge:
+1. **Source Flow:** GitHub-Checkout auf Release-Tag/Commit (kein blindes `main`).
+2. **Config Flow:** `.env` aus Produktions-Template ableiten und Pflichtparameter setzen.
+3. **Image Flow:** Registry-Image (bevorzugt) oder reproduzierbarer Source-Build.
+4. **Gate Flow:** blockierender `retention-preflight` vor jedem Runtime-Start.
+5. **Runtime Flow:** Plattformdienste → Anwendungsdienste.
+6. **Verification Flow:** Healthchecks, Logs, API-Basis-Calls und tenant-sichere Negativtests.
+
+### Schritt 1) Repository klonen und Release fixieren
+```bash
+git clone https://github.com/<org>/<repo>.git
+cd <repo>
+git fetch --tags --force
+git checkout <release-tag-oder-commit-sha>
+git rev-parse --short HEAD
+```
+**Prüfmechanismus:**
+- `git describe --tags --always` zeigt den fixierten Stand.
+- Kein Deployment von nicht versionierten Zwischenständen.
+
+### Schritt 2) Produktions-ENV vorbereiten
+```bash
+cp .env.production.example .env
+$EDITOR .env
+```
+Pflichtwerte setzen (mindestens):
+- DB/Broker/Storage/Auth Secrets: `POSTGRES_PASSWORD`, `RABBITMQ_DEFAULT_PASS`, `MINIO_ROOT_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`
+- Runner-Kontext: `RETENTION_TENANT_IDS`, `RETENTION_AUDIT_LOG_PATH`
+- S3/MinIO: `RETENTION_OBJECT_STORAGE_S3_BUCKET`, `RETENTION_OBJECT_STORAGE_S3_ENDPOINT`, `RETENTION_OBJECT_STORAGE_S3_REGION`, `RETENTION_OBJECT_STORAGE_S3_ACCESS_KEY`, `RETENTION_OBJECT_STORAGE_S3_SECRET_KEY`
+- Image-Pinning: `EVODOX_IMAGE=ghcr.io/evodox/evodox:<release-tag>`
+
+**Security-Gates vor Start:**
+```bash
+rg -n "(PASSWORD=change-me|<secret-ref>|:latest$)" .env
+```
+Erwartung: keine Treffer für produktive Werte; `latest` ist unzulässig.
+
+### Schritt 3) Docker-Image-Strategie wählen
+**Variante A (empfohlen):** Vorgebautes, versioniertes Registry-Image über `EVODOX_IMAGE` nutzen.
+
+**Variante B:** Source-Build aus GitHub-Checkout und anschließend lokal/tagged bereitstellen.
+
+**Architekturkonflikt-Hinweis:**
+Im Repository ist `deploy/docker-compose.target.yml` vorhanden, aber kein Dockerfile im Baum. Für Variante B ist ein reproduzierbares Build-Recipe (inkl. Digest/SBOM/Signatur) in der Infrastruktur zwingend; sonst Build-/Runtime-Drift.
+
+### Schritt 4) Preflight zwingend ausführen (harte Deployment-Sperre)
+```bash
+docker compose -f deploy/docker-compose.target.yml run --rm retention-preflight
+```
+**Prüfmechanismus:**
+- Erfolgsfall: Command endet erfolgreich (Exit 0).
+- Fehlerfall: Konfigurationsverletzung (`Exit 2`) → Deployment abbrechen und `.env` korrigieren.
+
+### Schritt 5) Plattformdienste starten
+```bash
+docker compose -f deploy/docker-compose.target.yml up -d db broker object-storage auth
+```
+**Prüfmechanismen je Deployment-Objekt:**
+```bash
+docker compose -f deploy/docker-compose.target.yml ps
+docker compose -f deploy/docker-compose.target.yml logs --tail=100 db broker object-storage auth
+```
+- `db`: `pg_isready` muss healthy sein.
+- `broker`: `rabbitmq-diagnostics check_running` healthy.
+- `object-storage`: MinIO readiness healthy.
+- `auth`: Keycloak readiness (`/health/ready`) healthy.
+
+### Schritt 6) Anwendung starten
+```bash
+docker compose -f deploy/docker-compose.target.yml up -d api worker retention-runner
+```
+**Prüfmechanismen je Deployment-Objekt:**
+```bash
+docker compose -f deploy/docker-compose.target.yml ps
+docker compose -f deploy/docker-compose.target.yml logs --tail=200 api worker retention-runner
+```
+- `api`: `/docs` erreichbar.
+- `worker`: keine CrashLoop-/Importfehler.
+- `retention-runner`: Startsignal `retention_scheduler.runner.started`, kein `config_error`.
+
+### Schritt 7) End-to-End-Basisprüfung + tenant-sichere Negativtests
+#### 7.1 API-Erreichbarkeit
+```bash
+curl -fsS http://localhost:8000/docs >/dev/null
+```
+
+#### 7.2 Auth/tenant-Grundprüfung (mit gültigem Bearer-Token)
+```bash
+curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token>"
+```
+
+#### 7.3 Negativtests (Security by Default)
+```bash
+# fehlendes Token -> 401
+curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>
+
+# tenant-fremder Zugriff -> 403/404 gemäß Endpoint-Regel
+curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token-aus-anderem-tenant>"
+```
+
+### Pflicht-Checks nach jeder Änderung am Deployment-Setup
+```bash
+python -m unittest tests/test_target_deployment_artifacts.py
+python -m unittest discover -s tests -p "test_*.py"
+```
+- Erster Test prüft Compose-/Runbook-/Monitoring-Artefakte.
+- Vollständige Regression ist Pflicht bei Pipeline-/Build-/Architektur-Änderungen.
+
+### Rückbau / Rollback
+```bash
+docker compose -f deploy/docker-compose.target.yml down
+```
+Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schritt 4–7 erneut ausrollen.
