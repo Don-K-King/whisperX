@@ -48,7 +48,7 @@ services:
   auth:
     image: quay.io/keycloak/keycloak:26.0
     restart: unless-stopped
-    command: ["start-dev"]
+    command: ["start-dev", "--http-port=18080"]
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?required}
@@ -60,7 +60,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:18080/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 12
@@ -94,7 +94,7 @@ services:
   api:
     image: ${EVODOX_IMAGE:?required}
     restart: unless-stopped
-    command: ["uv", "run", "uvicorn", "evodox.web.fastapi_adapter:create_fastapi_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uv", "run", "uvicorn", "evodox.web.fastapi_adapter:create_fastapi_app", "--factory", "--host", "0.0.0.0", "--port", "18000"]
     env_file:
       - .env
     depends_on:
@@ -107,7 +107,7 @@ services:
       retention-preflight:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/docs"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:18000/docs"]
       interval: 15s
       timeout: 5s
       retries: 5
