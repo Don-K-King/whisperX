@@ -141,3 +141,9 @@
 - Deployment-Hardening ergänzt: Preflight-Validierung über `RETENTION_VALIDATE_ENV_ONLY=true` für Manifest-/Init-Checks.
 - Referenz: ADR-0013 (`/docs/adr/ADR-0013-retention-runner-storage-backend-und-recovery-governance.md`).
 
+
+## 2026-03-09 – Zielinstanz-Portkollision präventiv entschärft
+- Betriebs-/Architekturentscheidung: interne Compose-Ports für Auth/API von `8080/8000` auf `18080/18000` verlegt, obwohl aktuell keine Host-Port-Publishes konfiguriert sind.
+- Begründung: reduziert Kollisionsrisiko bei späteren Betriebsmodi (`ports:`-Freigaben, Host-Networking, Debug-Publishes) auf bereits belegten Zielinstanz-Ports.
+- Security-Bewertung: keine zusätzliche Exposition, da weiterhin keine externen Port-Bindings gesetzt werden; Änderung betrifft nur interne Service-Kommunikation/Healthchecks.
+- Nachweis/Analyse: `docs/operations/port-conflict-report-2026-03-09.md`.

@@ -191,8 +191,8 @@ RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_ru
    - `db`: `pg_isready`
    - `broker`: `rabbitmq-diagnostics check_running`
    - `object-storage`: MinIO readiness
-   - `auth`: `http://localhost:8080/health/ready`
-   - `api`: `http://localhost:8000/docs`
+   - `auth`: `http://localhost:18080/health/ready`
+   - `api`: `http://localhost:18000/docs`
 3. Runner-Validierung:
    ```bash
    docker compose -f deploy/docker-compose.target.yml logs --tail=200 retention-runner
