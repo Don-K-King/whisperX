@@ -92,3 +92,9 @@
 - Neue vollständige Konfigurationsvorlage: `.env.example`.
 
 
+
+
+## 2026-03-09
+- Betreiberdokumentation erweitert: vollständige Schritt-für-Schritt-Anleitung für GitHub-Checkout, `.env`-Härtung, Docker-Startreihenfolge und verifizierbare Prüfmechanismen je Deployment-Objekt (`db`, `broker`, `object-storage`, `auth`, `api`, `worker`, `retention-runner`).
+- Security-/Architekturhinweis ergänzt: produktive Deployments müssen `EVODOX_IMAGE` versioniert pinnen; Source-Build ohne reproduzierbares Build-Recipe birgt Build-/Runtime-Drift.
+- Verbindliche Prüfkommandos dokumentiert: blockierender `retention-preflight`, Compose-Healthchecks, Log-Validierung, API-Basischeck und tenant-sichere Negativtests.
