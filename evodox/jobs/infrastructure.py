@@ -694,12 +694,20 @@ class SQLiteOutbox:
                 ),
             )
 
-    def list_pending(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_pending(self, limit: int = 100, queues: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        queue_filter = tuple(item for item in (queues or ()) if str(item).strip())
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM outbox_events WHERE status = 'pending' ORDER BY event_id LIMIT ?",
-                (limit,),
-            ).fetchall()
+            if queue_filter:
+                placeholders = ", ".join("?" for _ in queue_filter)
+                rows = conn.execute(
+                    f"SELECT * FROM outbox_events WHERE status = 'pending' AND queue IN ({placeholders}) ORDER BY event_id LIMIT ?",
+                    (*queue_filter, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM outbox_events WHERE status = 'pending' ORDER BY event_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [
             {
                 "event_id": row["event_id"],

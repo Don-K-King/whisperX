@@ -170,3 +170,9 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Tenant-scoped Checkpoint-Speicherung.** Checkpoints werden ausschliesslich mit verpflichtendem `(tenant_id, job_id)` Kontext persistiert.
 - **Control: Teilresultate bleiben intern.** Checkpoint- und Zwischenartefakte werden nicht ueber API/Frontend exponiert.
 - **Control: Kooperative Unterbrechungspunkte.** Pause/Cancel werden zwischen Segmenten und Stage-Grenzen geprueft, um unkontrollierte Teilzustandsverluste zu vermeiden.
+
+## 2026-03-22 - Controls fuer GPU-First Runtime und Fallback-Governance
+- **Control: Transparenter Runtime-Fallback.** Bei nicht verfuegbarer CUDA darf Fallback nur kontrolliert erfolgen (`cuda -> cpu/int8`) und muss als `worker.runtime.gpu_fallback` auditierbar sein.
+- **Control: No-Secret Logging.** GPU-Preflight/Fallback-Logs enthalten keine Tokens/Secrets; nur nicht-sensitive Device-/Reason-Metadaten.
+- **Control: Queue-Rollenisolation.** Dedizierte Worker-Pools verwenden explizite `WORKER_ALLOWED_QUEUES`, um ungewollte Cross-Pool-Verarbeitung zu vermeiden.
+- **Control: Tenant-Isolation bleibt unveraendert.** GPU-/Pool-Optimierungen duerfen tenant-scoped Objektpfad- und Statuskontrollen nicht umgehen.

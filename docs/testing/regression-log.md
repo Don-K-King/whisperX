@@ -134,3 +134,16 @@
 - Ausgefuehrt (gezieltes Red->Green): `docker run --rm -v C:\\Users\\patrick\\Evidowhisperx:/work -w /work evodox-local:dev sh -lc "python -m pip install --quiet httpx && python -m unittest tests.test_worker_pipeline_service tests.test_job_lifecycle_service"`.
 - Ergebnis (gezielt): Erst Red im neuen Resume-Dedupe-Test (6 statt 4 Segmente), danach Green mit Fix.
 - Bewertung: Force-Delete- und Anti-Restart-Semantik sind regressionsseitig abgesichert; Pause/Resume bleibt auch bei nicht offset-faehiger ASR-Engine ohne Segmentduplikate konsistent.
+
+## 2026-03-22 - Regression nach GPU-First Runtime + Multi-GPU Pool-Vorbereitung
+- Anlass: Architektur-/Deployment-Aenderung fuer GPU-Default, CUDA-Fallback, Device-Index-Wiring und queue-basierte Worker-Pool-Vorbereitung.
+- Ausgefuehrt (gezielte TDD-Red/Green):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi uvicorn pydantic boto3 && python -m unittest tests.test_worker_runner tests.test_complete_upload_infrastructure tests.test_target_deployment_artifacts"`
+- Ergebnis (gezielt): zuerst Red (neue GPU-/Queue-Tests), danach Green (25 Tests, OK).
+- Ausgefuehrt (Backend Vollsuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi uvicorn pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'"`
+- Ergebnis (Backend Vollsuite): Gruen, 156 Tests, 0 Failures.
+- Ausgefuehrt (Frontend Regression):
+  - `node --test frontend/tests/*.test.js`
+- Ergebnis (Frontend): Gruen, 14 Tests.
+- Bewertung: Keine Regression in API/Worker/Queue/Frontend-Flows; GPU-Fallback und Multi-Pool-Vorbereitung sind testseitig abgesichert.

@@ -135,3 +135,12 @@
 - Job-Loeschung als Soft-Delete umgesetzt inkl. Pending-Outbox-Pruning und Audit-Eintrag.
 - Frontend erweitert um Upload-Fortschrittsanzeige, statusabhaengige Action-Buttons und Polling mit 429-Backoff (5s bis 30s).
 - Testabdeckung ausgebaut: neue API-Contract-, Lifecycle-, Worker- und Frontend-Tests fuer diesen Schritt.
+
+## 2026-03-22
+- GPU-First Worker-Default eingefuehrt: lokale Runtime nutzt standardmaessig `WORKER_WHISPERX_DEVICE=cuda` und `WORKER_WHISPERX_COMPUTE_TYPE=float16`.
+- Runtime-Haertung: Worker fuehrt beim Start einen GPU-Preflight aus und faellt bei CUDA-Problemen kontrolliert auf `cpu/int8` zurueck.
+- Auditierbarkeit erweitert: GPU-Fallback wird als `worker.runtime.gpu_fallback` im Worker-Audit protokolliert.
+- Multi-GPU-Vorbereitung umgesetzt: neuer Parameter `WORKER_WHISPERX_DEVICE_INDEX` wird an WhisperX CLI (`--device_index`) uebergeben.
+- Pool-Vorbereitung fuer spaetere Server-Skalierung umgesetzt: `WORKER_ALLOWED_QUEUES` und queue-basiertes Outbox-Filtering.
+- Deployment-Artefakte erweitert: Compose bietet zusaetzlich `worker-cpu`, `worker-gpu-0`, `worker-gpu-1` (Profile `multi-gpu`) mit dediziertem GPU-Pinning.
+- `.env`, `.env.example` und `.env.production.example` auf GPU-First-Defaults aktualisiert.

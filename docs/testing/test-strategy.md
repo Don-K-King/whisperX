@@ -120,3 +120,14 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 - Worker-Integration Pflichttests: kooperatives `pause_requested`/`cancel_requested` zwischen Segmenten und Stage-Grenzen.
 - Frontend Pflichttests: Sichtbarkeit/Aktivierung der `Cancel` Action je Status sowie kein `Resume` bei `canceled`.
 - Smoke-Pflichtpfade: `create -> processing -> pause -> resume(checkpoint) -> completed` und `create -> processing -> cancel -> canceled`.
+
+## 2026-03-22 - Erweiterung fuer GPU-First Runtime + Multi-GPU Pool-Vorbereitung
+- Neue Pflichttests (Step 4 / Worker Runtime):
+  - Runtime-Settings: Defaults fuer `WORKER_WHISPERX_DEVICE`, `WORKER_WHISPERX_COMPUTE_TYPE`, `WORKER_WHISPERX_DEVICE_INDEX`.
+  - Command-Build: WhisperX-Aufruf enthaelt `--device_index`.
+  - Runtime-Fallback: `device=cuda` und nicht verfuegbare GPU fuehrt zu kontrolliertem Fallback (`cpu/int8`) mit Audit-Event.
+  - Queue-Pool-Filter: Worker verarbeitet nur erlaubte Queue-Klassen (`WORKER_ALLOWED_QUEUES`).
+- Deployment-Tests erweitert:
+  - Compose/ENV-Artefakte pruefen GPU-First-Defaults und dedizierte Multi-GPU-Service-Definitionen.
+- Regression-Gate bleibt verpflichtend:
+  - Vollstaendige Python-Suite (`test_*.py`) plus Frontend-Tests (`frontend/tests/*.test.js`) bei Pipeline-/Build-/Architektur-Aenderungen.

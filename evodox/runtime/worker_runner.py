@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import inspect
 import logging
@@ -51,8 +51,9 @@ class WorkerRuntimeSettings:
     object_storage_base_url: str = "http://object-storage:9000"
     object_storage_bucket: str = "uploads"
     whisperx_model: str = "tiny"
-    whisperx_device: str = "cpu"
-    whisperx_compute_type: str = "int8"
+    whisperx_device: str = "cuda"
+    whisperx_compute_type: str = "float16"
+    whisperx_device_index: int = 0
     whisperx_batch_size: int = 4
     whisperx_model_dir: Path = Path("/runtime/models")
     enable_diarization: bool = True
@@ -64,6 +65,7 @@ class WorkerRuntimeSettings:
     media_temp_dir: Path = Path("/tmp/evodox-worker")
     whisperx_timeout_seconds: int = 0
     worker_max_retries: int = 3
+    worker_allowed_queues: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "WorkerRuntimeSettings":
@@ -83,8 +85,12 @@ class WorkerRuntimeSettings:
         object_storage_base_url = source.get("WORKER_OBJECT_STORAGE_BASE_URL", "http://object-storage:9000").strip()
         object_storage_bucket = source.get("WORKER_OBJECT_STORAGE_BUCKET", "uploads").strip()
         whisperx_model = source.get("WORKER_WHISPERX_MODEL", "tiny").strip()
-        whisperx_device = source.get("WORKER_WHISPERX_DEVICE", "cpu").strip().lower()
-        whisperx_compute_type = source.get("WORKER_WHISPERX_COMPUTE_TYPE", "int8").strip().lower()
+        whisperx_device = source.get("WORKER_WHISPERX_DEVICE", "cuda").strip().lower()
+        whisperx_compute_type = source.get("WORKER_WHISPERX_COMPUTE_TYPE", "float16").strip().lower()
+        whisperx_device_index = _parse_non_negative_int(
+            source.get("WORKER_WHISPERX_DEVICE_INDEX", "0"),
+            "WORKER_WHISPERX_DEVICE_INDEX",
+        )
         whisperx_batch_size = _parse_positive_int(source.get("WORKER_WHISPERX_BATCH_SIZE", "4"), "WORKER_WHISPERX_BATCH_SIZE")
         whisperx_model_dir = Path(source.get("WORKER_WHISPERX_MODEL_DIR", "/runtime/models").strip())
         enable_diarization = _parse_bool(source.get("WORKER_ENABLE_DIARIZATION", "true"))
@@ -107,6 +113,7 @@ class WorkerRuntimeSettings:
             "WORKER_WHISPERX_TIMEOUT_SECONDS",
         )
         worker_max_retries = _parse_non_negative_int(source.get("WORKER_MAX_RETRIES", "3"), "WORKER_MAX_RETRIES")
+        worker_allowed_queues = _parse_csv_list(source.get("WORKER_ALLOWED_QUEUES", ""))
 
         if mode == "whisperx":
             if not object_storage_base_url:
@@ -132,8 +139,9 @@ class WorkerRuntimeSettings:
             object_storage_base_url=object_storage_base_url,
             object_storage_bucket=object_storage_bucket,
             whisperx_model=whisperx_model or "tiny",
-            whisperx_device=whisperx_device or "cpu",
-            whisperx_compute_type=whisperx_compute_type or "int8",
+            whisperx_device=whisperx_device or "cuda",
+            whisperx_compute_type=whisperx_compute_type or "float16",
+            whisperx_device_index=whisperx_device_index,
             whisperx_batch_size=whisperx_batch_size,
             whisperx_model_dir=whisperx_model_dir,
             enable_diarization=enable_diarization,
@@ -145,6 +153,7 @@ class WorkerRuntimeSettings:
             media_temp_dir=media_temp_dir,
             whisperx_timeout_seconds=whisperx_timeout_seconds,
             worker_max_retries=worker_max_retries,
+            worker_allowed_queues=worker_allowed_queues,
         )
 
 
@@ -161,6 +170,7 @@ class WorkerRuntime:
         settings: WorkerRuntimeSettings,
         media_fetcher: Callable[[str], Path] | None = None,
         whisperx_runner: Callable[..., dict[str, Any]] | None = None,
+        cuda_available_fn: Callable[[], bool] | None = None,
     ) -> None:
         self.settings = settings
         self.settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,6 +181,14 @@ class WorkerRuntime:
         self.job_repository = SQLiteJobRepository(self.settings.db_path)
         self.outbox = SQLiteOutbox(self.settings.db_path)
         self.audit_log = JsonlAuditLog(self.settings.audit_log_path)
+        effective_settings, fallback_event = _resolve_effective_whisperx_settings(
+            self.settings,
+            cuda_available_fn=cuda_available_fn or _default_cuda_available,
+        )
+        self.settings = effective_settings
+        if fallback_event is not None:
+            self.audit_log.append(fallback_event)
+            LOGGER.warning("worker.runtime.gpu_fallback", extra={"event": fallback_event})
         self.artifact_store = SQLiteWorkerArtifactStore(self.settings.db_path)
         self.checkpoint_store = SQLiteJobCheckpointStore(self.settings.db_path)
         asr_engine, align_engine, diarize_engine = _build_processing_engines(
@@ -193,8 +211,15 @@ class WorkerRuntime:
         failed = 0
         now = datetime.now(tz=timezone.utc)
 
-        for event in self.outbox.list_pending(limit=self.settings.batch_size):
+        for event in _list_pending_events(
+            self.outbox,
+            limit=self.settings.batch_size,
+            allowed_queues=self.settings.worker_allowed_queues,
+        ):
             if not _is_due(event.get("next_attempt_at"), now=now):
+                continue
+            event_queue = str(event.get("queue") or "").strip()
+            if self.settings.worker_allowed_queues and event_queue not in self.settings.worker_allowed_queues:
                 continue
             payload = event.get("payload", {})
             if event.get("event_type") != "job.queued":
@@ -376,23 +401,28 @@ def create_worker_runner(
 ) -> WorkerRunner:
     settings = WorkerRuntimeSettings.from_env(env)
     runtime = WorkerRuntime(settings=settings)
+    effective_settings = runtime.settings
     shutdown_event = stop_event or threading.Event()
     _install_signal_handlers(shutdown_event, signal_module=signal_module, logger=logger)
     logger.info(
         "worker.runner.started",
         extra={
             "event": {
-                "db_path": str(settings.db_path),
-                "mode": settings.mode,
-                "batch_size": settings.batch_size,
-                "poll_interval_seconds": settings.poll_interval_seconds,
-                "diarization_enabled": settings.enable_diarization,
+                "db_path": str(effective_settings.db_path),
+                "mode": effective_settings.mode,
+                "batch_size": effective_settings.batch_size,
+                "poll_interval_seconds": effective_settings.poll_interval_seconds,
+                "diarization_enabled": effective_settings.enable_diarization,
+                "whisperx_device": effective_settings.whisperx_device,
+                "whisperx_compute_type": effective_settings.whisperx_compute_type,
+                "whisperx_device_index": effective_settings.whisperx_device_index,
+                "worker_allowed_queues": list(effective_settings.worker_allowed_queues),
             }
         },
     )
     return WorkerRunner(
         runtime=runtime,
-        settings=settings,
+        settings=effective_settings,
         stop_event=shutdown_event,
         sleep_fn=sleep_fn,
         logger=logger,
@@ -675,6 +705,8 @@ def _build_whisperx_command(
         settings.whisperx_model,
         "--device",
         settings.whisperx_device,
+        "--device_index",
+        str(settings.whisperx_device_index),
         "--batch_size",
         str(settings.whisperx_batch_size),
         "--compute_type",
@@ -833,6 +865,63 @@ def _is_due(next_attempt_at: str | None, *, now: datetime) -> bool:
     return parsed <= now
 
 
+def _list_pending_events(outbox: Any, *, limit: int, allowed_queues: tuple[str, ...]) -> list[dict[str, Any]]:
+    list_pending = getattr(outbox, "list_pending", None)
+    if not callable(list_pending):
+        return []
+    if not allowed_queues:
+        return list(list_pending(limit=limit))
+    try:
+        return list(list_pending(limit=limit, queues=allowed_queues))
+    except TypeError:
+        return list(list_pending(limit=limit))
+
+
+def _default_cuda_available() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    return bool(torch.cuda.is_available())
+
+
+def _resolve_effective_whisperx_settings(
+    settings: WorkerRuntimeSettings,
+    *,
+    cuda_available_fn: Callable[[], bool],
+) -> tuple[WorkerRuntimeSettings, dict[str, Any] | None]:
+    if settings.mode != "whisperx":
+        return settings, None
+    if settings.whisperx_device != "cuda":
+        return settings, None
+
+    fallback_reason = "cuda.not_available"
+    try:
+        if cuda_available_fn():
+            return settings, None
+    except Exception as exc:
+        fallback_reason = f"cuda.check_failed.{type(exc).__name__}"
+
+    fallback_settings = replace(
+        settings,
+        whisperx_device="cpu",
+        whisperx_compute_type="int8",
+        whisperx_device_index=0,
+    )
+    event = {
+        "action": "worker.runtime.gpu_fallback",
+        "configured_device": settings.whisperx_device,
+        "configured_compute_type": settings.whisperx_compute_type,
+        "configured_device_index": settings.whisperx_device_index,
+        "effective_device": fallback_settings.whisperx_device,
+        "effective_compute_type": fallback_settings.whisperx_compute_type,
+        "effective_device_index": fallback_settings.whisperx_device_index,
+        "reason": fallback_reason,
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    return fallback_settings, event
+
+
 def _install_signal_handlers(stop_event: threading.Event, *, signal_module: Any, logger: logging.Logger) -> None:
     def _handle_shutdown(signum: int, _frame: Any) -> None:
         logger.info("worker.runner.shutdown_requested", extra={"event": {"signal": signum}})
@@ -878,6 +967,16 @@ def _parse_non_negative_int(raw: str, key: str) -> int:
 
 def _parse_bool(raw: str) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv_list(raw: str) -> tuple[str, ...]:
+    values = []
+    for item in str(raw or "").split(","):
+        value = item.strip()
+        if not value:
+            continue
+        values.append(value)
+    return tuple(values)
 
 
 if __name__ == "__main__":

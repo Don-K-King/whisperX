@@ -33,6 +33,34 @@ class OutboxInfrastructureTests(unittest.TestCase):
             self.assertEqual(events[0]["event_type"], "job.queued")
             self.assertEqual(events[0]["tenant_id"], "tenant-a")
 
+    def test_sqlite_outbox_can_filter_pending_events_by_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            outbox = SQLiteOutbox(db_path)
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_gpu",
+                    "queue": "gpu-standard",
+                    "payload": {"job_id": "job_gpu"},
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_cpu",
+                    "queue": "cpu-short",
+                    "payload": {"job_id": "job_cpu"},
+                }
+            )
+
+            gpu_events = outbox.list_pending(limit=10, queues=("gpu-standard",))
+
+            self.assertEqual(len(gpu_events), 1)
+            self.assertEqual(gpu_events[0]["job_id"], "job_gpu")
+
     def test_outbox_dispatcher_publishes_and_marks_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "evodox.db"

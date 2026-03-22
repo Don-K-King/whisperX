@@ -416,3 +416,31 @@ Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schri
 - `WORKER_WHISPERX_TIMEOUT_SECONDS=0` deaktiviert harte Subprocess-Timeouts fuer lange ASR-Runs.
 - Generische Worker-Exceptions sind terminal (DLQ + `failed_terminal`) und werden nicht blind erneut gestartet.
 - Retries bleiben nur fuer explizit retryable Fehlerpfade aktiv.
+
+## 2026-03-22 - Runbook: GPU-First Worker (lokal) und Multi-GPU Profile (Server)
+### Lokaler GPU-First Start
+1. Sicherstellen, dass Docker NVIDIA Runtime aktiv ist (`docker info` enthaelt Runtime `nvidia`).
+2. Worker standardmaessig mit GPU starten (kein manueller Device-Switch notwendig):
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml up -d worker
+   ```
+3. Startlog pruefen (`worker.runner.started`):
+   - Erwartet: `whisperx_device=cuda`.
+   - Bei fehlender GPU: kontrollierter Fallback auf `cpu` + Audit-Event `worker.runtime.gpu_fallback`.
+
+### Multi-GPU Compose-Profile (vorbereitet)
+1. Dedizierte Worker-Pools starten:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml --profile multi-gpu up -d worker-cpu worker-gpu-0 worker-gpu-1
+   ```
+2. Queue-Rollen pruefen:
+   - `worker-cpu` verarbeitet `cpu-short`.
+   - `worker-gpu-*` verarbeiten `gpu-standard,gpu-long`.
+3. Bei GPU-Ausfall in einem Pool:
+   - betroffenen `worker-gpu-*` neu starten,
+   - Fallback-/OOM-Events im Worker-Audit und Logs auswerten,
+   - Queue-Lag fuer `gpu-*` beobachten und ggf. Last auf weitere GPU-Worker verteilen.
+
+### Betriebsrisiko / Governance
+- `WORKER_ALLOWED_QUEUES` muss je Worker-Rolle explizit gesetzt sein, um Pool-Kollisionen zu vermeiden.
+- Pro GPU initial nur ein Worker-Prozess betreiben; Batch-Groesse schrittweise erhoehen.

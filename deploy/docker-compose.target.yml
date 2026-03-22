@@ -141,6 +141,7 @@ services:
     image: ${EVODOX_IMAGE:?required}
     restart: unless-stopped
     command: ["python", "-m", "evodox.runtime.worker_runner"]
+    gpus: all
     env_file:
       - ../.env
     environment:
@@ -152,9 +153,11 @@ services:
       WORKER_OBJECT_STORAGE_BASE_URL: ${WORKER_OBJECT_STORAGE_BASE_URL:-http://object-storage:9000}
       WORKER_OBJECT_STORAGE_BUCKET: ${WORKER_OBJECT_STORAGE_BUCKET:-uploads}
       WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-tiny}
-      WORKER_WHISPERX_DEVICE: ${WORKER_WHISPERX_DEVICE:-cpu}
-      WORKER_WHISPERX_COMPUTE_TYPE: ${WORKER_WHISPERX_COMPUTE_TYPE:-int8}
+      WORKER_WHISPERX_DEVICE: ${WORKER_WHISPERX_DEVICE:-cuda}
+      WORKER_WHISPERX_COMPUTE_TYPE: ${WORKER_WHISPERX_COMPUTE_TYPE:-float16}
+      WORKER_WHISPERX_DEVICE_INDEX: ${WORKER_WHISPERX_DEVICE_INDEX:-0}
       WORKER_WHISPERX_BATCH_SIZE: ${WORKER_WHISPERX_BATCH_SIZE:-4}
+      WORKER_ALLOWED_QUEUES: ${WORKER_ALLOWED_QUEUES:-}
       WORKER_WHISPERX_MODEL_DIR: ${WORKER_WHISPERX_MODEL_DIR:-/runtime/models}
       WORKER_WHISPERX_DIARIZATION_MODEL: ${WORKER_WHISPERX_DIARIZATION_MODEL:-pyannote/speaker-diarization}
       WORKER_ENABLE_DIARIZATION: ${WORKER_ENABLE_DIARIZATION:-true}
@@ -174,6 +177,142 @@ services:
       - runtime-data:/runtime
     healthcheck:
       test: ["CMD", "python", "-c", "print('worker healthy')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker-cpu:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    profiles: ["multi-gpu"]
+    command: ["python", "-m", "evodox.runtime.worker_runner"]
+    env_file:
+      - ../.env
+    environment:
+      WORKER_DB_PATH: /runtime/jobs.db
+      WORKER_MODE: whisperx
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-25}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+      WORKER_AUDIT_LOG_PATH: /runtime/audit/worker-audit.jsonl
+      WORKER_OBJECT_STORAGE_BASE_URL: ${WORKER_OBJECT_STORAGE_BASE_URL:-http://object-storage:9000}
+      WORKER_OBJECT_STORAGE_BUCKET: ${WORKER_OBJECT_STORAGE_BUCKET:-uploads}
+      WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-tiny}
+      WORKER_WHISPERX_DEVICE: cpu
+      WORKER_WHISPERX_COMPUTE_TYPE: int8
+      WORKER_WHISPERX_DEVICE_INDEX: 0
+      WORKER_WHISPERX_BATCH_SIZE: ${WORKER_WHISPERX_BATCH_SIZE:-4}
+      WORKER_ALLOWED_QUEUES: cpu-short
+      WORKER_WHISPERX_MODEL_DIR: ${WORKER_WHISPERX_MODEL_DIR:-/runtime/models}
+      WORKER_WHISPERX_DIARIZATION_MODEL: ${WORKER_WHISPERX_DIARIZATION_MODEL:-pyannote/speaker-diarization}
+      WORKER_ENABLE_DIARIZATION: ${WORKER_ENABLE_DIARIZATION:-true}
+      WORKER_WHISPERX_VAD_METHOD: ${WORKER_WHISPERX_VAD_METHOD:-silero}
+      WORKER_MEDIA_TEMP_DIR: ${WORKER_MEDIA_TEMP_DIR:-/tmp/evodox-worker}
+      WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      retention-preflight:
+        condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('worker-cpu healthy')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker-gpu-0:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    profiles: ["multi-gpu"]
+    command: ["python", "-m", "evodox.runtime.worker_runner"]
+    gpus: all
+    env_file:
+      - ../.env
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0"
+      WORKER_DB_PATH: /runtime/jobs.db
+      WORKER_MODE: whisperx
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-25}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+      WORKER_AUDIT_LOG_PATH: /runtime/audit/worker-audit.jsonl
+      WORKER_OBJECT_STORAGE_BASE_URL: ${WORKER_OBJECT_STORAGE_BASE_URL:-http://object-storage:9000}
+      WORKER_OBJECT_STORAGE_BUCKET: ${WORKER_OBJECT_STORAGE_BUCKET:-uploads}
+      WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-tiny}
+      WORKER_WHISPERX_DEVICE: cuda
+      WORKER_WHISPERX_COMPUTE_TYPE: float16
+      WORKER_WHISPERX_DEVICE_INDEX: 0
+      WORKER_WHISPERX_BATCH_SIZE: ${WORKER_WHISPERX_BATCH_SIZE:-4}
+      WORKER_ALLOWED_QUEUES: gpu-standard,gpu-long
+      WORKER_WHISPERX_MODEL_DIR: ${WORKER_WHISPERX_MODEL_DIR:-/runtime/models}
+      WORKER_WHISPERX_DIARIZATION_MODEL: ${WORKER_WHISPERX_DIARIZATION_MODEL:-pyannote/speaker-diarization}
+      WORKER_ENABLE_DIARIZATION: ${WORKER_ENABLE_DIARIZATION:-true}
+      WORKER_WHISPERX_VAD_METHOD: ${WORKER_WHISPERX_VAD_METHOD:-silero}
+      WORKER_MEDIA_TEMP_DIR: ${WORKER_MEDIA_TEMP_DIR:-/tmp/evodox-worker}
+      WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      retention-preflight:
+        condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('worker-gpu-0 healthy')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker-gpu-1:
+    image: ${EVODOX_IMAGE:?required}
+    restart: unless-stopped
+    profiles: ["multi-gpu"]
+    command: ["python", "-m", "evodox.runtime.worker_runner"]
+    gpus: all
+    env_file:
+      - ../.env
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "1"
+      WORKER_DB_PATH: /runtime/jobs.db
+      WORKER_MODE: whisperx
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-25}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+      WORKER_AUDIT_LOG_PATH: /runtime/audit/worker-audit.jsonl
+      WORKER_OBJECT_STORAGE_BASE_URL: ${WORKER_OBJECT_STORAGE_BASE_URL:-http://object-storage:9000}
+      WORKER_OBJECT_STORAGE_BUCKET: ${WORKER_OBJECT_STORAGE_BUCKET:-uploads}
+      WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-tiny}
+      WORKER_WHISPERX_DEVICE: cuda
+      WORKER_WHISPERX_COMPUTE_TYPE: float16
+      WORKER_WHISPERX_DEVICE_INDEX: 0
+      WORKER_WHISPERX_BATCH_SIZE: ${WORKER_WHISPERX_BATCH_SIZE:-4}
+      WORKER_ALLOWED_QUEUES: gpu-standard,gpu-long
+      WORKER_WHISPERX_MODEL_DIR: ${WORKER_WHISPERX_MODEL_DIR:-/runtime/models}
+      WORKER_WHISPERX_DIARIZATION_MODEL: ${WORKER_WHISPERX_DIARIZATION_MODEL:-pyannote/speaker-diarization}
+      WORKER_ENABLE_DIARIZATION: ${WORKER_ENABLE_DIARIZATION:-true}
+      WORKER_WHISPERX_VAD_METHOD: ${WORKER_WHISPERX_VAD_METHOD:-silero}
+      WORKER_MEDIA_TEMP_DIR: ${WORKER_MEDIA_TEMP_DIR:-/tmp/evodox-worker}
+      WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      retention-preflight:
+        condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('worker-gpu-1 healthy')"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -186,3 +186,11 @@
 - Entscheidung: WhisperX-Timeout-Default wird auf `0` gesetzt (`timeout=None`), damit lange Jobs nicht kuenstlich abgebrochen werden.
 - Entscheidung: generische Worker-Exceptions sind nicht retrybar per default; sie gehen auf terminal (`failed_terminal` + DLQ), ausser explizit retryable Pfaden (`failed_retryable` bis `worker_max_retries`).
 - Entscheidung: laufende ASR-Subprozesse werden kooperativ ueber Polling beendet (`pause_requested|cancel_requested|deleted`), damit Pause/Resume/Cancel/Delete verlässlich auch waehrend langer Runs funktionieren.
+
+## 2026-03-22 - ADR-0017 GPU-First Local + Multi-GPU Compose-Worker-Pools
+- Worker-Runtime Defaults auf GPU-first umgestellt (`WORKER_WHISPERX_DEVICE=cuda`, `WORKER_WHISPERX_COMPUTE_TYPE=float16`).
+- Runtime-Haertung eingefuehrt: kontrollierter GPU-Preflight mit CPU-Fallback (`cpu/int8`) und auditierbarem Event `worker.runtime.gpu_fallback`.
+- WhisperX CLI-Wiring erweitert: `WORKER_WHISPERX_DEVICE_INDEX` wird ueber `--device_index` durchgereicht.
+- Queue-Pool-Vorbereitung umgesetzt: `WORKER_ALLOWED_QUEUES` + Outbox-Filter fuer dedizierte Worker-Rollen.
+- Compose-Zielbetrieb erweitert: Standard-`worker` ist GPU-first; zusaetzliche Profile-Services `worker-gpu-0`, `worker-gpu-1`, `worker-cpu` fuer dedizierte Server-Pools.
+- Referenz: ADR-0017 (`/docs/adr/ADR-0017-gpu-first-local-und-multi-gpu-compose-worker-pools.md`).

@@ -189,3 +189,19 @@
 
 ### Alert-Rules-Quelle
 - Referenzregeln liegen in `deploy/prometheus/alerts-targetbetrieb.yml` und müssen in die zentrale Alertmanager-Pipeline importiert werden.
+
+## 2026-03-22 - Monitoring-Erweiterung: GPU-First Runtime und dedizierte Pools
+- Neue Pflichtsignale:
+  - Log/Audit-Event `worker.runtime.gpu_fallback` (Zaehler pro Worker-Instanz).
+  - Effektiver Device-Modus aus `worker.runner.started` (`whisperx_device`, `whisperx_compute_type`, `whisperx_device_index`).
+  - Queue-Lag getrennt nach Klassen `cpu-short`, `gpu-standard`, `gpu-long`.
+- Alarmempfehlungen:
+  - **Alert: worker_gpu_fallback_spike**
+    - Bedingung: > N Fallbacks innerhalb 15 Minuten.
+    - Schweregrad: High (GPU-Instabilitaet oder Runtime-Misconfig).
+  - **Alert: worker_gpu_queue_lag_high**
+    - Bedingung: p95 Queue-Lag fuer `gpu-*` ueber Schwellwert.
+    - Schweregrad: High.
+  - **Alert: worker_gpu_pool_imbalance**
+    - Bedingung: ein GPU-Worker permanent ausgelastet, andere idle.
+    - Schweregrad: Medium (Routing/Batch/Queue-Tuning erforderlich).

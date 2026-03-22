@@ -10,11 +10,15 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
 
     def test_compose_defines_required_services_and_preflight_gate(self) -> None:
         compose = self._read("deploy/docker-compose.target.yml")
+        dockerfile = self._read("deploy/Dockerfile.runtime")
 
         for service in (
             "frontend:",
             "api:",
             "worker:",
+            "worker-gpu-0:",
+            "worker-gpu-1:",
+            "worker-cpu:",
             "retention-runner:",
             "retention-preflight:",
             "object-storage-init:",
@@ -30,8 +34,14 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         self.assertIn("WORKER_MODE: ${WORKER_MODE:-whisperx}", compose)
         self.assertIn("WORKER_OBJECT_STORAGE_BASE_URL", compose)
         self.assertIn("WORKER_OBJECT_STORAGE_BUCKET", compose)
+        self.assertIn("WORKER_WHISPERX_DEVICE: ${WORKER_WHISPERX_DEVICE:-cuda}", compose)
+        self.assertIn("WORKER_WHISPERX_COMPUTE_TYPE: ${WORKER_WHISPERX_COMPUTE_TYPE:-float16}", compose)
+        self.assertIn("WORKER_WHISPERX_DEVICE_INDEX: ${WORKER_WHISPERX_DEVICE_INDEX:-0}", compose)
+        self.assertIn("WORKER_ALLOWED_QUEUES", compose)
+        self.assertIn("gpus: all", compose)
         self.assertIn("WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}", compose)
         self.assertIn("mc mb --ignore-existing local/uploads", compose)
+        self.assertIn("PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128", dockerfile)
 
     def test_env_profiles_document_required_and_optional_variables_per_service(self) -> None:
         env_example = self._read(".env.example")
@@ -49,6 +59,10 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         for required in (
             "API_DB_DSN=",
             "WORKER_BROKER_URL=",
+            "WORKER_WHISPERX_DEVICE=cuda",
+            "WORKER_WHISPERX_COMPUTE_TYPE=float16",
+            "WORKER_WHISPERX_DEVICE_INDEX=0",
+            "WORKER_ALLOWED_QUEUES=",
             "RETENTION_VALIDATE_ENV_ONLY=false",
             "KEYCLOAK_ADMIN_PASSWORD=",
         ):
