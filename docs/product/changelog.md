@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-03-22
+- Neue Admin-Funktion im Frontend/API: tenant-spezifische, persistente Decoding-Settings fuer WhisperX (`GET/PUT /api/v1/admin/transcription-settings`).
+- Neue Persistenz eingefuehrt: `tenant_transcription_settings` fuer Tenant-Defaults und `jobs.transcription_options_json` fuer reproduzierbare Job-Snapshots.
+- Queueing/Resume erweitert: `job.queued` Events tragen jetzt `transcription_options`; Resumes verwenden denselben Snapshot statt aktueller Laufzeitwerte.
+- Worker-CLI-Wiring erweitert: Whitelist-Decoding-Parameter werden in den WhisperX-Aufruf gemappt (inkl. defensiver Fallbacks auf sichere Defaults).
+- Security-Haertung: strikte Feld-Whitelist mit Range-Validation; Audit-Events fuer Settings-Read/Update ohne Klartext-`initial_prompt` (nur Hash/Laenge).
+- Frontend um Admin-Route "Transcription Settings" erweitert (Laden, Validieren, Speichern inkl. Fehlerdarstellung).
+- Lokales Queue-Routing auf GPU-First verschaerft: `audio/*` und `video/*` werden bei `complete-upload` auf `gpu-standard` geroutet.
+- Betriebsrunbook ergaenzt: expliziter Stopp lokaler Zusatz-Worker (`worker-cpu`, `worker-gpu-*`) nach Tests mit `--profile multi-gpu`, damit im Local-PC-Betrieb nur der GPU-First-Worker aktiv ist.
+- Betriebsdokumentation korrigiert: Runbook-API-Beispiele auf den lokalen Frontend-Proxy (`http://localhost:18081/api/...`) aktualisiert, damit Checks dem Compose-Zielbetrieb entsprechen.
+- GPU-Verifikation im Runbook gehaertet: Device-Nachweis erfolgt ueber Container-ENV + CUDA-Runtime-Check + Audit-Fallback-Event (`worker.runtime.gpu_fallback`) statt ausschliesslich ueber unstrukturierte Log-Strings.
+- Neues Incident-Runbook dokumentiert: Diagnose und Behebung fuer Dashboard-Fehlerbild `unknown_error` bei Frontend-Proxy/API-Upstream-Problemen.
+- Monitoring/Alerting ergaenzt um Frontend-Proxy-5xx- und Upstream-Connect-Fehler, die im UI als `unknown_error` sichtbar werden.
 - Job-Lifecycle stabilisiert: `DELETE /api/v1/jobs/{id}` ist jetzt als Force-Soft-Delete fuer alle nicht bereits geloeschten Status verfuegbar (inkl. `upload_pending`, `queued`, `processing`, `pause_requested`, `cancel_requested`, `paused`).
 - Delete ist idempotent (`deleted` bleibt `deleted`) und setzt konsistent `status=deleted`, `progress=100`; Nutzer koennen damit auch haengende Test-/Sample-Jobs entfernen.
 - Delete prune't pending Outbox-Events und entfernt interne Checkpoint-/Artefakt-/Transcript-Reste auf Job-Ebene, sodass kein Re-Queue aus Altzustand mehr erfolgt.

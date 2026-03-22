@@ -8,6 +8,10 @@ import {
   uploadFileToPresignedUrl,
 } from './utils.js';
 import { createAndQueueJobUpload } from './upload_flow.js';
+import {
+  loadTranscriptionSettings,
+  saveTranscriptionSettings,
+} from './transcription_settings_flow.js';
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed_terminal', 'deleted', 'canceled']);
 
@@ -28,11 +32,13 @@ const i18n = {
     login: 'Anmeldung', signin: 'Anmelden', token: 'Bearer Token', dashboard: 'Dashboard', newjob: 'Neuer Job',
     audit: 'Audit', notauth: 'Nicht berechtigt', create: 'Job erstellen', retention: 'Retention (read-only)',
     detail: 'Job-Detail', errors: 'Fehlerdetails', dark: 'Dark', light: 'Light', jobsub: 'Transkriptionsjobs und Fortschritt',
+    transcriptionsettings: 'Transcription Settings',
   },
   en: {
     login: 'Login', signin: 'Sign in', token: 'Bearer Token', dashboard: 'Dashboard', newjob: 'New Job',
     audit: 'Audit', notauth: 'Not authorized', create: 'Create job', retention: 'Retention (read-only)',
     detail: 'Job detail', errors: 'Error details', dark: 'Dark', light: 'Light', jobsub: 'Transcription jobs and progress',
+    transcriptionsettings: 'Transcription Settings',
   },
 };
 
@@ -91,7 +97,10 @@ function bindTopbar() {
   document.getElementById('tenant-badge').textContent = `Tenant: ${state.auth?.tenant_id ?? '-'}`;
   document.getElementById('theme-toggle').textContent = `Theme: ${state.theme === 'dark' ? t('dark') : t('light')}`;
   const auditButton = document.getElementById('audit-nav');
-  auditButton.hidden = !(state.auth?.roles ?? []).includes('admin');
+  const settingsButton = document.getElementById('transcription-settings-nav');
+  const isAdmin = (state.auth?.roles ?? []).includes('admin');
+  auditButton.hidden = !isAdmin;
+  settingsButton.hidden = !isAdmin;
 
   document.querySelectorAll('.nav-link').forEach((button) => {
     button.onclick = () => {
@@ -391,6 +400,69 @@ async function loadRoute({ fromPoll = false } = {}) {
     try {
       const response = await callApi('/api/v1/audit');
       app.innerHTML = `<h1>${t('audit')}</h1><ul>${(response.events ?? []).map((event) => `<li>${event.tenant_id} | ${event.actor_id ?? 'n/a'} | ${event.correlation_id ?? 'n/a'}</li>`).join('')}</ul>`;
+    } catch (problem) {
+      app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
+    }
+    return;
+  }
+
+  if (state.route === 'transcription-settings') {
+    stopPolling();
+    if (!(state.auth.roles ?? []).includes('admin')) {
+      app.innerHTML = `<p>${t('notauth')}</p>`;
+      return;
+    }
+    try {
+      const response = await loadTranscriptionSettings({ callApi });
+      const options = response.decoding_options;
+      app.innerHTML = `
+        <h1>${t('transcriptionsettings')}</h1>
+        <div class="card">
+          <div class="input-row"><label>temperature</label><input id="ts-temperature" type="number" step="0.01" /></div>
+          <div class="input-row"><label>beam_size</label><input id="ts-beam-size" type="number" step="1" /></div>
+          <div class="input-row"><label>patience</label><input id="ts-patience" type="number" step="0.01" /></div>
+          <div class="input-row"><label>length_penalty</label><input id="ts-length-penalty" type="number" step="0.01" /></div>
+          <div class="input-row"><label>compression_ratio_threshold</label><input id="ts-compression-ratio-threshold" type="number" step="0.01" /></div>
+          <div class="input-row"><label>logprob_threshold</label><input id="ts-logprob-threshold" type="number" step="0.01" /></div>
+          <div class="input-row"><label>no_speech_threshold</label><input id="ts-no-speech-threshold" type="number" step="0.01" /></div>
+          <div class="input-row"><label>suppress_tokens</label><input id="ts-suppress-tokens" /></div>
+          <div class="input-row"><label>initial_prompt</label><input id="ts-initial-prompt" /></div>
+          <div class="input-row"><label>condition_on_previous_text</label><input id="ts-condition-on-previous-text" type="checkbox" /></div>
+          <button id="save-transcription-settings">${t('create')}</button>
+          <p id="transcription-settings-status"></p>
+        </div>
+      `;
+      document.getElementById('ts-temperature').value = String(options.temperature);
+      document.getElementById('ts-beam-size').value = String(options.beam_size);
+      document.getElementById('ts-patience').value = String(options.patience);
+      document.getElementById('ts-length-penalty').value = String(options.length_penalty);
+      document.getElementById('ts-compression-ratio-threshold').value = String(options.compression_ratio_threshold);
+      document.getElementById('ts-logprob-threshold').value = String(options.logprob_threshold);
+      document.getElementById('ts-no-speech-threshold').value = String(options.no_speech_threshold);
+      document.getElementById('ts-suppress-tokens').value = String(options.suppress_tokens ?? '');
+      document.getElementById('ts-initial-prompt').value = String(options.initial_prompt ?? '');
+      document.getElementById('ts-condition-on-previous-text').checked = Boolean(options.condition_on_previous_text);
+
+      document.getElementById('save-transcription-settings').onclick = async () => {
+        const payload = {
+          temperature: document.getElementById('ts-temperature').value,
+          beam_size: document.getElementById('ts-beam-size').value,
+          patience: document.getElementById('ts-patience').value,
+          length_penalty: document.getElementById('ts-length-penalty').value,
+          compression_ratio_threshold: document.getElementById('ts-compression-ratio-threshold').value,
+          logprob_threshold: document.getElementById('ts-logprob-threshold').value,
+          no_speech_threshold: document.getElementById('ts-no-speech-threshold').value,
+          suppress_tokens: document.getElementById('ts-suppress-tokens').value,
+          initial_prompt: document.getElementById('ts-initial-prompt').value,
+          condition_on_previous_text: document.getElementById('ts-condition-on-previous-text').checked,
+        };
+        try {
+          await saveTranscriptionSettings({ callApi, decodingOptions: payload });
+          document.getElementById('transcription-settings-status').textContent = 'saved';
+        } catch (problem) {
+          document.getElementById('transcription-settings-status').textContent = sanitizedError(problem);
+        }
+      };
     } catch (problem) {
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
     }

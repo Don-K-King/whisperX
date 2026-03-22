@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
+import json
 from typing import Any
 
 from .progress import derive_progress
+from .transcription_settings_service import safe_worker_decoding_options
 
 
 ALLOWED_SOURCE_STATUSES = frozenset({"queued", "failed_retryable"})
@@ -167,6 +169,7 @@ class WorkerPipeline:
             if not object_key.startswith(expected_prefix):
                 raise TerminalWorkerError("job.object_key_scope_violation")
 
+            transcription_options = _extract_transcription_options(job)
             checkpoint = self._load_checkpoint(request)
             stage = str((checkpoint or {}).get("stage") or "")
 
@@ -190,7 +193,11 @@ class WorkerPipeline:
             if stage == "diarization_done":
                 artifact = self._artifact_from_checkpoint(checkpoint)
             else:
-                transcript, interrupt = self._run_asr_stage(request=request, object_key=object_key)
+                transcript, interrupt = self._run_asr_stage(
+                    request=request,
+                    object_key=object_key,
+                    transcription_options=transcription_options,
+                )
                 if interrupt is not None:
                     return interrupt
                 self.job_store.set_status(request.tenant_id, request.job_id, "processing", progress=60)
@@ -296,6 +303,7 @@ class WorkerPipeline:
         *,
         request: WorkerProcessInput,
         object_key: str,
+        transcription_options: dict[str, Any],
     ) -> tuple[dict[str, Any], WorkerProcessResult | None]:
         checkpoint = self._load_checkpoint(request)
         stage = str((checkpoint or {}).get("stage") or "")
@@ -322,6 +330,7 @@ class WorkerPipeline:
                 self._call_asr_engine(
                     object_key,
                     stage_offset=stage_offset,
+                    transcription_options=transcription_options,
                     interrupt_check=lambda: self._poll_interrupt_signal(request),
                 )
             )
@@ -504,21 +513,27 @@ class WorkerPipeline:
         object_key: str,
         *,
         stage_offset: int,
+        transcription_options: dict[str, Any] | None = None,
         interrupt_check: Any | None = None,
     ) -> dict[str, Any]:
         supports_offset = False
         supports_interrupt_check = False
+        supports_transcription_options = False
         try:
             signature = inspect.signature(self.asr_engine)
             supports_offset = "stage_offset" in signature.parameters
             supports_interrupt_check = "interrupt_check" in signature.parameters
+            supports_transcription_options = "transcription_options" in signature.parameters
         except (TypeError, ValueError):
             supports_offset = False
             supports_interrupt_check = False
+            supports_transcription_options = False
 
         kwargs: dict[str, Any] = {}
         if supports_offset:
             kwargs["stage_offset"] = stage_offset
+        if supports_transcription_options:
+            kwargs["transcription_options"] = transcription_options or safe_worker_decoding_options(None)
         if supports_interrupt_check and interrupt_check is not None:
             kwargs["interrupt_check"] = interrupt_check
         result = self.asr_engine(object_key, **kwargs) if kwargs else self.asr_engine(object_key)
@@ -590,3 +605,16 @@ def _drop_checkpoint_prefix(
     ):
         return normalized[prefix_len:]
     return normalized
+
+
+def _extract_transcription_options(job: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(job.get("transcription_options"), dict):
+        return safe_worker_decoding_options(job.get("transcription_options"))
+    raw = job.get("transcription_options_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = None
+        return safe_worker_decoding_options(payload)
+    return safe_worker_decoding_options(None)

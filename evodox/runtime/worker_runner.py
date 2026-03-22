@@ -32,6 +32,7 @@ from evodox.jobs.worker_pipeline_service import (
     WorkerInterruptionRequested,
     WorkerProcessInput,
 )
+from evodox.jobs.transcription_settings_service import safe_worker_decoding_options
 
 LOGGER = logging.getLogger("evodox.runtime.worker_runner")
 
@@ -237,6 +238,7 @@ class WorkerRuntime:
             object_key = str(payload.get("object_key") or "").strip()
             checksum_sha256 = str(payload.get("checksum_sha256") or "").strip()
             upload_session_id = str(payload.get("upload_session_id") or "").strip()
+            transcription_options = safe_worker_decoding_options(payload.get("transcription_options"))
             if not tenant_id or not job_id:
                 self.outbox.mark_dlq(
                     event["event_id"],
@@ -280,13 +282,23 @@ class WorkerRuntime:
 
             try:
                 if object_key:
-                    self.job_repository.mark_queued(
-                        tenant_id,
-                        job_id,
-                        object_key=object_key,
-                        checksum_sha256=checksum_sha256,
-                        upload_session_id=upload_session_id,
-                    )
+                    try:
+                        self.job_repository.mark_queued(
+                            tenant_id,
+                            job_id,
+                            object_key=object_key,
+                            checksum_sha256=checksum_sha256,
+                            upload_session_id=upload_session_id,
+                            transcription_options=transcription_options,
+                        )
+                    except TypeError:
+                        self.job_repository.mark_queued(
+                            tenant_id,
+                            job_id,
+                            object_key=object_key,
+                            checksum_sha256=checksum_sha256,
+                            upload_session_id=upload_session_id,
+                        )
                 result = self.pipeline.process(WorkerProcessInput(tenant_id=tenant_id, job_id=job_id))
                 if result.status in {"completed", "paused", "canceled", "deleted"}:
                     self.outbox.mark_published(event["event_id"])
@@ -515,21 +527,27 @@ def _create_whisperx_asr_engine(
         object_key: str,
         *,
         stage_offset: int = 0,
+        transcription_options: dict[str, Any] | None = None,
         interrupt_check: Callable[[], str | None] | None = None,
     ) -> dict[str, Any]:
         del stage_offset
         media_path = media_fetcher(object_key)
         try:
             supports_interrupt_check = False
+            supports_transcription_options = False
             try:
                 signature = inspect.signature(whisperx_runner)
                 supports_interrupt_check = "interrupt_check" in signature.parameters
+                supports_transcription_options = "transcription_options" in signature.parameters
             except (TypeError, ValueError):
                 supports_interrupt_check = False
+                supports_transcription_options = False
+            kwargs: dict[str, Any] = {}
             if supports_interrupt_check:
-                payload = whisperx_runner(media_path, settings, interrupt_check=interrupt_check)
-            else:
-                payload = whisperx_runner(media_path, settings)
+                kwargs["interrupt_check"] = interrupt_check
+            if supports_transcription_options:
+                kwargs["transcription_options"] = safe_worker_decoding_options(transcription_options)
+            payload = whisperx_runner(media_path, settings, **kwargs) if kwargs else whisperx_runner(media_path, settings)
             transcript = _normalize_transcript(payload.get("transcript"))
             diarization = _normalize_diarization(payload.get("diarization"), transcript_segments=transcript.get("segments", []))
             transcript["__diarization"] = diarization
@@ -598,6 +616,7 @@ def _run_whisperx_subprocess(
     media_path: Path,
     settings: WorkerRuntimeSettings,
     *,
+    transcription_options: dict[str, Any] | None = None,
     interrupt_check: Callable[[], str | None] | None = None,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="evodox-whisperx-out-") as output_dir_raw:
@@ -608,6 +627,7 @@ def _run_whisperx_subprocess(
                 output_dir=output_dir,
                 settings=settings,
                 include_diarization=settings.enable_diarization,
+                transcription_options=transcription_options,
             ),
             settings=settings,
             interrupt_check=interrupt_check,
@@ -630,6 +650,7 @@ def _run_whisperx_subprocess(
                     output_dir=output_dir,
                     settings=settings,
                     include_diarization=False,
+                    transcription_options=transcription_options,
                 ),
                 settings=settings,
                 interrupt_check=interrupt_check,
@@ -695,7 +716,9 @@ def _build_whisperx_command(
     output_dir: Path,
     settings: WorkerRuntimeSettings,
     include_diarization: bool,
+    transcription_options: dict[str, Any] | None = None,
 ) -> list[str]:
+    decoding_options = safe_worker_decoding_options(transcription_options)
     command = [
         sys.executable,
         "-m",
@@ -723,7 +746,28 @@ def _build_whisperx_command(
         "False",
         "--vad_method",
         settings.whisperx_vad_method,
+        "--temperature",
+        str(decoding_options["temperature"]),
+        "--beam_size",
+        str(decoding_options["beam_size"]),
+        "--patience",
+        str(decoding_options["patience"]),
+        "--length_penalty",
+        str(decoding_options["length_penalty"]),
+        "--compression_ratio_threshold",
+        str(decoding_options["compression_ratio_threshold"]),
+        "--logprob_threshold",
+        str(decoding_options["logprob_threshold"]),
+        "--no_speech_threshold",
+        str(decoding_options["no_speech_threshold"]),
+        "--suppress_tokens",
+        str(decoding_options["suppress_tokens"]),
+        "--condition_on_previous_text",
+        str(bool(decoding_options["condition_on_previous_text"])),
     ]
+    prompt = str(decoding_options.get("initial_prompt") or "")
+    if prompt:
+        command.extend(["--initial_prompt", prompt])
 
     if include_diarization:
         command.extend(

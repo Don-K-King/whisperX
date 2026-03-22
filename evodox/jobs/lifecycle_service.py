@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 from uuid import uuid4
 
 from .complete_upload_service import QueueSelectionPolicy
 from .progress import derive_progress
+from .transcription_settings_service import safe_worker_decoding_options
 
 
 PAUSE_IDEMPOTENT_STATUSES = frozenset({"pause_requested", "paused"})
@@ -101,6 +103,7 @@ def resume_job(
         )
     checksum_sha256 = str(job.get("checksum_sha256") or "")
     upload_session_id = str(job.get("upload_session_id") or "")
+    transcription_options = _extract_transcription_options(job)
 
     _set_status(job_store, tenant_id, job_id, "queued", progress=5)
     queue = (queue_policy or QueueSelectionPolicy()).select_queue(
@@ -118,6 +121,7 @@ def resume_job(
             "upload_session_id": upload_session_id,
             "object_key": object_key,
             "checksum_sha256": checksum_sha256,
+            "transcription_options": transcription_options,
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
@@ -295,6 +299,21 @@ def _cleanup_job_internal_state(
         if store is None:
             continue
         _delete_for_job(store, tenant_id=tenant_id, job_id=job_id)
+
+
+def _extract_transcription_options(job: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(job.get("transcription_options"), dict):
+        return safe_worker_decoding_options(job.get("transcription_options"))
+
+    raw = job.get("transcription_options_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        return safe_worker_decoding_options(parsed)
+
+    return safe_worker_decoding_options(None)
 
 
 def _delete_for_job(store: Any, *, tenant_id: str, job_id: str) -> None:

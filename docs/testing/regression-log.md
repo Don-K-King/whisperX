@@ -147,3 +147,28 @@
   - `node --test frontend/tests/*.test.js`
 - Ergebnis (Frontend): Gruen, 14 Tests.
 - Bewertung: Keine Regression in API/Worker/Queue/Frontend-Flows; GPU-Fallback und Multi-Pool-Vorbereitung sind testseitig abgesichert.
+
+## 2026-03-22 - Regression nach Tenant-Admin Decoding Settings + Job-Snapshot
+- Anlass: neue admin-only API fuer Decoding-Defaults, neue Persistenz (`tenant_transcription_settings`, Job-Snapshot), Queue/Resume/Worker-Wiring und Frontend-Admin-Route.
+- Ausgefuehrt (gezielte TDD-Suite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . && python -m unittest tests.test_transcription_settings_service tests.test_complete_upload_service tests.test_job_lifecycle_service tests.test_worker_runner tests.test_job_infra_adapters"`
+- Ergebnis (gezielt): Gruen, 57 Tests.
+- Ausgefuehrt (FastAPI-Integrationssuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi pydantic httpx && python -m unittest tests.test_fastapi_http_adapter_integration"`
+- Ergebnis (FastAPI): Gruen, 16 Tests.
+- Ausgefuehrt (Backend Vollsuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'"`
+- Ergebnis (Backend Vollsuite): Gruen, 170 Tests.
+- Ausgefuehrt (Frontend Regression):
+  - `node --test frontend/tests/*.test.js`
+- Ergebnis (Frontend): Gruen, 18 Tests.
+- Bewertung: Keine Regression in bestehenden Lifecycle-/Queue-/Worker-Pfaden; neue Admin-Settings und Snapshot-Semantik sind integriert und abgesichert.
+
+## 2026-03-22 - UI Screenshot-Nachweis (Transcription Settings)
+- Anlass: UI-Aenderung an neuer Admin-Route `transcription-settings`.
+- Ausgefuehrt: `node scripts/capture_transcription_settings_screenshots.mjs`.
+- Ergebnis:
+  - `docs/testing/screenshots/transcription-settings-default.png`
+  - `docs/testing/screenshots/transcription-settings-validation-error.png`
+  - `docs/testing/screenshots/transcription-settings-responsive.png`
+- Bewertung: Screenshot-Pflicht fuer Default-, Validierungs-/Fehler- und Responsive-Zustand erfuellt.

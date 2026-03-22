@@ -43,6 +43,7 @@ class SQLiteJobRepository:
                     upload_session_id TEXT,
                     object_key TEXT,
                     checksum_sha256 TEXT,
+                    transcription_options_json TEXT,
                     progress INTEGER,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +60,8 @@ class SQLiteJobRepository:
                 conn.execute("ALTER TABLE jobs ADD COLUMN object_key TEXT")
             if "checksum_sha256" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN checksum_sha256 TEXT")
+            if "transcription_options_json" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN transcription_options_json TEXT")
             if "progress" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN progress INTEGER")
 
@@ -69,9 +72,9 @@ class SQLiteJobRepository:
                 """
                 INSERT INTO jobs (
                     job_id, tenant_id, actor_id, filename, content_type, size_bytes, retention_months,
-                    upload_session_id, object_key, checksum_sha256, progress, status
+                    upload_session_id, object_key, checksum_sha256, transcription_options_json, progress, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["job_id"],
@@ -84,6 +87,7 @@ class SQLiteJobRepository:
                     payload.get("upload_session_id"),
                     payload.get("object_key"),
                     payload.get("checksum_sha256"),
+                    _to_json(payload.get("transcription_options_json")),
                     payload.get("progress"),
                     payload["status"],
                 ),
@@ -120,6 +124,7 @@ class SQLiteJobRepository:
         object_key: str,
         checksum_sha256: str,
         upload_session_id: str,
+        transcription_options: dict[str, Any] | None = None,
     ) -> None:
         with self._connect() as conn:
             updated = conn.execute(
@@ -129,10 +134,18 @@ class SQLiteJobRepository:
                     upload_session_id = ?,
                     object_key = ?,
                     checksum_sha256 = ?,
+                    transcription_options_json = COALESCE(?, transcription_options_json),
                     progress = 5
                 WHERE tenant_id = ? AND job_id = ?
                 """,
-                (upload_session_id, object_key, checksum_sha256, tenant_id, job_id),
+                (
+                    upload_session_id,
+                    object_key,
+                    checksum_sha256,
+                    _to_json(transcription_options),
+                    tenant_id,
+                    job_id,
+                ),
             )
         if updated.rowcount == 0:
             raise KeyError("job not found")
@@ -628,6 +641,77 @@ class SQLiteCompleteUploadIdempotencyStore:
             )
 
 
+class SQLiteTenantTranscriptionSettingsStore:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tenant_transcription_settings (
+                    tenant_id TEXT PRIMARY KEY,
+                    options_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    updated_by TEXT NOT NULL
+                )
+                """
+            )
+
+    def get(self, tenant_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT tenant_id, options_json, updated_at, updated_by
+                FROM tenant_transcription_settings
+                WHERE tenant_id = ?
+                """,
+                (tenant_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        options_raw = row["options_json"]
+        try:
+            options = json.loads(options_raw)
+        except json.JSONDecodeError:
+            options = {}
+        if not isinstance(options, dict):
+            options = {}
+        return {
+            "tenant_id": row["tenant_id"],
+            "decoding_options": options,
+            "updated_at": row["updated_at"],
+            "updated_by": row["updated_by"],
+        }
+
+    def upsert(self, *, tenant_id: str, updated_by: str, decoding_options: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tenant_transcription_settings (tenant_id, options_json, updated_at, updated_by)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(tenant_id) DO UPDATE SET
+                    options_json = excluded.options_json,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                """,
+                (tenant_id, json.dumps(decoding_options, sort_keys=True), now, updated_by),
+            )
+        return {
+            "tenant_id": tenant_id,
+            "decoding_options": dict(decoding_options),
+            "updated_at": now,
+            "updated_by": updated_by,
+        }
+
+
 class SQLiteOutbox:
     def __init__(self, db_path: Path) -> None:
         self._db_path = str(db_path)
@@ -1037,6 +1121,14 @@ def _add_column_if_missing(conn: sqlite3.Connection, columns: set[str], column_n
 def _stable_event_uid(event: dict[str, Any]) -> str:
     canonical = json.dumps(event, sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _to_json(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True)
 
 
 def _metric(metrics: Any, method: str) -> None:

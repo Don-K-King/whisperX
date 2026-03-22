@@ -9,6 +9,7 @@ from evodox.jobs.infrastructure import (
     SQLiteIdempotencyStore,
     SQLiteJobRepository,
     SQLiteOutbox,
+    SQLiteTenantTranscriptionSettingsStore,
 )
 from evodox.web.fastapi_adapter import FastAPIAdapterSettings, create_fastapi_app
 
@@ -235,6 +236,153 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.json()["events"]), 1)
             self.assertEqual(response.json()["events"][0]["tenant_id"], "tenant-a")
+
+    def test_get_transcription_settings_requires_admin_role(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["user"]),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(db_path),
+            )
+            client = TestClient(app)
+            response = client.get("/api/v1/admin/transcription-settings", headers={"Authorization": "Bearer token"})
+
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["detail"]["error_code"], "authz.deny")
+
+    def test_get_transcription_settings_returns_defaults_for_admin(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["admin"], tenant_id="tenant-a"),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(db_path),
+            )
+            client = TestClient(app)
+            response = client.get("/api/v1/admin/transcription-settings", headers={"Authorization": "Bearer token"})
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["tenant_id"], "tenant-a")
+            self.assertEqual(payload["decoding_options"]["beam_size"], 5)
+            self.assertEqual(payload["decoding_options"]["temperature"], 0.0)
+
+    def test_put_transcription_settings_roundtrip_for_admin(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["admin"], tenant_id="tenant-a"),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(db_path),
+            )
+            client = TestClient(app)
+
+            update = client.put(
+                "/api/v1/admin/transcription-settings",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "temperature": 0.2,
+                    "beam_size": 4,
+                    "patience": 1.1,
+                    "length_penalty": 1.0,
+                    "compression_ratio_threshold": 2.2,
+                    "logprob_threshold": -1.0,
+                    "no_speech_threshold": 0.5,
+                    "suppress_tokens": "-1,12",
+                    "initial_prompt": "Bitte juristische Begriffe korrekt transkribieren.",
+                    "condition_on_previous_text": True,
+                },
+            )
+            self.assertEqual(update.status_code, 200)
+            self.assertEqual(update.json()["decoding_options"]["beam_size"], 4)
+
+            fetched = client.get("/api/v1/admin/transcription-settings", headers={"Authorization": "Bearer token"})
+            self.assertEqual(fetched.status_code, 200)
+            self.assertEqual(fetched.json()["decoding_options"]["beam_size"], 4)
+            self.assertEqual(fetched.json()["decoding_options"]["condition_on_previous_text"], True)
+
+    def test_put_transcription_settings_rejects_invalid_payload(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["admin"], tenant_id="tenant-a"),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(db_path),
+            )
+            client = TestClient(app)
+
+            response = client.put(
+                "/api/v1/admin/transcription-settings",
+                headers={"Authorization": "Bearer token"},
+                json={"temperature": 9.9},
+            )
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["detail"]["error_code"], "transcription_settings.invalid_payload")
 
     def test_pause_queued_job_transitions_to_paused(self):
         from fastapi.testclient import TestClient

@@ -194,3 +194,10 @@
 - Queue-Pool-Vorbereitung umgesetzt: `WORKER_ALLOWED_QUEUES` + Outbox-Filter fuer dedizierte Worker-Rollen.
 - Compose-Zielbetrieb erweitert: Standard-`worker` ist GPU-first; zusaetzliche Profile-Services `worker-gpu-0`, `worker-gpu-1`, `worker-cpu` fuer dedizierte Server-Pools.
 - Referenz: ADR-0017 (`/docs/adr/ADR-0017-gpu-first-local-und-multi-gpu-compose-worker-pools.md`).
+
+## 2026-03-22 - ADR-0018 Tenant-Admin Decoding Settings + Job-Snapshot
+- Neue admin-only Endpunkte fuer tenant-scoped Decoding-Defaults eingefuehrt (`GET/PUT /api/v1/admin/transcription-settings`).
+- Persistenzmodell erweitert: `tenant_transcription_settings` (Tenant-Defaults) und `jobs.transcription_options_json` (Queueing-Snapshot pro Job).
+- Queue/Worker-Wiring erweitert: `job.queued` und `resume` fuehren `transcription_options` mit; Worker mappt Whitelist-Felder auf WhisperX-CLI-Flags.
+- Security-Haertung: strikte Feld-Whitelist und Wertevalidierung, Audit ohne Klartext-Prompt (nur Hash/Laenge fuer `initial_prompt`).
+- Referenz: ADR-0018 (`/docs/adr/ADR-0018-tenant-admin-decoding-settings-und-job-snapshot.md`).

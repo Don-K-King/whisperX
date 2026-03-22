@@ -18,6 +18,7 @@ from evodox.jobs.infrastructure import (
     SQLiteJobCheckpointStore,
     SQLiteJobRepository,
     SQLiteOutbox,
+    SQLiteTenantTranscriptionSettingsStore,
     SQLiteTranscriptRepository,
     SQLiteWorkerArtifactStore,
 )
@@ -140,6 +141,7 @@ def create_app(*, settings: APIRuntimeSettings | None = None):
         transcript_repository=transcript_repository,
         checkpoint_store=checkpoint_store,
         worker_artifact_store=worker_artifact_store,
+        transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(runtime_settings.db_path),
     )
 
 

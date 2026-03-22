@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,21 @@ class JobLifecycleServiceTests(unittest.TestCase):
                     "object_key": "tenant/tenant-a/job_2/resume.mp4",
                     "checksum_sha256": "b" * 64,
                     "upload_session_id": "up_2",
+                    "transcription_options_json": json.dumps(
+                        {
+                            "temperature": 0.2,
+                            "beam_size": 4,
+                            "patience": 1.0,
+                            "length_penalty": 1.0,
+                            "compression_ratio_threshold": 2.4,
+                            "logprob_threshold": -1.0,
+                            "no_speech_threshold": 0.6,
+                            "suppress_tokens": "-1",
+                            "initial_prompt": "Mit Fachsprache arbeiten",
+                            "condition_on_previous_text": False,
+                        },
+                        sort_keys=True,
+                    ),
                 }
             )
 
@@ -99,7 +115,9 @@ class JobLifecycleServiceTests(unittest.TestCase):
             self.assertEqual(first, "queued")
             self.assertEqual(second, "queued")
             self.assertEqual(repo.get("tenant-a", "job_2")["status"], "queued")
-            self.assertEqual(len(outbox.list_pending(limit=20)), 1)
+            pending = outbox.list_pending(limit=20)
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["payload"]["transcription_options"]["beam_size"], 4)
 
     def test_cancel_processing_sets_cancel_requested(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -215,6 +233,42 @@ class JobLifecycleServiceTests(unittest.TestCase):
                     audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
                 )
             self.assertEqual(exc.exception.error_code, "job.resume.invalid_state")
+
+    def test_resume_from_paused_without_snapshot_uses_default_decoding_options(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            repo.create(
+                {
+                    "job_id": "job_resume_defaults",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "resume.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "paused",
+                    "progress": 20,
+                    "object_key": "tenant/tenant-a/job_resume_defaults/resume.wav",
+                    "checksum_sha256": "c" * 64,
+                    "upload_session_id": "up_resume_defaults",
+                }
+            )
+
+            status = resume_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_resume_defaults",
+                job_store=repo,
+                outbox=outbox,
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+
+            self.assertEqual(status, "queued")
+            pending = outbox.list_pending(limit=20)
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["payload"]["transcription_options"]["beam_size"], 5)
 
     def test_delete_processing_job_soft_deletes_and_prunes_pending_outbox(self):
         with tempfile.TemporaryDirectory() as tmpdir:

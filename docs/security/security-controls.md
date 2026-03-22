@@ -176,3 +176,11 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: No-Secret Logging.** GPU-Preflight/Fallback-Logs enthalten keine Tokens/Secrets; nur nicht-sensitive Device-/Reason-Metadaten.
 - **Control: Queue-Rollenisolation.** Dedizierte Worker-Pools verwenden explizite `WORKER_ALLOWED_QUEUES`, um ungewollte Cross-Pool-Verarbeitung zu vermeiden.
 - **Control: Tenant-Isolation bleibt unveraendert.** GPU-/Pool-Optimierungen duerfen tenant-scoped Objektpfad- und Statuskontrollen nicht umgehen.
+
+## 2026-03-22 - Controls fuer Tenant-Admin Decoding Settings
+- **Control: Admin-only Zugriff.** Read/Write auf `transcription-settings` ist strikt an Rolle `admin` gebunden; Non-Admin wird mit `403 authz.deny` abgewiesen.
+- **Control: Tenant-Scoping.** Einstellungen werden pro `tenant_id` isoliert gespeichert und abgerufen; kein Cross-Tenant-Zugriff.
+- **Control: Strict Input Validation.** Decoding-Optionen folgen einer Feld-Whitelist und harten Wertebereichen; unbekannte oder invalide Felder werden mit `422 transcription_settings.invalid_payload` abgewiesen.
+- **Control: Queueing Snapshot Integrity.** Beim `complete-upload` wird ein validierter Snapshot pro Job persistiert und in Outbox/Resume konsistent weitergegeben.
+- **Control: Defensive Worker Consumption.** Worker uebernimmt nur validierte Whitelist-Felder in WhisperX-CLI-Flags; invalide Payloads fallen auf sichere Defaults zurueck.
+- **Control: Prompt Confidentiality in Audit.** `initial_prompt` wird nicht im Klartext auditiert; nur Hash/Laenge werden protokolliert.

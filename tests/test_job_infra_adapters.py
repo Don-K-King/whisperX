@@ -22,6 +22,7 @@ from evodox.jobs.infrastructure import (
     SQLiteRetentionExecutionRepository,
     SQLiteRetentionRetryStore,
     SQLiteSchedulerLeaseStore,
+    SQLiteTenantTranscriptionSettingsStore,
     SQLiteTranscriptRepository,
     SQLiteWorkerArtifactStore,
 )
@@ -229,12 +230,30 @@ class InfrastructureAdaptersTests(unittest.TestCase):
                 object_key="tenant/tenant-a/job_q1/audio.mp3",
                 checksum_sha256="a" * 64,
                 upload_session_id="up_123",
+                transcription_options={"beam_size": 4, "temperature": 0.2},
             )
             row = repo.get("tenant-a", "job_q1")
             self.assertEqual(row["status"], "queued")
             self.assertEqual(row["object_key"], "tenant/tenant-a/job_q1/audio.mp3")
             self.assertEqual(row["upload_session_id"], "up_123")
             self.assertEqual(row["checksum_sha256"], "a" * 64)
+            self.assertEqual(json.loads(row["transcription_options_json"])["beam_size"], 4)
+
+    def test_tenant_transcription_settings_store_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteTenantTranscriptionSettingsStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                updated_by="admin-1",
+                decoding_options={"beam_size": 4, "temperature": 0.3},
+            )
+            row = store.get("tenant-a")
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row["tenant_id"], "tenant-a")
+            self.assertEqual(row["updated_by"], "admin-1")
+            self.assertEqual(row["decoding_options"]["beam_size"], 4)
 
     def test_transcript_repository_reads_worker_artifact_as_version_1(self):
         with tempfile.TemporaryDirectory() as tmpdir:

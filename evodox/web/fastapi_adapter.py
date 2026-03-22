@@ -22,6 +22,11 @@ from evodox.jobs.transcript_service import (
     update_transcript,
 )
 from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
+from evodox.jobs.transcription_settings_service import (
+    TranscriptionSettingsValidationError,
+    get_transcription_settings,
+    update_transcription_settings,
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,7 @@ def create_fastapi_app(
     export_artifact_store: Any | None = None,
     checkpoint_store: Any | None = None,
     worker_artifact_store: Any | None = None,
+    transcription_settings_store: Any | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException
@@ -248,12 +254,56 @@ def create_fastapi_app(
                 outbox=outbox,
                 idempotency_store=complete_upload_idempotency_store,
                 queue_policy=queue_policy,
+                transcription_settings_store=transcription_settings_store,
             )
             return map_complete_upload_response(result)
         except AuthzError as exc:
             raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except CompleteUploadValidationError as exc:
             status_code = 404 if exc.error_code == "job.not_found" else 422
+            raise _http_error(status_code, exc.error_code) from exc
+
+    @app.get("/api/v1/admin/transcription-settings")
+    def get_admin_transcription_settings(
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcription_settings_store is None:
+            raise _http_error(503, "transcription_settings.unavailable")
+        try:
+            auth_context = _require_auth(authorization, required_roles={"admin"})
+            return get_transcription_settings(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                settings_store=transcription_settings_store,
+                audit_log=audit_log,
+            )
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+
+    @app.put("/api/v1/admin/transcription-settings")
+    def put_admin_transcription_settings(
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcription_settings_store is None:
+            raise _http_error(503, "transcription_settings.unavailable")
+        try:
+            auth_context = _require_auth(authorization, required_roles={"admin"})
+            return update_transcription_settings(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                payload=payload,
+                settings_store=transcription_settings_store,
+                audit_log=audit_log,
+            )
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptionSettingsValidationError as exc:
+            status_code = 503 if exc.error_code == "transcription_settings.unavailable" else 422
             raise _http_error(status_code, exc.error_code) from exc
 
     @app.get("/api/v1/jobs/{job_id}")
