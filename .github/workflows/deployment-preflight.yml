@@ -1,0 +1,40 @@
+name: Deployment Preflight
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  retention-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.14"
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --all-extras
+
+      - name: Retention environment preflight (blocking)
+        env:
+          RETENTION_VALIDATE_ENV_ONLY: "true"
+          RETENTION_DB_PATH: /tmp/retention.db
+          RETENTION_SCHEDULER_LOCK_OWNER: ci-preflight
+          RETENTION_SCHEDULER_INTERVAL_SECONDS: "60"
+          RETENTION_SCHEDULER_BATCH_SIZE: "10"
+          RETENTION_SCHEDULER_LEASE_TTL_SECONDS: "120"
+          RETENTION_SCHEDULER_HEARTBEAT_SECONDS: "30"
+          RETENTION_TENANT_IDS: tenant-ci
+          RETENTION_AUDIT_LOG_PATH: /tmp/retention-audit.jsonl
+          RETENTION_OBJECT_STORAGE_BACKEND: filesystem
+          RETENTION_OBJECT_STORAGE_ROOT: /tmp/retention-objects
+          RETENTION_POLICY_MIN_MONTHS: "1"
+          RETENTION_POLICY_MAX_MONTHS: "120"
+          RETENTION_POLICY_FALLBACK_MONTHS: "12"
+          RETENTION_RECOVERY_MAPPING_VERSION: v1
+        run: uv run python -m evodox.runtime.retention_scheduler_runner

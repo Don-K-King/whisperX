@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EvidoX Frontend</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-theme="light">
+    <header class="topbar">
+      <div class="brand" aria-label="EvidoX Branding">
+        <div class="brand-logo" aria-hidden="true">EX</div>
+        <div>
+          <strong class="brand-name">EvidoX</strong>
+          <small class="brand-tagline">Secure Transcription Platform</small>
+        </div>
+      </div>
+      <nav>
+        <button data-route="dashboard" class="nav-link">Dashboard</button>
+        <button data-route="new-job" class="nav-link">Neuer Job</button>
+        <button data-route="audit" class="nav-link" id="audit-nav" hidden>Audit</button>
+      </nav>
+      <div class="header-controls">
+        <span id="tenant-badge" class="pill">Tenant: -</span>
+        <button id="theme-toggle" class="btn-secondary">Theme</button>
+        <button id="lang-toggle" class="btn-secondary">Sprache</button>
+        <button id="logout" class="btn-danger">Logout</button>
+      </div>
+    </header>
+    <main id="app"></main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
