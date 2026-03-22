@@ -10,6 +10,14 @@
 - Lokales Runtime-Image fuer den Docker-Slice ergaenzt (`deploy/Dockerfile.runtime`) und Compose-Runtime-Kommandos auf `python -m ...` vereinheitlicht.
 - Testabdeckung erweitert: Runtime-Entrypoints, neue API-Endpunkte, Worker-Runner sowie lokaler Smoke-Flow (FastAPI-abhaengig).
 - Status jetzt: Docker-Vertical-Slice ist lokal lauffaehig und per E2E geprueft; offen sind Transcript-API, Frontend-Upload mit Presigned-Flow und Anzeige von Transcript/Speaker-Diarization.
+- Naechster TDD-Schritt fuer das Frontend: testbarer Presigned-Upload-Orchestrator (`create job -> presigned PUT -> complete-upload`) mit gruenen Frontend- und Runtime-Tests.
+- Zielpfad danach: WhisperX-Worker als echte Live-Transcription mit Speaker-Diarization im selben Docker-Vertikal-Slice.
+- Frontend ist jetzt im Target-Compose als eigener Service verfuegbar und lokal ueber `http://localhost:18081` erreichbar (inkl. `/api` Proxy zur API).
+- Worker-Runtime auf `WORKER_MODE=whisperx` erweitert (echter Media-Download + WhisperX-CLI-Ausfuehrung im Docker-Container).
+- Lokaler Upload-Pfad fuer Browser lauffaehig gemacht (`API_UPLOAD_BASE_URL=http://localhost:19000`, MinIO-Port `19000:9000`, Bucket-Init fuer `uploads`).
+- Docker-Runtime-Image haertet Live-Betrieb mit `ffmpeg` + installierten WhisperX-Abhaengigkeiten.
+- Diarization-Fallback eingefuehrt: falls gated HF-Diarization fehlschlaegt, wird Transkription trotzdem ohne Diarization abgeschlossen (Status bleibt `completed`).
+- Lokaler E2E-Nachweis erfolgt: Job-Upload via Presigned PUT, Worker-Verarbeitung und Transcript-Abruf erfolgreich getestet.
 
 ## 2026-03-06
 - Architektur präzisiert: Multi-Tenant, On-Prem Docker, RabbitMQ/Celery Skalierungsstrategie, lokale Modellbereitstellung.
@@ -106,3 +114,12 @@
 
 
 
+## 2026-03-22
+- Lifecycle-Controls im API/Frontend umgesetzt: `pause`, `resume`, `delete` fuer Jobs mit tenant-scope und konsistentem Fehlerprofil.
+- Neue API-Endpunkte: `POST /api/v1/jobs/{id}/pause`, `POST /api/v1/jobs/{id}/resume`, `DELETE /api/v1/jobs/{id}`.
+- Worker-Pipeline erweitert um kooperatives Pausieren (`pause_requested -> paused`) und Milestone-Progress-Updates.
+- Worker-Runner erweitert um Retry-Limit fuer retryable Fehler mit terminalem Abschluss nach Exhaustion.
+- Progress-Fallbacks in Backend + Frontend harmonisiert (Milestones: `5/20/60/90/100`).
+- Job-Loeschung als Soft-Delete umgesetzt inkl. Pending-Outbox-Pruning und Audit-Eintrag.
+- Frontend erweitert um Upload-Fortschrittsanzeige, statusabhaengige Action-Buttons und Polling mit 429-Backoff (5s bis 30s).
+- Testabdeckung ausgebaut: neue API-Contract-, Lifecycle-, Worker- und Frontend-Tests fuer diesen Schritt.

@@ -75,6 +75,7 @@ class InMemoryJobStore:
         if key not in self._jobs:
             raise KeyError("job not found")
         self._jobs[key]["status"] = "queued"
+        self._jobs[key]["progress"] = 5
         self._jobs[key]["object_key"] = object_key
         self._jobs[key]["checksum_sha256"] = checksum_sha256
         self._jobs[key]["upload_session_id"] = upload_session_id

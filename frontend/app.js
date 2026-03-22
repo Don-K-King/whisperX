@@ -1,9 +1,15 @@
 import {
-  buildCompleteUploadPayload,
+  deriveProgress,
+  jobActionsForStatus,
   mapTranscriptToSpeakerRows,
+  nextPollingIntervalMs,
   parseToken,
   sanitizedError,
+  uploadFileToPresignedUrl,
 } from './utils.js';
+import { createAndQueueJobUpload } from './upload_flow.js';
+
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed_terminal', 'deleted', 'canceled']);
 
 const state = {
   lang: 'de',
@@ -12,6 +18,9 @@ const state = {
   route: 'login',
   jobs: [],
   selectedFile: null,
+  uploadProgress: 0,
+  pollTimer: null,
+  pollIntervalMs: 5000,
 };
 
 const i18n = {
@@ -38,11 +47,44 @@ async function callApi(path, options = {}) {
       ...(options.headers ?? {}),
     },
   });
+
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw body;
+    throw {
+      status_code: response.status,
+      ...(body ?? {}),
+    };
+  }
+
+  if (response.status === 204) {
+    return {};
   }
   return response.json();
+}
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function isPollableRoute() {
+  if (!state.auth) return false;
+  return state.route === 'dashboard' || state.route.startsWith('job:');
+}
+
+function scheduleNextPoll(statusCode = 200) {
+  stopPolling();
+  if (!isPollableRoute()) return;
+
+  state.pollIntervalMs = nextPollingIntervalMs({
+    currentMs: state.pollIntervalMs,
+    statusCode,
+  });
+  state.pollTimer = setTimeout(() => {
+    void loadRoute({ fromPoll: true });
+  }, state.pollIntervalMs);
 }
 
 function bindTopbar() {
@@ -52,7 +94,10 @@ function bindTopbar() {
   auditButton.hidden = !(state.auth?.roles ?? []).includes('admin');
 
   document.querySelectorAll('.nav-link').forEach((button) => {
-    button.onclick = () => { state.route = button.dataset.route; void loadRoute(); };
+    button.onclick = () => {
+      state.route = button.dataset.route;
+      void loadRoute();
+    };
   });
   document.getElementById('theme-toggle').onclick = () => {
     state.theme = state.theme === 'light' ? 'dark' : 'light';
@@ -65,6 +110,7 @@ function bindTopbar() {
     void loadRoute();
   };
   document.getElementById('logout').onclick = () => {
+    stopPolling();
     state.auth = null;
     state.route = 'login';
     render();
@@ -97,6 +143,7 @@ function render() {
       }
       state.auth = parseToken(token);
       state.route = 'dashboard';
+      state.pollIntervalMs = 5000;
       render();
       void loadRoute();
     };
@@ -104,25 +151,60 @@ function render() {
 }
 
 function jobCard(job) {
+  const progress = deriveProgress(job);
   return `
     <article class="card">
-      <h3>${job.filename ?? job.job_id.slice(0, 10)}</h3>
+      <h3>${job.filename ?? String(job.job_id ?? '').slice(0, 10)}</h3>
       <p>Status: ${job.status}</p>
-      <div class="progress"><span style="width:${job.progress}%"></span></div>
+      <p><small>Progress: ${progress}%</small></p>
+      <div class="progress"><span style="width:${progress}%"></span></div>
       <p><small>Retention: ${job.retention_months ?? '-'}</small></p>
       <button class="btn-secondary" data-open="${job.job_id}">Open</button>
     </article>
   `;
 }
 
-async function loadRoute() {
+function jobTimeline(progress) {
+  const items = [
+    { key: 'queued', label: 'queued', pct: 5 },
+    { key: 'processing', label: 'processing', pct: 20 },
+    { key: 'asr', label: 'asr-finished', pct: 60 },
+    { key: 'diarization', label: 'diarization-finished', pct: 90 },
+    { key: 'completed', label: 'completed', pct: 100 },
+  ];
+  return `
+    <ol class="timeline">
+      ${items.map((item) => `<li class="${progress >= item.pct ? 'done' : ''}">${item.label} (${item.pct}%)</li>`).join('')}
+    </ol>
+  `;
+}
+
+function updateUploadProgress(progress) {
+  state.uploadProgress = Math.max(0, Math.min(100, Number(progress || 0)));
+  const label = document.getElementById('upload-progress');
+  const bar = document.getElementById('upload-progress-bar');
+  const value = document.getElementById('upload-progress-value');
+  if (!label || !bar || !value) return;
+  label.textContent = `Upload progress: ${state.uploadProgress}%`;
+  bar.hidden = false;
+  value.style.width = `${state.uploadProgress}%`;
+}
+
+async function loadRoute({ fromPoll = false } = {}) {
   const app = document.getElementById('app');
-  if (!state.auth) return;
+  if (!state.auth) {
+    stopPolling();
+    return;
+  }
+  if (!fromPoll) {
+    state.pollIntervalMs = 5000;
+    stopPolling();
+  }
 
   if (state.route === 'dashboard') {
     try {
       const response = await callApi('/api/v1/jobs');
-      state.jobs = response.jobs ?? [];
+      state.jobs = (response.jobs ?? []).map((job) => ({ ...job, progress: deriveProgress(job) }));
       app.innerHTML = `<h1>${t('dashboard')}</h1><p>${t('jobsub')}</p><div class="card-grid">${state.jobs.map(jobCard).join('')}</div>`;
       document.querySelectorAll('[data-open]').forEach((button) => {
         button.onclick = async () => {
@@ -130,17 +212,23 @@ async function loadRoute() {
           await loadRoute();
         };
       });
+      scheduleNextPoll(200);
     } catch (problem) {
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
+      scheduleNextPoll(problem?.status_code ?? 500);
     }
     return;
   }
 
   if (state.route === 'new-job') {
+    stopPolling();
+    state.uploadProgress = 0;
     app.innerHTML = `
       <h1>${t('newjob')}</h1>
       <div class="dropzone"><input id="file-input" type="file" accept="audio/*,video/*" /></div>
       <div class="input-row"><label>${t('retention')}</label><input value="12" readonly /></div>
+      <p id="upload-progress">Upload progress: 0%</p>
+      <div class="progress" id="upload-progress-bar" hidden><span id="upload-progress-value" style="width:0%"></span></div>
       <button id="create-job">${t('create')}</button>
       <p id="newjob-error" class="error"></p>
     `;
@@ -156,29 +244,27 @@ async function loadRoute() {
         document.getElementById('newjob-error').textContent = 'job.validation.file_missing';
         return;
       }
-      const created = await callApi('/api/v1/jobs', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({
-          filename: state.selectedFile.name,
-          content_type: state.selectedFile.type || 'application/octet-stream',
-          size_bytes: state.selectedFile.size,
-          retention_months: 12,
-        }),
-      });
-      await callApi(`/api/v1/jobs/${created.job_id}/complete-upload`, {
-        method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify(buildCompleteUploadPayload({
+      const createButton = document.getElementById('create-job');
+      createButton.disabled = true;
+      document.getElementById('newjob-error').textContent = '';
+      try {
+        const queued = await createAndQueueJobUpload({
+          callApi,
+          uploadFileToPresignedUrl,
           tenantId: state.auth.tenant_id,
-          jobId: created.job_id,
-          filename: state.selectedFile.name,
-          uploadSessionId: created.upload.session_id,
-          checksumSha256: 'a'.repeat(64),
-        })),
-      });
-      state.route = `job:${created.job_id}`;
-      await loadRoute();
+          file: state.selectedFile,
+          retentionMonths: 12,
+          idempotencyKeyFactory: () => crypto.randomUUID(),
+          onUploadProgress: (progress) => updateUploadProgress(progress),
+        });
+        updateUploadProgress(100);
+        state.route = `job:${queued.jobId}`;
+        await loadRoute();
+      } catch (problem) {
+        document.getElementById('newjob-error').textContent = sanitizedError(problem);
+      } finally {
+        createButton.disabled = false;
+      }
     };
     return;
   }
@@ -187,6 +273,8 @@ async function loadRoute() {
     const jobId = state.route.split(':')[1];
     try {
       const job = await callApi(`/api/v1/jobs/${jobId}`);
+      const progress = deriveProgress(job);
+      const actions = jobActionsForStatus(job.status);
       let transcriptPanel = '';
       if (job.status === 'completed') {
         try {
@@ -204,28 +292,89 @@ async function loadRoute() {
           transcriptPanel = `<p class="error">${sanitizedError(problem)}</p>`;
         }
       }
+
       app.innerHTML = `
         <h1>${t('detail')}</h1>
         <p>${jobId}</p>
-        <div class="progress"><span style="width:${job.progress}%"></span></div>
-        <ol><li>created</li><li>uploaded</li><li>queued</li><li>processing</li><li>completed</li></ol>
+        <p><strong>Status:</strong> ${job.status}</p>
+        <p><strong>Progress:</strong> ${progress}%</p>
+        <div class="progress"><span style="width:${progress}%"></span></div>
+        ${jobTimeline(progress)}
+        <div class="action-row">
+          ${actions.canPause ? '<button id="pause-job" class="btn-secondary">Pause</button>' : ''}
+          ${actions.canResume ? '<button id="resume-job" class="btn-secondary">Resume</button>' : ''}
+          ${actions.canDelete ? '<button id="delete-job" class="btn-danger">Delete</button>' : ''}
+        </div>
         <details><summary>${t('errors')}</summary><p class="error" id="job-error"></p></details>
         ${transcriptPanel}
       `;
+
+      const setJobError = (problem) => {
+        const errorNode = document.getElementById('job-error');
+        if (errorNode) {
+          errorNode.textContent = sanitizedError(problem);
+        }
+      };
+
+      const pauseButton = document.getElementById('pause-job');
+      if (pauseButton) {
+        pauseButton.onclick = async () => {
+          try {
+            await callApi(`/api/v1/jobs/${jobId}/pause`, { method: 'POST' });
+            await loadRoute();
+          } catch (problem) {
+            setJobError(problem);
+          }
+        };
+      }
+
+      const resumeButton = document.getElementById('resume-job');
+      if (resumeButton) {
+        resumeButton.onclick = async () => {
+          try {
+            await callApi(`/api/v1/jobs/${jobId}/resume`, { method: 'POST' });
+            await loadRoute();
+          } catch (problem) {
+            setJobError(problem);
+          }
+        };
+      }
+
+      const deleteButton = document.getElementById('delete-job');
+      if (deleteButton) {
+        deleteButton.onclick = async () => {
+          if (!window.confirm(`Delete job ${jobId}?`)) return;
+          try {
+            await callApi(`/api/v1/jobs/${jobId}`, { method: 'DELETE' });
+            state.route = 'dashboard';
+            await loadRoute();
+          } catch (problem) {
+            setJobError(problem);
+          }
+        };
+      }
+
+      if (TERMINAL_JOB_STATUSES.has(job.status)) {
+        stopPolling();
+      } else {
+        scheduleNextPoll(200);
+      }
     } catch (problem) {
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
+      scheduleNextPoll(problem?.status_code ?? 500);
     }
     return;
   }
 
   if (state.route === 'audit') {
+    stopPolling();
     if (!(state.auth.roles ?? []).includes('admin')) {
       app.innerHTML = `<p>${t('notauth')}</p>`;
       return;
     }
     try {
       const response = await callApi('/api/v1/audit');
-      app.innerHTML = `<h1>${t('audit')}</h1><ul>${(response.events ?? []).map((event) => `<li>${event.tenant_id} · ${event.actor_id ?? 'n/a'} · ${event.correlation_id ?? 'n/a'}</li>`).join('')}</ul>`;
+      app.innerHTML = `<h1>${t('audit')}</h1><ul>${(response.events ?? []).map((event) => `<li>${event.tenant_id} | ${event.actor_id ?? 'n/a'} | ${event.correlation_id ?? 'n/a'}</li>`).join('')}</ul>`;
     } catch (problem) {
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
     }

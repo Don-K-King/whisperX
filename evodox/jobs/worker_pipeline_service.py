@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .progress import derive_progress
+
 
 ALLOWED_SOURCE_STATUSES = frozenset({"queued", "failed_retryable"})
 
@@ -44,11 +46,13 @@ class InMemoryJobStateStore:
         item = self._jobs.get((tenant_id, job_id))
         return None if item is None else dict(item)
 
-    def set_status(self, tenant_id: str, job_id: str, status: str) -> None:
+    def set_status(self, tenant_id: str, job_id: str, status: str, *, progress: int | None = None) -> None:
         key = (tenant_id, job_id)
         if key not in self._jobs:
             raise KeyError("job not found")
         self._jobs[key]["status"] = status
+        if progress is not None:
+            self._jobs[key]["progress"] = int(progress)
 
 
 class InMemoryArtifactStore:
@@ -96,7 +100,7 @@ class WorkerPipeline:
         if job.get("status") not in ALLOWED_SOURCE_STATUSES:
             raise ValueError("job.invalid_state")
 
-        self.job_store.set_status(request.tenant_id, request.job_id, "processing")
+        self.job_store.set_status(request.tenant_id, request.job_id, "processing", progress=20)
         self.audit_log.append(
             {
                 "action": "job.worker.start",
@@ -107,13 +111,27 @@ class WorkerPipeline:
         )
 
         try:
+            paused = self._pause_if_requested(request)
+            if paused is not None:
+                return paused
             object_key = str(job.get("object_key", ""))
             expected_prefix = f"tenant/{request.tenant_id}/{request.job_id}/"
             if not object_key.startswith(expected_prefix):
                 raise TerminalWorkerError("job.object_key_scope_violation")
             transcript = self.asr_engine(object_key)
+            paused = self._pause_if_requested(request)
+            if paused is not None:
+                return paused
+            self.job_store.set_status(request.tenant_id, request.job_id, "processing", progress=60)
             aligned = self.align_engine(transcript)
+            paused = self._pause_if_requested(request)
+            if paused is not None:
+                return paused
             diarized = self.diarize_engine(aligned)
+            self.job_store.set_status(request.tenant_id, request.job_id, "processing", progress=90)
+            paused = self._pause_if_requested(request)
+            if paused is not None:
+                return paused
             artifact = {
                 "tenant_id": request.tenant_id,
                 "job_id": request.job_id,
@@ -126,7 +144,7 @@ class WorkerPipeline:
                 job_id=request.job_id,
                 artifact=artifact,
             )
-            self.job_store.set_status(request.tenant_id, request.job_id, "completed")
+            self.job_store.set_status(request.tenant_id, request.job_id, "completed", progress=100)
             self.audit_log.append(
                 {
                     "action": "job.worker.completed",
@@ -172,3 +190,21 @@ class WorkerPipeline:
                 status="failed_terminal",
                 error_code=exc.error_code,
             )
+
+    def _pause_if_requested(self, request: WorkerProcessInput) -> WorkerProcessResult | None:
+        current = self.job_store.get(request.tenant_id, request.job_id)
+        if current is None:
+            return None
+        if str(current.get("status")) != "pause_requested":
+            return None
+        progress = derive_progress(status=str(current.get("status")), raw_progress=current.get("progress"))
+        self.job_store.set_status(request.tenant_id, request.job_id, "paused", progress=progress)
+        self.audit_log.append(
+            {
+                "action": "job.worker.paused",
+                "tenant_id": request.tenant_id,
+                "job_id": request.job_id,
+                "ts": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+        return WorkerProcessResult(tenant_id=request.tenant_id, job_id=request.job_id, status="paused")

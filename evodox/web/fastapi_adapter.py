@@ -12,6 +12,8 @@ from evodox.jobs.complete_upload_service import (
 )
 from evodox.jobs.create_service import CreateJobInput, ValidationError, create_job
 from evodox.jobs.get_job_status_service import JobStatusNotFoundError, get_job_status
+from evodox.jobs.lifecycle_service import JobLifecycleError, delete_job, pause_job, resume_job
+from evodox.jobs.progress import derive_progress
 from evodox.jobs.transcript_service import (
     TranscriptConflictError,
     TranscriptValidationError,
@@ -60,9 +62,7 @@ def map_job_status_response(response: Any) -> dict[str, Any]:
 
 def map_job_list_item(row: dict[str, Any]) -> dict[str, Any]:
     status = str(row.get("status", "created"))
-    progress = row.get("progress")
-    if not isinstance(progress, int):
-        progress = 100 if status == "completed" else 0
+    progress = derive_progress(status=status, raw_progress=row.get("progress"))
     return {
         "job_id": row.get("job_id"),
         "filename": row.get("filename"),
@@ -267,6 +267,86 @@ def create_fastapi_app(
             return map_job_status_response(result)
         except AuthzError as exc:
             raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except JobStatusNotFoundError as exc:
+            raise _http_error(404, exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/pause")
+    def post_job_pause(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            pause_job(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                job_store=job_repository,
+                outbox=outbox,
+                audit_log=audit_log,
+            )
+            result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
+            return map_job_status_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except JobLifecycleError as exc:
+            raise _http_error(exc.status_code, exc.error_code) from exc
+        except JobStatusNotFoundError as exc:
+            raise _http_error(404, exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/resume")
+    def post_job_resume(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            resume_job(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                job_store=job_repository,
+                outbox=outbox,
+                audit_log=audit_log,
+                queue_policy=queue_policy,
+            )
+            result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
+            return map_job_status_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except JobLifecycleError as exc:
+            raise _http_error(exc.status_code, exc.error_code) from exc
+        except JobStatusNotFoundError as exc:
+            raise _http_error(404, exc.error_code) from exc
+
+    @app.delete("/api/v1/jobs/{job_id}")
+    def delete_job_endpoint(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            delete_job(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                job_store=job_repository,
+                outbox=outbox,
+                object_storage=object_storage,
+                audit_log=audit_log,
+            )
+            result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
+            return map_job_status_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except JobLifecycleError as exc:
+            raise _http_error(exc.status_code, exc.error_code) from exc
         except JobStatusNotFoundError as exc:
             raise _http_error(404, exc.error_code) from exc
 

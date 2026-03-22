@@ -129,7 +129,7 @@ class SQLiteJobRepository:
                     upload_session_id = ?,
                     object_key = ?,
                     checksum_sha256 = ?,
-                    progress = 0
+                    progress = 5
                 WHERE tenant_id = ? AND job_id = ?
                 """,
                 (upload_session_id, object_key, checksum_sha256, tenant_id, job_id),
@@ -140,7 +140,8 @@ class SQLiteJobRepository:
     def list_for_tenant(self, tenant_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE tenant_id = ? ORDER BY created_at", (tenant_id,)
+                "SELECT * FROM jobs WHERE tenant_id = ? AND deleted_at IS NULL ORDER BY created_at",
+                (tenant_id,),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -151,6 +152,23 @@ class SQLiteJobRepository:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def mark_deleted(self, tenant_id: str, job_id: str, *, actor_id: str) -> None:
+        with self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'deleted',
+                    progress = 100,
+                    actor_id = ?,
+                    filename = '[redacted]',
+                    deleted_at = ?
+                WHERE tenant_id = ? AND job_id = ? AND deleted_at IS NULL
+                """,
+                (actor_id, datetime.now(tz=timezone.utc).isoformat(), tenant_id, job_id),
+            )
+        if updated.rowcount == 0:
+            raise KeyError("job not found")
 
 
 class SQLiteRetentionCandidateRepository:
@@ -777,6 +795,27 @@ class SQLiteOutbox:
                 ),
             )
 
+    def prune_pending_for_job(self, *, tenant_id: str, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE outbox_events
+                SET status = 'published',
+                    published_at = ?,
+                    publish_attempted_at = ?,
+                    next_attempt_at = NULL,
+                    last_error_code = 'job.deleted',
+                    last_error_class = 'skipped'
+                WHERE tenant_id = ? AND job_id = ? AND status = 'pending'
+                """,
+                (
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    datetime.now(tz=timezone.utc).isoformat(),
+                    tenant_id,
+                    job_id,
+                ),
+            )
+
 
 class RetryablePublishError(Exception):
     def __init__(self, error_code: str):
@@ -1069,6 +1108,13 @@ class LocalObjectStorageCatalog:
 
     def exists_with_checksum(self, object_key: str, checksum_sha256: str) -> bool:
         return self._objects.get(object_key) == checksum_sha256
+
+    def delete_prefix(self, *, tenant_id: str, object_prefix: str) -> bool:
+        del tenant_id
+        keys = [key for key in self._objects if key.startswith(object_prefix)]
+        for key in keys:
+            self._objects.pop(key, None)
+        return True
 
 
 class LenientObjectStorageCatalog(LocalObjectStorageCatalog):

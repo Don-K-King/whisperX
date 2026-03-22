@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .progress import derive_progress
+
 
 @dataclass(frozen=True)
 class JobStatusResponse:
@@ -37,7 +39,7 @@ def get_job_status(*, job_id: str, tenant_id: str, job_store: Any) -> JobStatusR
         raise JobStatusNotFoundError()
 
     status = str(row.get("status", "created"))
-    progress = _derive_progress(status=status, raw_progress=row.get("progress"))
+    progress = derive_progress(status=status, raw_progress=row.get("progress"))
     retention_until = _derive_retention_until(
         created_at=str(row.get("created_at") or datetime.now(tz=timezone.utc).isoformat()),
         retention_months=int(row.get("retention_months", 12)),
@@ -48,15 +50,6 @@ def get_job_status(*, job_id: str, tenant_id: str, job_store: Any) -> JobStatusR
         progress=progress,
         retention_until=retention_until,
     )
-
-
-def _derive_progress(*, status: str, raw_progress: Any) -> int:
-    if isinstance(raw_progress, int):
-        return max(0, min(100, raw_progress))
-    if status == "completed":
-        return 100
-    return 0
-
 
 def _derive_retention_until(*, created_at: str, retention_months: int) -> str:
     base = _parse_iso_datetime(created_at)

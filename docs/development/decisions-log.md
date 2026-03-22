@@ -153,3 +153,22 @@
 - Fertig: API-Factory aus ENV, Hybrid-Auth `oidc|dev`, tenant-scoped Jobs/Audit-Endpoints, Stub-Worker-Runner, lokale Compose- und Runtime-Entrypoints.
 - Offen: Transcript-API-Pfad, Persistenz des Worker-Outputs als abrufbares Transcript, Frontend-Upload per Presigned-Flow und Anzeige von Transcript/Speaker-Diarization.
 - Naechster TDD-Schritt: Transcript Vertical Slice bis Frontend, zuerst Red-Tests fuer API-Contract und Frontend-Detailansicht, dann Runtime-Wiring und UI-Integration.
+
+## 2026-03-22 - Status-Tracking: Presigned Upload Orchestrator als naechster Frontend-Schritt
+- Aktueller Stand: Frontend-Upload wird als testbarer Orchestrator vorbereitet (`create job -> presigned PUT -> complete-upload`).
+- Grune Gates: Frontend-Utilities/Tests fuer SHA-256 und Presigned-Upload, Python-Regression, Docker-Smoke im lokalen Runtime-Setup.
+- Danach: WhisperX-Worker fuer echte Live-Transkription und Speaker-Diarization als naechster funktionaler Schritt im selben Docker-Vertical-Slice.
+
+## 2026-03-22 - ADR-0014 Local WhisperX Runtime fuer erstes Docker-E2E
+- Entscheidung: Worker-Mode `whisperx` als naechster Vertical Slice fuer lokale End-to-End-Transkription eingefuehrt, `stub` bleibt fuer deterministische Tests erhalten.
+- Entscheidung: Browser-tauglicher Uploadpfad lokal ueber MinIO Host-Port (`19000`) statt internem Container-Hostnamen, damit Presigned PUT aus dem Frontend funktioniert.
+- Entscheidung: MinIO-Bucket `uploads` wird im Compose-Init-Schritt automatisiert erstellt und fuer lokalen Dev-Betrieb auf `public` gesetzt.
+- Entscheidung: Diarization wird als best-effort ausgefuehrt; bei gated/inkompatiblen Modellfehlern erfolgt automatischer Fallback auf reine Transkription, damit der Job nicht terminal scheitert.
+
+## 2026-03-22 - ADR-0015 Job Lifecycle Controls + Milestone Progress
+- Entscheidung: Job-Lifecycle fuer lokalen/prod-nahen Betrieb um `pause`, `resume` und `delete` erweitert.
+- API-Form festgelegt: `POST /pause`, `POST /resume`, `DELETE /jobs/{id}`.
+- Pause-Strategie bewusst als kooperatives Stop+Resume eingefuehrt (kein Midpoint-Checkpointing in diesem Schritt).
+- Retry-Strategie im Worker konkretisiert: begrenzte Auto-Retries fuer retryable Fehler, danach deterministischer Uebergang nach `failed_terminal`.
+- Progress-Strategie fuer UI/API festgelegt: deterministische Milestones (`5/20/60/90/100`) statt ETA-Schaetzung.
+- Konsequenz: Frontend zeigt Actions statusabhaengig und pollt mit 429-Backoff; Backend liefert konsistente Progress-Werte auch bei fehlendem Raw-Progress.

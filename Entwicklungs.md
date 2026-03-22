@@ -232,3 +232,31 @@ Login → Job anlegen → Upload finalisieren → Queueing → Statusabfrage.
   - **Lösung:** RBAC-Matrix aus Spezifikation als zentrale Policy-Quelle verwenden.
 - **Konflikt:** schneller Upload-Pfad vs. Sicherheit.
   - **Lösung:** Validierung serverseitig erzwingen, niemals nur Frontend-seitig.
+
+## 2026-03-22 - Umsetzungsschritt abgeschlossen: Pause/Resume/Delete + Progress
+
+### Erreicht
+- API Lifecycle Endpoints umgesetzt:
+  - `POST /api/v1/jobs/{id}/pause`
+  - `POST /api/v1/jobs/{id}/resume`
+  - `DELETE /api/v1/jobs/{id}`
+- Worker-Lauf robust erweitert:
+  - kooperatives Pausieren (`pause_requested -> paused`)
+  - Retry-Limit fuer retryable Fehler mit Uebergang nach `failed_terminal`
+- Deterministische Milestone-Progress-Semantik verbindlich umgesetzt:
+  - `queued=5`, `processing=20`, `asr=60`, `diarization=90`, `completed=100`
+- Frontend erweitert:
+  - sichtbarer Upload-Fortschritt
+  - statusabhaengige Actions (Pause/Resume/Delete)
+  - Dashboard/Detail Polling mit 429-Backoff (5s bis max. 30s)
+
+### Validierung
+- Python-Tests gruen (via Docker `python:3.12-slim`, inkl. FastAPI-Integrationstests).
+- Frontend-Tests gruen (`node --test frontend/tests/*.test.js`).
+
+### Naechster Umsetzungsschritt
+- End-to-End Docker Smoke fuer den gesamten UI-Flow inkl. Lifecycle-Aktionen automatisieren.
+- Danach Live-Transcription-Haertung:
+  - robuste WhisperX-Laufstabilitaet (Fehlerklassen, Retry-Policies),
+  - produktionsnahe Diarization-Konfiguration,
+  - finale UX fuer Fehlerbehandlung und Recovery.

@@ -47,7 +47,7 @@ class JobStatusServiceTests(unittest.TestCase):
         )
 
         result = get_job_status(job_id="job_2", tenant_id="tenant-a", job_store=self.store)
-        self.assertEqual(result.progress, 0)
+        self.assertEqual(result.progress, 5)
 
 
 if __name__ == "__main__":
