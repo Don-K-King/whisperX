@@ -78,6 +78,18 @@ class WorkerRunnerTests(unittest.TestCase):
 
         self.assertEqual(settings.mode, "whisperx")
 
+    def test_settings_accept_zero_whisperx_timeout(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "true",
+                "HF_TOKEN": "hf_test_token",
+                "WORKER_WHISPERX_TIMEOUT_SECONDS": "0",
+            }
+        )
+        self.assertEqual(settings.whisperx_timeout_seconds, 0)
+
     def test_run_once_processes_pending_outbox_event_to_completed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "jobs.db"
@@ -311,6 +323,115 @@ class WorkerRunnerTests(unittest.TestCase):
             self.assertEqual(result.processed, 1)
             row = repo.get("tenant-a", "job_3")
             self.assertEqual(row["status"], "completed")
+
+    def test_cancel_requested_has_priority_and_prevents_retry_processing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_priority",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": 1200,
+                    "retention_months": 6,
+                    "status": "cancel_requested",
+                    "object_key": "tenant/tenant-a/job_cancel_priority/audio.wav",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_cancel_priority",
+                    "queue": "cpu-short",
+                    "object_key": "tenant/tenant-a/job_cancel_priority/audio.wav",
+                    "checksum_sha256": "a" * 64,
+                    "upload_session_id": "up_cancel_priority",
+                }
+            )
+
+            runtime = WorkerRuntime(
+                settings=WorkerRuntimeSettings(
+                    db_path=db_path,
+                    batch_size=10,
+                    poll_interval_seconds=1,
+                    mode="stub",
+                    audit_log_path=Path(tmpdir) / "worker-audit.jsonl",
+                )
+            )
+            result = runtime.run_once()
+
+            self.assertEqual(result.processed, 1)
+            row = repo.get("tenant-a", "job_cancel_priority")
+            self.assertEqual(row["status"], "canceled")
+            with sqlite3.connect(db_path) as conn:
+                outbox_status = conn.execute(
+                    "SELECT status FROM outbox_events WHERE job_id = 'job_cancel_priority'"
+                ).fetchone()[0]
+            self.assertEqual(outbox_status, "published")
+
+    def test_unhandled_pipeline_exception_goes_dlq_without_retry_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            repo.create(
+                {
+                    "job_id": "job_crash",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": 1200,
+                    "retention_months": 6,
+                    "status": "queued",
+                    "object_key": "tenant/tenant-a/job_crash/audio.wav",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_crash",
+                    "queue": "cpu-short",
+                    "object_key": "tenant/tenant-a/job_crash/audio.wav",
+                    "checksum_sha256": "a" * 64,
+                    "upload_session_id": "up_crash",
+                }
+            )
+            runtime = WorkerRuntime(
+                settings=WorkerRuntimeSettings(
+                    db_path=db_path,
+                    batch_size=10,
+                    poll_interval_seconds=1,
+                    mode="stub",
+                    audit_log_path=Path(tmpdir) / "worker-audit.jsonl",
+                )
+            )
+
+            class _BoomPipeline:
+                def process(self, _request):
+                    raise RuntimeError("boom")
+
+            runtime.pipeline = _BoomPipeline()
+
+            result = runtime.run_once()
+            self.assertEqual(result.processed, 1)
+            self.assertEqual(result.failed, 1)
+
+            row = repo.get("tenant-a", "job_crash")
+            self.assertEqual(row["status"], "failed_terminal")
+            with sqlite3.connect(db_path) as conn:
+                status, retry_count, dlq_reason = conn.execute(
+                    "SELECT status, retry_count, dlq_reason FROM outbox_events WHERE job_id = 'job_crash'"
+                ).fetchone()
+            self.assertEqual(status, "dlq")
+            self.assertEqual(retry_count, 0)
+            self.assertEqual(dlq_reason, "worker.unhandled_exception")
 
 
 if __name__ == "__main__":

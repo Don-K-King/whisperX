@@ -114,3 +114,23 @@
 - Bewertung: Keine Regression in bestehenden Servicepfaden; neuer Backend-/Governance-/Preflight-Pfad ist testseitig abgedeckt.
 
 
+
+## 2026-03-22 - Regression nach Midpoint-Checkpointing + Cancel-Lifecycle
+- Anlass: Architektur-/Lifecycle-Erweiterung um persistente Job-Checkpoints (`job_checkpoints`), terminalen Cancel-Endpunkt und Worker-Cancel-Prioritaet.
+- Ausgefuehrt (Backend Regression): `docker run --rm -v <repo>:/work -w /work python:3.12-slim python -m unittest discover -s tests -p "test_*.py"`.
+- Ergebnis (Backend Regression): Gruen, 139 Tests, 16 Skips.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 14 Tests.
+- Ausgefuehrt (Smoke mit FastAPI): `docker run --rm -v <repo>:/work -w /work python:3.12-slim sh -lc "pip install -q fastapi pydantic uvicorn httpx && python -m unittest tests.test_local_runtime_smoke"`.
+- Ergebnis (Smoke): Gruen, 3 Tests (`create->complete->worker`, `pause->resume(checkpoint)`, `cancel->canceled`).
+- Bewertung: Keine Regression in bestehender Queue-/Worker-/Frontend-Logik; neue Cancel- und Checkpoint-Pfade sind testseitig abgedeckt.
+
+## 2026-03-22 - Regression Stabiler Job-Lifecycle (Force-Delete + no-auto-restart)
+- Anlass: Delete fuer aktive Status, harte Timeout-Deaktivierung (`WORKER_WHISPERX_TIMEOUT_SECONDS=0`) und Worker-Exception-Handling ohne Retry-Loop.
+- Ausgefuehrt (Backend Vollsuite): `docker run --rm -v C:\\Users\\patrick\\Evidowhisperx:/work -w /work evodox-local:dev sh -lc "python -m pip install --quiet httpx && python -m unittest discover -s tests -p 'test_*.py'"`.
+- Ergebnis (Backend Vollsuite): Gruen, 147 Tests.
+- Ausgefuehrt (Frontend): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend): Gruen, 14 Tests.
+- Ausgefuehrt (gezieltes Red->Green): `docker run --rm -v C:\\Users\\patrick\\Evidowhisperx:/work -w /work evodox-local:dev sh -lc "python -m pip install --quiet httpx && python -m unittest tests.test_worker_pipeline_service tests.test_job_lifecycle_service"`.
+- Ergebnis (gezielt): Erst Red im neuen Resume-Dedupe-Test (6 statt 4 Segmente), danach Green mit Fix.
+- Bewertung: Force-Delete- und Anti-Restart-Semantik sind regressionsseitig abgesichert; Pause/Resume bleibt auch bei nicht offset-faehiger ASR-Engine ohne Segmentduplikate konsistent.

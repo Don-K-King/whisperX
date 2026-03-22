@@ -9,6 +9,7 @@ const MILESTONE_PROGRESS = {
   queued: 5,
   processing: 20,
   pause_requested: 20,
+  cancel_requested: 20,
   paused: 20,
   failed_retryable: 20,
   failed_terminal: 20,
@@ -61,7 +62,8 @@ export function jobActionsForStatus(statusRaw){
   return {
     canPause: status === 'queued' || status === 'processing',
     canResume: status === 'paused' || status === 'failed_retryable',
-    canDelete: status === 'completed' || status === 'failed_terminal' || status === 'paused' || status === 'canceled',
+    canCancel: status === 'queued' || status === 'processing' || status === 'pause_requested' || status === 'paused',
+    canDelete: status !== 'deleted',
   };
 }
 

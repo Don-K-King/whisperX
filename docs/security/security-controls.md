@@ -163,3 +163,10 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 ## 2026-03-08 – Ergänzende UI-Sicherheitskontrollen (Visual Refresh)
 - Branding/Styling-Update ohne Erweiterung der Datenrechte: Audit-Navigation bleibt strikt rollenbasiert (`admin`-only visibility).
 - Fehlerdarstellung im Login bleibt kontrolliert auf Codes (kein internes Debug/Stacktrace-Leak) auch im neuen UI-Layout.
+
+## 2026-03-22 - Controls fuer Midpoint-Checkpointing und terminalen Cancel
+- **Control: Terminal-Cancel erzwingen.** `canceled` ist final; Resume auf `canceled` wird mit `409 job.resume.invalid_state` blockiert.
+- **Control: Cancel-Prioritaet im Worker.** `cancel_requested` wird vor Retry/Weiterverarbeitung ausgewertet; laufende Jobs gehen kontrolliert nach `canceled`.
+- **Control: Tenant-scoped Checkpoint-Speicherung.** Checkpoints werden ausschliesslich mit verpflichtendem `(tenant_id, job_id)` Kontext persistiert.
+- **Control: Teilresultate bleiben intern.** Checkpoint- und Zwischenartefakte werden nicht ueber API/Frontend exponiert.
+- **Control: Kooperative Unterbrechungspunkte.** Pause/Cancel werden zwischen Segmenten und Stage-Grenzen geprueft, um unkontrollierte Teilzustandsverluste zu vermeiden.

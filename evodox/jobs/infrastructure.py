@@ -795,7 +795,14 @@ class SQLiteOutbox:
                 ),
             )
 
-    def prune_pending_for_job(self, *, tenant_id: str, job_id: str) -> None:
+    def prune_pending_for_job(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        error_code: str = "job.deleted",
+        error_class: str = "skipped",
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
@@ -804,13 +811,15 @@ class SQLiteOutbox:
                     published_at = ?,
                     publish_attempted_at = ?,
                     next_attempt_at = NULL,
-                    last_error_code = 'job.deleted',
-                    last_error_class = 'skipped'
+                    last_error_code = ?,
+                    last_error_class = ?
                 WHERE tenant_id = ? AND job_id = ? AND status = 'pending'
                 """,
                 (
                     datetime.now(tz=timezone.utc).isoformat(),
                     datetime.now(tz=timezone.utc).isoformat(),
+                    error_code,
+                    error_class,
                     tenant_id,
                     job_id,
                 ),
@@ -1128,6 +1137,100 @@ class LenientObjectStorageCatalog(LocalObjectStorageCatalog):
         return all(ch in "0123456789abcdefABCDEF" for ch in checksum_sha256)
 
 
+class SQLiteJobCheckpointStore:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS job_checkpoints (
+                    tenant_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    stage_offset INTEGER NOT NULL DEFAULT 0,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (tenant_id, job_id)
+                )
+                """
+            )
+
+    def upsert(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        stage: str,
+        stage_offset: int,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        safe_payload = payload if isinstance(payload, dict) else {}
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_checkpoints (
+                    tenant_id, job_id, stage, stage_offset, payload_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, job_id)
+                DO UPDATE SET
+                    stage = excluded.stage,
+                    stage_offset = excluded.stage_offset,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    tenant_id,
+                    job_id,
+                    stage,
+                    max(0, int(stage_offset)),
+                    json.dumps(safe_payload, sort_keys=True),
+                    datetime.now(tz=timezone.utc).isoformat(),
+                ),
+            )
+
+    def get(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT stage, stage_offset, payload_json, updated_at
+                FROM job_checkpoints
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (tenant_id, job_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return {
+            "tenant_id": tenant_id,
+            "job_id": job_id,
+            "stage": str(row["stage"] or ""),
+            "stage_offset": max(0, int(row["stage_offset"] or 0)),
+            "payload": payload,
+            "updated_at": row["updated_at"],
+        }
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM job_checkpoints WHERE tenant_id = ? AND job_id = ?",
+                (tenant_id, job_id),
+            )
+
+
 class SQLiteWorkerArtifactStore:
     def __init__(self, db_path: Path) -> None:
         self._db_path = str(db_path)
@@ -1171,6 +1274,13 @@ class SQLiteWorkerArtifactStore:
         if row is None:
             return None
         return json.loads(row["payload_json"])
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM worker_artifacts WHERE tenant_id = ? AND job_id = ?",
+                (tenant_id, job_id),
+            )
 
 
 class SQLiteTranscriptRepository:
@@ -1285,6 +1395,13 @@ class SQLiteTranscriptRepository:
                 (tenant_id, job_id, new_version, json.dumps(segments, sort_keys=True)),
             )
             return new_version
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM transcript_versions WHERE tenant_id = ? AND job_id = ?",
+                (tenant_id, job_id),
+            )
 
 
 def _response_to_dict(response: CreateJobResponse) -> dict[str, Any]:

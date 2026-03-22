@@ -62,13 +62,53 @@ test('mapTranscriptToSpeakerRows maps transcript API payload for frontend render
 test('deriveProgress uses milestone defaults when API omits progress', () => {
   assert.equal(deriveProgress({ status: 'queued' }), 5);
   assert.equal(deriveProgress({ status: 'processing' }), 20);
+  assert.equal(deriveProgress({ status: 'cancel_requested' }), 20);
   assert.equal(deriveProgress({ status: 'completed' }), 100);
 });
 
 test('jobActionsForStatus returns status-dependent lifecycle actions', () => {
-  assert.deepEqual(jobActionsForStatus('processing'), { canPause: true, canResume: false, canDelete: false });
-  assert.deepEqual(jobActionsForStatus('paused'), { canPause: false, canResume: true, canDelete: true });
-  assert.deepEqual(jobActionsForStatus('completed'), { canPause: false, canResume: false, canDelete: true });
+  assert.deepEqual(jobActionsForStatus('processing'), {
+    canPause: true,
+    canResume: false,
+    canCancel: true,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('paused'), {
+    canPause: false,
+    canResume: true,
+    canCancel: true,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('completed'), {
+    canPause: false,
+    canResume: false,
+    canCancel: false,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('canceled'), {
+    canPause: false,
+    canResume: false,
+    canCancel: false,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('upload_pending'), {
+    canPause: false,
+    canResume: false,
+    canCancel: false,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('cancel_requested'), {
+    canPause: false,
+    canResume: false,
+    canCancel: false,
+    canDelete: true,
+  });
+  assert.deepEqual(jobActionsForStatus('deleted'), {
+    canPause: false,
+    canResume: false,
+    canCancel: false,
+    canDelete: false,
+  });
 });
 
 test('nextPollingIntervalMs backs off on 429 and resets on success', () => {

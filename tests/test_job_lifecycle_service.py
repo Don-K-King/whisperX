@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from evodox.jobs.infrastructure import JsonlAuditLog, SQLiteJobRepository, SQLiteOutbox
-from evodox.jobs.lifecycle_service import JobLifecycleError, delete_job, pause_job, resume_job
+from evodox.jobs.lifecycle_service import JobLifecycleError, cancel_job, delete_job, pause_job, resume_job
 
 
 class _DeleteAwareStorage:
@@ -13,6 +13,14 @@ class _DeleteAwareStorage:
     def delete_prefix(self, *, tenant_id: str, object_prefix: str) -> bool:
         self.deleted.append((tenant_id, object_prefix))
         return True
+
+
+class _DeleteAwareStore:
+    def __init__(self) -> None:
+        self.deleted: list[tuple[str, str]] = []
+
+    def delete(self, tenant_id: str, job_id: str) -> None:
+        self.deleted.append((tenant_id, job_id))
 
 
 class JobLifecycleServiceTests(unittest.TestCase):
@@ -93,10 +101,130 @@ class JobLifecycleServiceTests(unittest.TestCase):
             self.assertEqual(repo.get("tenant-a", "job_2")["status"], "queued")
             self.assertEqual(len(outbox.list_pending(limit=20)), 1)
 
-    def test_delete_active_job_raises_conflict(self):
+    def test_cancel_processing_sets_cancel_requested(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "jobs.db"
             repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "run.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "processing",
+                    "progress": 48,
+                    "object_key": "tenant/tenant-a/job_cancel_1/run.mp4",
+                    "checksum_sha256": "b" * 64,
+                    "upload_session_id": "up_cancel_1",
+                }
+            )
+
+            status = cancel_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_cancel_1",
+                job_store=repo,
+                outbox=SQLiteOutbox(db_path),
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+
+            self.assertEqual(status, "cancel_requested")
+            row = repo.get("tenant-a", "job_cancel_1")
+            self.assertEqual(row["status"], "cancel_requested")
+            self.assertEqual(row["progress"], 48)
+
+    def test_cancel_paused_transitions_to_canceled_and_prunes_pending_outbox(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_2",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "pause.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "paused",
+                    "progress": 35,
+                    "object_key": "tenant/tenant-a/job_cancel_2/pause.mp4",
+                    "checksum_sha256": "c" * 64,
+                    "upload_session_id": "up_cancel_2",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_cancel_2",
+                    "queue": "cpu-short",
+                    "upload_session_id": "up_cancel_2",
+                    "object_key": "tenant/tenant-a/job_cancel_2/pause.mp4",
+                    "checksum_sha256": "c" * 64,
+                }
+            )
+
+            status = cancel_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_cancel_2",
+                job_store=repo,
+                outbox=outbox,
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+
+            self.assertEqual(status, "canceled")
+            row = repo.get("tenant-a", "job_cancel_2")
+            self.assertEqual(row["status"], "canceled")
+            self.assertEqual(row["progress"], 100)
+            self.assertEqual(outbox.list_pending(limit=20), [])
+
+    def test_resume_canceled_job_returns_conflict(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_3",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "cancel.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "canceled",
+                    "progress": 100,
+                    "object_key": "tenant/tenant-a/job_cancel_3/cancel.mp4",
+                    "checksum_sha256": "d" * 64,
+                    "upload_session_id": "up_cancel_3",
+                }
+            )
+
+            with self.assertRaises(JobLifecycleError) as exc:
+                resume_job(
+                    tenant_id="tenant-a",
+                    actor_id="u-1",
+                    job_id="job_cancel_3",
+                    job_store=repo,
+                    outbox=SQLiteOutbox(db_path),
+                    audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+                )
+            self.assertEqual(exc.exception.error_code, "job.resume.invalid_state")
+
+    def test_delete_processing_job_soft_deletes_and_prunes_pending_outbox(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            storage = _DeleteAwareStorage()
+            checkpoint_store = _DeleteAwareStore()
+            artifact_store = _DeleteAwareStore()
+            transcript_store = _DeleteAwareStore()
             repo.create(
                 {
                     "job_id": "job_3",
@@ -113,18 +241,38 @@ class JobLifecycleServiceTests(unittest.TestCase):
                     "upload_session_id": "up_3",
                 }
             )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_3",
+                    "queue": "cpu-short",
+                    "object_key": "tenant/tenant-a/job_3/active.mp4",
+                    "checksum_sha256": "c" * 64,
+                    "upload_session_id": "up_3",
+                }
+            )
 
-            with self.assertRaises(JobLifecycleError) as exc:
-                delete_job(
-                    tenant_id="tenant-a",
-                    actor_id="u-1",
-                    job_id="job_3",
-                    job_store=repo,
-                    outbox=SQLiteOutbox(db_path),
-                    object_storage=_DeleteAwareStorage(),
-                    audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
-                )
-            self.assertEqual(exc.exception.error_code, "job.delete.active_conflict")
+            status = delete_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_3",
+                job_store=repo,
+                outbox=outbox,
+                object_storage=storage,
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+                checkpoint_store=checkpoint_store,
+                artifact_store=artifact_store,
+                transcript_store=transcript_store,
+            )
+            self.assertEqual(status, "deleted")
+            row = repo.get("tenant-a", "job_3")
+            self.assertEqual(row["status"], "deleted")
+            self.assertEqual(outbox.list_pending(limit=20), [])
+            self.assertEqual(storage.deleted[0], ("tenant-a", "tenant/tenant-a/job_3/"))
+            self.assertEqual(checkpoint_store.deleted, [("tenant-a", "job_3")])
+            self.assertEqual(artifact_store.deleted, [("tenant-a", "job_3")])
+            self.assertEqual(transcript_store.deleted, [("tenant-a", "job_3")])
 
     def test_delete_completed_job_soft_deletes_and_prunes_pending_outbox(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -175,6 +323,107 @@ class JobLifecycleServiceTests(unittest.TestCase):
             self.assertEqual(row["status"], "deleted")
             self.assertEqual(outbox.list_pending(limit=20), [])
             self.assertEqual(storage.deleted[0], ("tenant-a", "tenant/tenant-a/job_4/"))
+
+    def test_delete_upload_pending_job_is_allowed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_5",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "pending.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "upload_pending",
+                    "progress": 0,
+                }
+            )
+
+            status = delete_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_5",
+                job_store=repo,
+                outbox=SQLiteOutbox(db_path),
+                object_storage=_DeleteAwareStorage(),
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+            self.assertEqual(status, "deleted")
+            self.assertEqual(repo.get("tenant-a", "job_5")["status"], "deleted")
+
+    def test_delete_cancel_requested_job_is_allowed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_6",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "cancel-requested.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "cancel_requested",
+                    "progress": 20,
+                    "object_key": "tenant/tenant-a/job_6/cancel-requested.mp4",
+                }
+            )
+
+            status = delete_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_6",
+                job_store=repo,
+                outbox=SQLiteOutbox(db_path),
+                object_storage=_DeleteAwareStorage(),
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+            self.assertEqual(status, "deleted")
+            self.assertEqual(repo.get("tenant-a", "job_6")["status"], "deleted")
+
+    def test_delete_deleted_job_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_7",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "already-deleted.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 10,
+                    "retention_months": 6,
+                    "status": "completed",
+                    "progress": 100,
+                    "object_key": "tenant/tenant-a/job_7/already-deleted.mp4",
+                }
+            )
+            storage = _DeleteAwareStorage()
+            first = delete_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_7",
+                job_store=repo,
+                outbox=SQLiteOutbox(db_path),
+                object_storage=storage,
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+            second = delete_job(
+                tenant_id="tenant-a",
+                actor_id="u-1",
+                job_id="job_7",
+                job_store=repo,
+                outbox=SQLiteOutbox(db_path),
+                object_storage=storage,
+                audit_log=JsonlAuditLog(Path(tmpdir) / "audit.log"),
+            )
+            self.assertEqual(first, "deleted")
+            self.assertEqual(second, "deleted")
 
 
 if __name__ == "__main__":

@@ -39,11 +39,23 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
     volumes:
       - minio-data:/data
+    ports:
+      - "19000:9000"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
       timeout: 5s
       retries: 5
+
+  object-storage-init:
+    image: minio/minio:RELEASE.2025-02-18T16-25-55Z
+    restart: "no"
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - "mc alias set local http://object-storage:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} && mc mb --ignore-existing local/uploads && mc anonymous set public local/uploads"
+    depends_on:
+      object-storage:
+        condition: service_healthy
 
   auth:
     image: quay.io/keycloak/keycloak:26.0
@@ -90,6 +102,8 @@ services:
     depends_on:
       object-storage:
         condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
     volumes:
       - runtime-data:/runtime
 
@@ -98,11 +112,11 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "uvicorn", "evodox.runtime.api_app:create_app", "--factory", "--host", "0.0.0.0", "--port", "18000"]
     env_file:
-      - .env
+      - ../.env
     environment:
       API_DB_PATH: /runtime/jobs.db
       API_AUDIT_LOG_PATH: /runtime/audit/api-audit.jsonl
-      API_UPLOAD_BASE_URL: http://object-storage:9000
+      API_UPLOAD_BASE_URL: ${API_UPLOAD_BASE_URL:-http://localhost:19000}
       API_UPLOAD_BUCKET: uploads
       API_AUTH_MODE: ${API_AUTH_MODE:-dev}
       API_OBJECT_STORAGE_MODE: ${API_OBJECT_STORAGE_MODE:-stub}
@@ -111,6 +125,8 @@ services:
         condition: service_healthy
       broker:
         condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
       retention-preflight:
         condition: service_completed_successfully
     volumes:
@@ -126,18 +142,32 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "evodox.runtime.worker_runner"]
     env_file:
-      - .env
+      - ../.env
     environment:
       WORKER_DB_PATH: /runtime/jobs.db
-      WORKER_MODE: ${WORKER_MODE:-stub}
+      WORKER_MODE: ${WORKER_MODE:-whisperx}
       WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-25}
       WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
       WORKER_AUDIT_LOG_PATH: /runtime/audit/worker-audit.jsonl
+      WORKER_OBJECT_STORAGE_BASE_URL: ${WORKER_OBJECT_STORAGE_BASE_URL:-http://object-storage:9000}
+      WORKER_OBJECT_STORAGE_BUCKET: ${WORKER_OBJECT_STORAGE_BUCKET:-uploads}
+      WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-tiny}
+      WORKER_WHISPERX_DEVICE: ${WORKER_WHISPERX_DEVICE:-cpu}
+      WORKER_WHISPERX_COMPUTE_TYPE: ${WORKER_WHISPERX_COMPUTE_TYPE:-int8}
+      WORKER_WHISPERX_BATCH_SIZE: ${WORKER_WHISPERX_BATCH_SIZE:-4}
+      WORKER_WHISPERX_MODEL_DIR: ${WORKER_WHISPERX_MODEL_DIR:-/runtime/models}
+      WORKER_WHISPERX_DIARIZATION_MODEL: ${WORKER_WHISPERX_DIARIZATION_MODEL:-pyannote/speaker-diarization}
+      WORKER_ENABLE_DIARIZATION: ${WORKER_ENABLE_DIARIZATION:-true}
+      WORKER_WHISPERX_VAD_METHOD: ${WORKER_WHISPERX_VAD_METHOD:-silero}
+      WORKER_MEDIA_TEMP_DIR: ${WORKER_MEDIA_TEMP_DIR:-/tmp/evodox-worker}
+      WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}
     depends_on:
       db:
         condition: service_healthy
       broker:
         condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
       retention-preflight:
         condition: service_completed_successfully
     volumes:
@@ -153,7 +183,7 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "evodox.runtime.retention_scheduler_runner"]
     env_file:
-      - .env
+      - ../.env
     environment:
       RETENTION_VALIDATE_ENV_ONLY: "false"
     depends_on:
@@ -161,6 +191,8 @@ services:
         condition: service_healthy
       object-storage:
         condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
       retention-preflight:
         condition: service_completed_successfully
     volumes:
@@ -170,6 +202,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  frontend:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ../frontend:/usr/share/nginx/html:ro
+      - ./nginx.frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "18081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres-data:

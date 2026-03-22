@@ -15,6 +15,7 @@ from evodox.jobs.infrastructure import (
     RabbitMQQueuePublisher,
     RetryablePublishError,
     SQLiteIdempotencyStore,
+    SQLiteJobCheckpointStore,
     SQLiteJobRepository,
     SQLiteOutbox,
     SQLiteRetentionCandidateRepository,
@@ -75,6 +76,49 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             assert saved is not None
             self.assertEqual(saved.payload_hash, "abc")
             self.assertEqual(saved.response.job_id, "job_22")
+
+    def test_sqlite_job_checkpoint_store_upserts_stage_and_segment_offset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteJobCheckpointStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_1",
+                stage="asr_started",
+                stage_offset=3,
+                payload={"segments_done": 3, "note": "partial"},
+            )
+            first = store.get("tenant-a", "job_cp_1")
+            assert first is not None
+            self.assertEqual(first["stage"], "asr_started")
+            self.assertEqual(first["stage_offset"], 3)
+            self.assertEqual(first["payload"]["segments_done"], 3)
+
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_1",
+                stage="diarization_done",
+                stage_offset=0,
+                payload={"complete": True},
+            )
+            second = store.get("tenant-a", "job_cp_1")
+            assert second is not None
+            self.assertEqual(second["stage"], "diarization_done")
+            self.assertEqual(second["payload"]["complete"], True)
+
+    def test_sqlite_job_checkpoint_store_delete_removes_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteJobCheckpointStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_2",
+                stage="asr_started",
+                stage_offset=1,
+                payload={"segments_done": 1},
+            )
+            store.delete("tenant-a", "job_cp_2")
+            self.assertIsNone(store.get("tenant-a", "job_cp_2"))
 
     def test_local_presign_factory_generates_tenant_scoped_key(self):
         factory = LocalPresignUploadSessionFactory(
@@ -247,6 +291,29 @@ class InfrastructureAdaptersTests(unittest.TestCase):
                     expected_base_version=1,
                     segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Stale"}],
                 )
+
+    def test_delete_helpers_remove_worker_artifacts_and_transcript_versions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_3",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Orig"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+            current = repo.get_current("tenant-a", "job_3")
+            assert current is not None
+            self.assertEqual(current.version, 1)
+
+            artifacts.delete("tenant-a", "job_3")
+            repo.delete("tenant-a", "job_3")
+
+            self.assertIsNone(artifacts.get("tenant-a", "job_3"))
+            self.assertIsNone(repo.get_current("tenant-a", "job_3"))
 
     def test_retention_execution_repo_marks_deleted_and_prunes_outbox_for_tenant(self):
         with tempfile.TemporaryDirectory() as tmpdir:

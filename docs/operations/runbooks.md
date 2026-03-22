@@ -357,3 +357,62 @@ Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schri
 3. Docker-Smoke mit `docker compose --env-file .env -f deploy/docker-compose.target.yml run --rm retention-preflight`
 4. Lokaler E2E-Check: Job anlegen, Upload finalisieren, Transcript abrufen, Speaker-Segmente im UI sichtbar.
 
+## 2026-03-22 - Naechster TDD-Schritt danach: Presigned Upload Orchestrator
+### Ziel
+- Frontend orchestriert den Upload als `create job -> presigned PUT -> complete-upload` mit echter SHA-256-Pruefsumme.
+
+### Pflicht-Gates
+1. Frontend-Unit-Tests fuer Upload-Orchestrierung und SHA-256.
+2. Python-Regression fuer `complete-upload` und Transcript-Persistenz bleibt gruen.
+3. Docker-E2E-Check mit lokalem Runtime-Image und Compose-Stack bleibt gruen.
+
+### Danach
+- WhisperX-Worker ersetzen den Stub-Worker fuer echte Live-Transkription und Speaker-Diarization.
+
+## 2026-03-22 - Frontend-Zugriff im lokalen Docker-Setup
+- Compose-Service `frontend` stellt das UI unter `http://localhost:18081` bereit.
+- API-Aufrufe laufen same-origin ueber den NGINX-Proxy (`/api/*` -> `api:18000`).
+
+## 2026-03-22 - Erstes lokales Video End-to-End transkribieren (Docker)
+### Voraussetzungen
+- `.env` enthaelt `API_AUTH_MODE=dev`, `WORKER_MODE=whisperx`, `HF_TOKEN=<dein-token>` und `WORKER_WHISPERX_DIARIZATION_MODEL=pyannote/speaker-diarization`.
+- Runtime-Image gebaut: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .`
+
+### Start
+1. `docker compose --env-file .env -f deploy/docker-compose.target.yml up -d object-storage object-storage-init retention-preflight api worker frontend`
+2. Health pruefen: `docker compose --env-file .env -f deploy/docker-compose.target.yml ps`
+3. Frontend oeffnen: `http://localhost:18081`
+
+### Login (lokaler Dev-Token)
+- Token-Feld im Frontend: `dev:tenant-a:user:u-1`
+- Fuer Audit-Ansicht: `dev:tenant-a:admin:u-admin`
+
+### Upload/Transkription pruefen
+1. `New Job` waehlen, Audio/Video hochladen.
+2. Der Upload nutzt lokal MinIO ueber `http://localhost:19000` (Presigned PUT).
+3. Job-Status sollte von `queued` ueber `processing` nach `completed` laufen.
+4. Transcript erscheint in der Detailansicht.
+
+### Hinweis zu Diarization
+- Wenn das konfigurierte HuggingFace-Diarization-Modell nicht freigeschaltet ist, faellt der Worker automatisch auf reine Transkription zurueck (Job bleibt `completed`, Speaker meist `UNKNOWN`).
+
+## 2026-03-22 - Stuck-Job Handling (Force-Delete / Pause / Cancel)
+### Symptome
+- Job bleibt lange auf `queued`, `processing`, `pause_requested` oder `cancel_requested`.
+- Worker startet denselben Job mehrfach oder faellt in Retry-Schleifen.
+
+### Sofortmassnahmen
+1. Jobstatus und Outbox pruefen (`jobs.status`, `outbox_events.status/retry_count/dlq_reason`).
+2. Bei laufender Verarbeitung zuerst `POST /api/v1/jobs/{id}/pause` oder `POST /api/v1/jobs/{id}/cancel` ausfuehren.
+3. Falls Job entfernt werden soll: `DELETE /api/v1/jobs/{id}` ausfuehren (nun fuer alle nicht-geloeschten Status erlaubt).
+
+### Erwartetes Verhalten nach Delete
+- Job geht auf `deleted` (`progress=100`, `deleted_at` gesetzt).
+- Pending Outbox-Events fuer den Job werden gepruned (kein erneutes `job.worker.start` fuer denselben Job).
+- Interne Job-Reste (Checkpoint, Worker-Artefakte, Transcript-Versionen) werden entfernt.
+- Job erscheint nicht mehr in `GET /api/v1/jobs` Listen.
+
+### Timeout-/Retry-Policy
+- `WORKER_WHISPERX_TIMEOUT_SECONDS=0` deaktiviert harte Subprocess-Timeouts fuer lange ASR-Runs.
+- Generische Worker-Exceptions sind terminal (DLQ + `failed_terminal`) und werden nicht blind erneut gestartet.
+- Retries bleiben nur fuer explizit retryable Fehlerpfade aktiv.

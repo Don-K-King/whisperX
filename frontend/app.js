@@ -164,7 +164,8 @@ function jobCard(job) {
   `;
 }
 
-function jobTimeline(progress) {
+function jobTimeline(progress, status) {
+  const canceled = status === 'canceled' || status === 'cancel_requested';
   const items = [
     { key: 'queued', label: 'queued', pct: 5 },
     { key: 'processing', label: 'processing', pct: 20 },
@@ -175,6 +176,7 @@ function jobTimeline(progress) {
   return `
     <ol class="timeline">
       ${items.map((item) => `<li class="${progress >= item.pct ? 'done' : ''}">${item.label} (${item.pct}%)</li>`).join('')}
+      <li class="${canceled ? 'done' : ''}">canceled (100%)</li>
     </ol>
   `;
 }
@@ -299,10 +301,11 @@ async function loadRoute({ fromPoll = false } = {}) {
         <p><strong>Status:</strong> ${job.status}</p>
         <p><strong>Progress:</strong> ${progress}%</p>
         <div class="progress"><span style="width:${progress}%"></span></div>
-        ${jobTimeline(progress)}
+        ${jobTimeline(progress, job.status)}
         <div class="action-row">
           ${actions.canPause ? '<button id="pause-job" class="btn-secondary">Pause</button>' : ''}
           ${actions.canResume ? '<button id="resume-job" class="btn-secondary">Resume</button>' : ''}
+          ${actions.canCancel ? '<button id="cancel-job" class="btn-danger">Cancel</button>' : ''}
           ${actions.canDelete ? '<button id="delete-job" class="btn-danger">Delete</button>' : ''}
         </div>
         <details><summary>${t('errors')}</summary><p class="error" id="job-error"></p></details>
@@ -347,6 +350,19 @@ async function loadRoute({ fromPoll = false } = {}) {
           try {
             await callApi(`/api/v1/jobs/${jobId}`, { method: 'DELETE' });
             state.route = 'dashboard';
+            await loadRoute();
+          } catch (problem) {
+            setJobError(problem);
+          }
+        };
+      }
+
+      const cancelButton = document.getElementById('cancel-job');
+      if (cancelButton) {
+        cancelButton.onclick = async () => {
+          if (!window.confirm(`Cancel job ${jobId}?`)) return;
+          try {
+            await callApi(`/api/v1/jobs/${jobId}/cancel`, { method: 'POST' });
             await loadRoute();
           } catch (problem) {
             setJobError(problem);

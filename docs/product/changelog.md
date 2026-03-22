@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-03-22
+- Job-Lifecycle stabilisiert: `DELETE /api/v1/jobs/{id}` ist jetzt als Force-Soft-Delete fuer alle nicht bereits geloeschten Status verfuegbar (inkl. `upload_pending`, `queued`, `processing`, `pause_requested`, `cancel_requested`, `paused`).
+- Delete ist idempotent (`deleted` bleibt `deleted`) und setzt konsistent `status=deleted`, `progress=100`; Nutzer koennen damit auch haengende Test-/Sample-Jobs entfernen.
+- Delete prune't pending Outbox-Events und entfernt interne Checkpoint-/Artefakt-/Transcript-Reste auf Job-Ebene, sodass kein Re-Queue aus Altzustand mehr erfolgt.
+- Worker-Timeout-Policy angepasst: `WORKER_WHISPERX_TIMEOUT_SECONDS=0` bedeutet kein hartes Subprocess-Timeout fuer lange ASR-Laeufe.
+- Worker-Robustheit verschaerft: generische Exceptions gehen nicht mehr in Retry-Schleifen, sondern in terminale Behandlung (DLQ + `failed_terminal`), ausser bei explizit retryable Fehlerpfaden.
+- Laufende WhisperX-Prozesse reagieren jetzt kooperativ auf `pause_requested`, `cancel_requested` und `deleted` (graceful terminate, dann kill fallback), damit Pause/Resume/Cancel/Delete auch bei langen Jobs verlässlich greifen.
+- Midpoint-Checkpointing eingefuehrt: Worker persistiert Stage+Segment-Checkpoint (`downloaded`, `asr_started`, `asr_done`, `diarization_done`) und setzt bei Resume ab letztem Segment fort.
+- Neuer terminaler Cancel-Endpunkt eingefuehrt: `POST /api/v1/jobs/{id}/cancel`.
+- Statusmodell erweitert um `cancel_requested -> canceled`; `resume` auf `canceled` liefert konsistent `409 job.resume.invalid_state`.
+- Outbox/Runner priorisieren Cancel gegenueber Retry-Fortsetzung, damit nach Abbruch keine weitere Verarbeitung fortlaeuft.
+- Frontend-Job-Detail erweitert um `Cancel` fuer aktive/pausierte Jobs; `Resume` ist bei `canceled` nicht mehr verfuegbar.
+- Timeline/Progress zeigen terminalen `canceled`-Pfad; interne Teiltranskripte bleiben weiterhin nicht im UI sichtbar.
 - Lokaler Runtime-Vertical-Slice fuer Docker ergaenzt: API startet jetzt ueber ENV-basierte Factory (evodox.runtime.api_app:create_app) ohne manuelles DI im Startkommando.
 - Hybrid-Auth fuer lokale Inkremente eingefuehrt (API_AUTH_MODE=oidc|dev) bei beibehaltenem Claim-Validierungspfad.
 - API um fehlende Frontend-Endpunkte erweitert: tenant-scoped GET /api/v1/jobs und admin-scoped GET /api/v1/audit.

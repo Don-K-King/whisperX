@@ -12,6 +12,9 @@ class TargetPortAllocationTests(unittest.TestCase):
         self.assertIn("/dev/tcp/127.0.0.1/18080", compose)
         self.assertIn('"--port", "18000"', compose)
         self.assertIn('http://localhost:18000/docs', compose)
+        self.assertIn("frontend:", compose)
+        self.assertIn('"18081:80"', compose)
+        self.assertIn('"19000:9000"', compose)
 
     def test_env_examples_reference_auth_internal_port_18080(self) -> None:
         env_example = Path(".env.example").read_text(encoding="utf-8")

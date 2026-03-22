@@ -12,7 +12,7 @@ from evodox.jobs.complete_upload_service import (
 )
 from evodox.jobs.create_service import CreateJobInput, ValidationError, create_job
 from evodox.jobs.get_job_status_service import JobStatusNotFoundError, get_job_status
-from evodox.jobs.lifecycle_service import JobLifecycleError, delete_job, pause_job, resume_job
+from evodox.jobs.lifecycle_service import JobLifecycleError, cancel_job, delete_job, pause_job, resume_job
 from evodox.jobs.progress import derive_progress
 from evodox.jobs.transcript_service import (
     TranscriptConflictError,
@@ -103,6 +103,8 @@ def create_fastapi_app(
     queue_policy: QueueSelectionPolicy | None = None,
     transcript_repository: Any | None = None,
     export_artifact_store: Any | None = None,
+    checkpoint_store: Any | None = None,
+    worker_artifact_store: Any | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException
@@ -323,6 +325,32 @@ def create_fastapi_app(
         except JobStatusNotFoundError as exc:
             raise _http_error(404, exc.error_code) from exc
 
+    @app.post("/api/v1/jobs/{job_id}/cancel")
+    def post_job_cancel(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            cancel_job(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                job_store=job_repository,
+                outbox=outbox,
+                audit_log=audit_log,
+            )
+            result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
+            return map_job_status_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except JobLifecycleError as exc:
+            raise _http_error(exc.status_code, exc.error_code) from exc
+        except JobStatusNotFoundError as exc:
+            raise _http_error(404, exc.error_code) from exc
+
     @app.delete("/api/v1/jobs/{job_id}")
     def delete_job_endpoint(
         job_id: str,
@@ -340,6 +368,9 @@ def create_fastapi_app(
                 outbox=outbox,
                 object_storage=object_storage,
                 audit_log=audit_log,
+                checkpoint_store=checkpoint_store,
+                artifact_store=worker_artifact_store,
+                transcript_store=transcript_repository,
             )
             result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
             return map_job_status_response(result)

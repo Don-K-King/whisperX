@@ -113,3 +113,10 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 - Pflicht-Gates: Lint/Schema, Unit, Integration, Security/Abuse, E2E/Operations-Drills, Regression.
 - Blocker: fehlender Audit-Nachweis für Löschpfade oder Restore-Konsistenzverletzung.
 - Verantwortlich: Ops + API + Security + QA.
+
+## 2026-03-22 - Erweiterung fuer Midpoint-Checkpointing und terminalen Cancel
+- API-Contract Pflichttests: `POST /cancel` fuer erlaubte/verbotene Zustaende, tenant-scope, RBAC, idempotentes Verhalten und `resume` auf `canceled` => `409`.
+- Checkpoint-Core Pflichttests: Stage+Segment Persistenz (`stage`, `stage_offset`, `payload`) und Resume-Fortsetzung ohne Doppelverarbeitung.
+- Worker-Integration Pflichttests: kooperatives `pause_requested`/`cancel_requested` zwischen Segmenten und Stage-Grenzen.
+- Frontend Pflichttests: Sichtbarkeit/Aktivierung der `Cancel` Action je Status sowie kein `Resume` bei `canceled`.
+- Smoke-Pflichtpfade: `create -> processing -> pause -> resume(checkpoint) -> completed` und `create -> processing -> cancel -> canceled`.

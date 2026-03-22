@@ -12,10 +12,12 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         compose = self._read("deploy/docker-compose.target.yml")
 
         for service in (
+            "frontend:",
             "api:",
             "worker:",
             "retention-runner:",
             "retention-preflight:",
+            "object-storage-init:",
             "db:",
             "broker:",
             "object-storage:",
@@ -25,6 +27,11 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
 
         self.assertIn("RETENTION_VALIDATE_ENV_ONLY=true", compose)
         self.assertIn("service_completed_successfully", compose)
+        self.assertIn("WORKER_MODE: ${WORKER_MODE:-whisperx}", compose)
+        self.assertIn("WORKER_OBJECT_STORAGE_BASE_URL", compose)
+        self.assertIn("WORKER_OBJECT_STORAGE_BUCKET", compose)
+        self.assertIn("WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}", compose)
+        self.assertIn("mc mb --ignore-existing local/uploads", compose)
 
     def test_env_profiles_document_required_and_optional_variables_per_service(self) -> None:
         env_example = self._read(".env.example")

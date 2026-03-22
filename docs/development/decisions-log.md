@@ -172,3 +172,17 @@
 - Retry-Strategie im Worker konkretisiert: begrenzte Auto-Retries fuer retryable Fehler, danach deterministischer Uebergang nach `failed_terminal`.
 - Progress-Strategie fuer UI/API festgelegt: deterministische Milestones (`5/20/60/90/100`) statt ETA-Schaetzung.
 - Konsequenz: Frontend zeigt Actions statusabhaengig und pollt mit 429-Backoff; Backend liefert konsistente Progress-Werte auch bei fehlendem Raw-Progress.
+
+## 2026-03-22 - ADR-0016 Midpoint-Checkpointing + terminaler Cancel
+- Entscheidung: Pause/Resume wird auf persistentes Stage+Segment-Checkpointing erweitert (`job_checkpoints`), ASR setzt per `stage_offset` ab letztem Segment fort.
+- Entscheidung: neuer Endpunkt `POST /api/v1/jobs/{id}/cancel` mit terminaler Semantik (`canceled` ist final, `resume` liefert `409 job.resume.invalid_state`).
+- Entscheidung: Cancel-Pfad nutzt Zwischenzustand `cancel_requested`, Worker priorisiert Cancel gegenueber Retry-Fortsetzung.
+- Entscheidung: interne Teilresultate bleiben bewusst pipeline-intern und werden nicht ueber Frontend/API exponiert.
+- Referenz: ADR-0016 (`/docs/adr/ADR-0016-midpoint-checkpointing-und-terminal-cancel.md`).
+
+## 2026-03-22 - Stabiler Lifecycle: Force-Delete + no-auto-restart
+- Entscheidung: `DELETE /api/v1/jobs/{id}` wird als Force-Soft-Delete aus allen nicht-`deleted` Status erlaubt; `job.delete.active_conflict` entfällt.
+- Entscheidung: Delete pruned pending Outbox-Events (`status=pending -> published/skipped`) und loescht interne Job-Reste (Checkpoint/Worker-Artefakt/Transcript-Versionen), um Re-Queue aus Altzustand zu verhindern.
+- Entscheidung: WhisperX-Timeout-Default wird auf `0` gesetzt (`timeout=None`), damit lange Jobs nicht kuenstlich abgebrochen werden.
+- Entscheidung: generische Worker-Exceptions sind nicht retrybar per default; sie gehen auf terminal (`failed_terminal` + DLQ), ausser explizit retryable Pfaden (`failed_retryable` bis `worker_max_retries`).
+- Entscheidung: laufende ASR-Subprozesse werden kooperativ ueber Polling beendet (`pause_requested|cancel_requested|deleted`), damit Pause/Resume/Cancel/Delete verlässlich auch waehrend langer Runs funktionieren.

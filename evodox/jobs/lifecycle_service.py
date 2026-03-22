@@ -9,9 +9,26 @@ from .progress import derive_progress
 
 
 PAUSE_IDEMPOTENT_STATUSES = frozenset({"pause_requested", "paused"})
-DELETE_ALLOWED_STATUSES = frozenset({"completed", "failed_terminal", "paused", "canceled", "deleted"})
-DELETE_ACTIVE_CONFLICT_STATUSES = frozenset({"processing", "pause_requested", "queued"})
+DELETE_IDEMPOTENT_STATUSES = frozenset({"deleted"})
+DELETE_ALLOWED_STATUSES = frozenset(
+    {
+        "upload_pending",
+        "uploaded",
+        "queued",
+        "processing",
+        "pause_requested",
+        "cancel_requested",
+        "paused",
+        "failed_retryable",
+        "failed_terminal",
+        "completed",
+        "canceled",
+    }
+)
 RESUME_ALLOWED_STATUSES = frozenset({"paused", "failed_retryable"})
+CANCEL_IDEMPOTENT_STATUSES = frozenset({"cancel_requested", "canceled"})
+CANCEL_IMMEDIATE_STATUSES = frozenset({"queued", "paused"})
+CANCEL_REQUESTABLE_STATUSES = frozenset({"processing", "pause_requested"})
 
 
 class JobLifecycleError(Exception):
@@ -117,18 +134,15 @@ def delete_job(
     outbox: Any,
     object_storage: Any,
     audit_log: Any,
+    checkpoint_store: Any | None = None,
+    artifact_store: Any | None = None,
+    transcript_store: Any | None = None,
 ) -> str:
     job = _require_job(tenant_id=tenant_id, job_id=job_id, job_store=job_store)
     status = str(job.get("status") or "")
 
-    if status == "deleted":
+    if status in DELETE_IDEMPOTENT_STATUSES:
         return "deleted"
-    if status in DELETE_ACTIVE_CONFLICT_STATUSES:
-        raise JobLifecycleError(
-            status_code=409,
-            error_code="job.delete.active_conflict",
-            message="Aktive Jobs koennen nicht geloescht werden.",
-        )
     if status not in DELETE_ALLOWED_STATUSES:
         raise JobLifecycleError(
             status_code=409,
@@ -153,9 +167,14 @@ def delete_job(
     else:
         _set_status(job_store, tenant_id, job_id, "deleted", progress=100)
 
-    prune_pending = getattr(outbox, "prune_pending_for_job", None)
-    if callable(prune_pending):
-        prune_pending(tenant_id=tenant_id, job_id=job_id)
+    _prune_pending_outbox(outbox, tenant_id=tenant_id, job_id=job_id, error_code="job.deleted")
+    _cleanup_job_internal_state(
+        tenant_id=tenant_id,
+        job_id=job_id,
+        checkpoint_store=checkpoint_store,
+        artifact_store=artifact_store,
+        transcript_store=transcript_store,
+    )
 
     _append_audit(
         audit_log,
@@ -166,6 +185,41 @@ def delete_job(
         metadata={"object_prefix": object_prefix},
     )
     return "deleted"
+
+
+def cancel_job(
+    *,
+    tenant_id: str,
+    actor_id: str,
+    job_id: str,
+    job_store: Any,
+    outbox: Any,
+    audit_log: Any,
+) -> str:
+    job = _require_job(tenant_id=tenant_id, job_id=job_id, job_store=job_store)
+    status = str(job.get("status") or "")
+
+    if status in CANCEL_IDEMPOTENT_STATUSES:
+        return status
+
+    if status in CANCEL_IMMEDIATE_STATUSES:
+        _set_status(job_store, tenant_id, job_id, "cancel_requested", progress=max(20, derive_progress(status=status, raw_progress=job.get("progress"))))
+        _set_status(job_store, tenant_id, job_id, "canceled", progress=100)
+        _prune_pending_outbox(outbox, tenant_id=tenant_id, job_id=job_id, error_code="job.canceled")
+        _append_audit(audit_log, action="job.cancel", tenant_id=tenant_id, actor_id=actor_id, job_id=job_id)
+        return "canceled"
+
+    if status in CANCEL_REQUESTABLE_STATUSES:
+        current_progress = derive_progress(status=status, raw_progress=job.get("progress"))
+        _set_status(job_store, tenant_id, job_id, "cancel_requested", progress=max(20, current_progress))
+        _append_audit(audit_log, action="job.cancel_requested", tenant_id=tenant_id, actor_id=actor_id, job_id=job_id)
+        return "cancel_requested"
+
+    raise JobLifecycleError(
+        status_code=409,
+        error_code="job.cancel.invalid_state",
+        message="Job kann in diesem Status nicht abgebrochen werden.",
+    )
 
 
 def _append_audit(
@@ -217,3 +271,37 @@ def _object_prefix_for_job(*, tenant_id: str, job_id: str, object_key: Any) -> s
     if raw.startswith(expected_prefix):
         return expected_prefix
     return expected_prefix
+
+
+def _prune_pending_outbox(outbox: Any, *, tenant_id: str, job_id: str, error_code: str) -> None:
+    prune_pending = getattr(outbox, "prune_pending_for_job", None)
+    if not callable(prune_pending):
+        return
+    try:
+        prune_pending(tenant_id=tenant_id, job_id=job_id, error_code=error_code)
+    except TypeError:
+        prune_pending(tenant_id=tenant_id, job_id=job_id)
+
+
+def _cleanup_job_internal_state(
+    *,
+    tenant_id: str,
+    job_id: str,
+    checkpoint_store: Any | None,
+    artifact_store: Any | None,
+    transcript_store: Any | None,
+) -> None:
+    for store in (checkpoint_store, artifact_store, transcript_store):
+        if store is None:
+            continue
+        _delete_for_job(store, tenant_id=tenant_id, job_id=job_id)
+
+
+def _delete_for_job(store: Any, *, tenant_id: str, job_id: str) -> None:
+    delete = getattr(store, "delete", None)
+    if not callable(delete):
+        return
+    try:
+        delete(tenant_id=tenant_id, job_id=job_id)
+    except TypeError:
+        delete(tenant_id, job_id)

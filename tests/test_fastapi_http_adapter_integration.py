@@ -349,6 +349,182 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
             self.assertEqual(len(pending), 1)
             self.assertEqual(pending[0]["job_id"], "job_resume_1")
 
+    def test_cancel_paused_job_is_idempotent_and_terminal(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            repo = SQLiteJobRepository(db_path)
+            outbox = SQLiteOutbox(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "paused.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 4321,
+                    "retention_months": 6,
+                    "status": "paused",
+                    "progress": 20,
+                    "object_key": "tenant/tenant-a/job_cancel_1/paused.mp4",
+                    "checksum_sha256": "c" * 64,
+                    "upload_session_id": "up_cancel_1",
+                }
+            )
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_cancel_1",
+                    "queue": "gpu-standard",
+                    "upload_session_id": "up_cancel_1",
+                    "object_key": "tenant/tenant-a/job_cancel_1/paused.mp4",
+                    "checksum_sha256": "c" * 64,
+                }
+            )
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(tenant_id="tenant-a"),
+                job_repository=repo,
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=outbox,
+            )
+            client = TestClient(app)
+
+            first = client.post(
+                "/api/v1/jobs/job_cancel_1/cancel",
+                headers={"Authorization": "Bearer token"},
+            )
+            second = client.post(
+                "/api/v1/jobs/job_cancel_1/cancel",
+                headers={"Authorization": "Bearer token"},
+            )
+            resumed = client.post(
+                "/api/v1/jobs/job_cancel_1/resume",
+                headers={"Authorization": "Bearer token"},
+            )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(first.json()["status"], "canceled")
+            self.assertEqual(second.json()["status"], "canceled")
+            self.assertEqual(outbox.list_pending(limit=20), [])
+            self.assertEqual(resumed.status_code, 409)
+            self.assertEqual(resumed.json()["detail"]["error_code"], "job.resume.invalid_state")
+
+    def test_cancel_processing_job_sets_cancel_requested(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_2",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "running.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 1234,
+                    "retention_months": 6,
+                    "status": "processing",
+                    "progress": 41,
+                    "object_key": "tenant/tenant-a/job_cancel_2/running.mp4",
+                    "checksum_sha256": "d" * 64,
+                    "upload_session_id": "up_cancel_2",
+                }
+            )
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(tenant_id="tenant-a"),
+                job_repository=repo,
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/v1/jobs/job_cancel_2/cancel",
+                headers={"Authorization": "Bearer token"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "cancel_requested")
+            self.assertEqual(repo.get("tenant-a", "job_cancel_2")["status"], "cancel_requested")
+
+    def test_cancel_is_tenant_scoped(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_cancel_scope",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "running.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 1234,
+                    "retention_months": 6,
+                    "status": "paused",
+                    "progress": 20,
+                    "object_key": "tenant/tenant-a/job_cancel_scope/running.mp4",
+                    "checksum_sha256": "e" * 64,
+                    "upload_session_id": "up_cancel_scope",
+                }
+            )
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(tenant_id="tenant-b"),
+                job_repository=repo,
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+            )
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/v1/jobs/job_cancel_scope/cancel",
+                headers={"Authorization": "Bearer token"},
+            )
+
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"]["error_code"], "job.not_found")
+
     def test_delete_completed_job_soft_deletes_and_hides_from_list(self):
         from fastapi.testclient import TestClient
         import tempfile
@@ -405,7 +581,7 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
             self.assertEqual(jobs_response.status_code, 200)
             self.assertEqual(jobs_response.json()["jobs"], [])
 
-    def test_delete_active_job_returns_conflict(self):
+    def test_delete_active_job_force_soft_deletes(self):
         from fastapi.testclient import TestClient
         import tempfile
         from pathlib import Path
@@ -429,6 +605,18 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
                     "upload_session_id": "up_delete_conflict",
                 }
             )
+            outbox = SQLiteOutbox(db_path)
+            outbox.append(
+                {
+                    "event_type": "job.queued",
+                    "tenant_id": "tenant-a",
+                    "job_id": "job_delete_conflict",
+                    "queue": "cpu-short",
+                    "object_key": "tenant/tenant-a/job_delete_conflict/running.mp4",
+                    "checksum_sha256": "d" * 64,
+                    "upload_session_id": "up_delete_conflict",
+                }
+            )
             app = create_fastapi_app(
                 settings=FastAPIAdapterSettings(
                     expected_issuer="https://keycloak.prod/realms/evodox",
@@ -443,7 +631,7 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
                 idempotency_store=SQLiteIdempotencyStore(db_path),
                 complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
                 object_storage=LocalObjectStorageCatalog(),
-                outbox=SQLiteOutbox(db_path),
+                outbox=outbox,
             )
             client = TestClient(app)
 
@@ -452,8 +640,11 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
                 headers={"Authorization": "Bearer token"},
             )
 
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(response.json()["detail"]["error_code"], "job.delete.active_conflict")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "deleted")
+            row = repo.get("tenant-a", "job_delete_conflict")
+            self.assertEqual(row["status"], "deleted")
+            self.assertEqual(outbox.list_pending(limit=20), [])
 
 
 if __name__ == "__main__":

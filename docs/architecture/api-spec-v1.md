@@ -205,3 +205,27 @@ Fehlerpfade:
 - Wiederholte `complete-upload`-Aufrufe dürfen keine zweite Queue-Publikation erzeugen.
 - Falls Objekt im Storage fehlt, ist `complete-upload` mit konsistentem Fehler zu beantworten (`409/422` je Ursache), ohne Statuskorruption.
 - DB-Statuswechsel und Event-Publikation sind so auszuführen, dass bei Teilfehlern Recovery ohne Doppelverarbeitung möglich ist (Outbox-/Reconciliation-Prinzip).
+
+## 2026-03-22 - Addendum: Lifecycle Controls mit Midpoint-Checkpointing
+
+### Neue/konkretisierte Endpunkte
+- `POST /api/v1/jobs/{id}/pause`:
+  - `queued -> paused`
+  - `processing -> pause_requested -> paused` (kooperativ durch Worker)
+- `POST /api/v1/jobs/{id}/resume`:
+  - `paused -> queued` (Checkpoint-Fortsetzung statt kompletter Neu-Start)
+  - `resume` auf `canceled` => `409 job.resume.invalid_state`
+- `POST /api/v1/jobs/{id}/cancel`:
+  - `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
+  - `canceled` ist terminal
+- `DELETE /api/v1/jobs/{id}` bleibt unveraendert, weiterhin konflikthaft fuer aktive Zustandsgruppen.
+
+### Erweiterte Zustandsmaschine
+- Kontrollzustand fuer kooperatives Pausieren: `pause_requested`.
+- Kontrollzustand fuer kooperatives Abbrechen: `cancel_requested`.
+- Terminale Endzustaende umfassen `completed`, `failed_terminal`, `deleted`, `canceled`.
+
+### Idempotenz- und Race-Regeln (Ergaenzung)
+- Wiederholtes `cancel` auf bereits `canceled` bleibt idempotent und fuehrt zu keinem erneuten Statuswechsel.
+- `resume` erzeugt je wirksamem Aufruf genau ein `job.queued` Outbox-Event.
+- Worker muss `pause_requested`/`cancel_requested` zwischen ASR-Segmenten und Stage-Grenzen auswerten.

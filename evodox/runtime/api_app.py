@@ -15,9 +15,11 @@ from evodox.jobs.infrastructure import (
     LocalPresignUploadSessionFactory,
     SQLiteCompleteUploadIdempotencyStore,
     SQLiteIdempotencyStore,
+    SQLiteJobCheckpointStore,
     SQLiteJobRepository,
     SQLiteOutbox,
     SQLiteTranscriptRepository,
+    SQLiteWorkerArtifactStore,
 )
 from evodox.web.fastapi_adapter import FastAPIAdapterSettings, create_fastapi_app
 
@@ -114,6 +116,10 @@ def create_app(*, settings: APIRuntimeSettings | None = None):
     else:
         object_storage = LocalObjectStorageCatalog()
 
+    transcript_repository = SQLiteTranscriptRepository(runtime_settings.db_path)
+    checkpoint_store = SQLiteJobCheckpointStore(runtime_settings.db_path)
+    worker_artifact_store = SQLiteWorkerArtifactStore(runtime_settings.db_path)
+
     return create_fastapi_app(
         settings=FastAPIAdapterSettings(
             expected_issuer=runtime_settings.expected_issuer,
@@ -131,7 +137,9 @@ def create_app(*, settings: APIRuntimeSettings | None = None):
         complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(runtime_settings.db_path),
         object_storage=object_storage,
         outbox=SQLiteOutbox(runtime_settings.db_path),
-        transcript_repository=SQLiteTranscriptRepository(runtime_settings.db_path),
+        transcript_repository=transcript_repository,
+        checkpoint_store=checkpoint_store,
+        worker_artifact_store=worker_artifact_store,
     )
 
 

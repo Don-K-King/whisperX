@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ from urllib import request as urlrequest
 
 from evodox.jobs.infrastructure import (
     JsonlAuditLog,
+    SQLiteJobCheckpointStore,
     SQLiteJobRepository,
     SQLiteOutbox,
     SQLiteWorkerArtifactStore,
@@ -27,6 +29,7 @@ from evodox.jobs.worker_pipeline_service import (
     RetryableWorkerError,
     TerminalWorkerError,
     WorkerPipeline,
+    WorkerInterruptionRequested,
     WorkerProcessInput,
 )
 
@@ -59,7 +62,7 @@ class WorkerRuntimeSettings:
     max_speakers: int | None = None
     whisperx_vad_method: str = "silero"
     media_temp_dir: Path = Path("/tmp/evodox-worker")
-    whisperx_timeout_seconds: int = 7200
+    whisperx_timeout_seconds: int = 0
     worker_max_retries: int = 3
 
     @classmethod
@@ -99,8 +102,8 @@ class WorkerRuntimeSettings:
         max_speakers = _parse_optional_positive_int(source.get("WORKER_WHISPERX_MAX_SPEAKERS", ""), "WORKER_WHISPERX_MAX_SPEAKERS")
         whisperx_vad_method = source.get("WORKER_WHISPERX_VAD_METHOD", "silero").strip().lower()
         media_temp_dir = Path(source.get("WORKER_MEDIA_TEMP_DIR", "/tmp/evodox-worker").strip())
-        whisperx_timeout_seconds = _parse_positive_int(
-            source.get("WORKER_WHISPERX_TIMEOUT_SECONDS", "7200"),
+        whisperx_timeout_seconds = _parse_non_negative_int(
+            source.get("WORKER_WHISPERX_TIMEOUT_SECONDS", "0"),
             "WORKER_WHISPERX_TIMEOUT_SECONDS",
         )
         worker_max_retries = _parse_non_negative_int(source.get("WORKER_MAX_RETRIES", "3"), "WORKER_MAX_RETRIES")
@@ -157,7 +160,7 @@ class WorkerRuntime:
         *,
         settings: WorkerRuntimeSettings,
         media_fetcher: Callable[[str], Path] | None = None,
-        whisperx_runner: Callable[[Path, WorkerRuntimeSettings], dict[str, Any]] | None = None,
+        whisperx_runner: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.settings = settings
         self.settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +172,7 @@ class WorkerRuntime:
         self.outbox = SQLiteOutbox(self.settings.db_path)
         self.audit_log = JsonlAuditLog(self.settings.audit_log_path)
         self.artifact_store = SQLiteWorkerArtifactStore(self.settings.db_path)
+        self.checkpoint_store = SQLiteJobCheckpointStore(self.settings.db_path)
         asr_engine, align_engine, diarize_engine = _build_processing_engines(
             settings=self.settings,
             media_fetcher=media_fetcher,
@@ -177,6 +181,7 @@ class WorkerRuntime:
         self.pipeline = WorkerPipeline(
             job_store=self.job_repository,
             artifact_store=self.artifact_store,
+            checkpoint_store=self.checkpoint_store,
             audit_log=self.audit_log,
             asr_engine=asr_engine,
             align_engine=align_engine,
@@ -227,6 +232,22 @@ class WorkerRuntime:
                 failed += 1
                 continue
             current_status = str(job_row.get("status") or "")
+            if current_status == "cancel_requested":
+                try:
+                    self.job_repository.set_status(tenant_id, job_id, "canceled", progress=100)
+                except KeyError:
+                    pass
+                self.outbox.mark_published(event["event_id"])
+                self.audit_log.append(
+                    {
+                        "action": "job.worker.canceled",
+                        "tenant_id": tenant_id,
+                        "job_id": job_id,
+                        "ts": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                )
+                processed += 1
+                continue
             if current_status in {"paused", "pause_requested", "deleted", "canceled"}:
                 self.outbox.mark_published(event["event_id"])
                 processed += 1
@@ -242,7 +263,7 @@ class WorkerRuntime:
                         upload_session_id=upload_session_id,
                     )
                 result = self.pipeline.process(WorkerProcessInput(tenant_id=tenant_id, job_id=job_id))
-                if result.status in {"completed", "paused"}:
+                if result.status in {"completed", "paused", "canceled", "deleted"}:
                     self.outbox.mark_published(event["event_id"])
                     processed += 1
                     continue
@@ -295,11 +316,24 @@ class WorkerRuntime:
                 )
                 failed += 1
             except Exception as exc:
-                self.outbox.mark_retry(
+                latest_job = self.job_repository.get(tenant_id, job_id)
+                latest_status = str((latest_job or {}).get("status") or "")
+                if latest_status in {"deleted", "canceled", "paused"}:
+                    self.outbox.mark_published(event["event_id"])
+                    processed += 1
+                    continue
+                self.outbox.mark_dlq(
                     event["event_id"],
+                    reason="worker.unhandled_exception",
                     error_code=f"worker.{type(exc).__name__}",
-                    next_attempt_at=now + timedelta(seconds=self.settings.poll_interval_seconds),
+                    error_class="terminal",
                 )
+                try:
+                    if latest_status not in {"failed_terminal", "deleted", "canceled"}:
+                        self.job_repository.set_status(tenant_id, job_id, "failed_terminal")
+                except KeyError:
+                    pass
+                processed += 1
                 failed += 1
 
         return WorkerTickResult(processed=processed, failed=failed)
@@ -430,7 +464,7 @@ def _build_processing_engines(
     *,
     settings: WorkerRuntimeSettings,
     media_fetcher: Callable[[str], Path] | None,
-    whisperx_runner: Callable[[Path, WorkerRuntimeSettings], dict[str, Any]] | None,
+    whisperx_runner: Callable[..., dict[str, Any]] | None,
 ) -> tuple[Callable[[str], dict[str, Any]], Callable[[dict[str, Any]], dict[str, Any]], Callable[[dict[str, Any]], dict[str, Any]]]:
     if settings.mode == "stub":
         return _stub_asr_engine, _stub_align_engine, _stub_diarize_engine
@@ -445,12 +479,27 @@ def _create_whisperx_asr_engine(
     *,
     settings: WorkerRuntimeSettings,
     media_fetcher: Callable[[str], Path],
-    whisperx_runner: Callable[[Path, WorkerRuntimeSettings], dict[str, Any]],
-) -> Callable[[str], dict[str, Any]]:
-    def _engine(object_key: str) -> dict[str, Any]:
+    whisperx_runner: Callable[..., dict[str, Any]],
+) -> Callable[..., dict[str, Any]]:
+    def _engine(
+        object_key: str,
+        *,
+        stage_offset: int = 0,
+        interrupt_check: Callable[[], str | None] | None = None,
+    ) -> dict[str, Any]:
+        del stage_offset
         media_path = media_fetcher(object_key)
         try:
-            payload = whisperx_runner(media_path, settings)
+            supports_interrupt_check = False
+            try:
+                signature = inspect.signature(whisperx_runner)
+                supports_interrupt_check = "interrupt_check" in signature.parameters
+            except (TypeError, ValueError):
+                supports_interrupt_check = False
+            if supports_interrupt_check:
+                payload = whisperx_runner(media_path, settings, interrupt_check=interrupt_check)
+            else:
+                payload = whisperx_runner(media_path, settings)
             transcript = _normalize_transcript(payload.get("transcript"))
             diarization = _normalize_diarization(payload.get("diarization"), transcript_segments=transcript.get("segments", []))
             transcript["__diarization"] = diarization
@@ -515,7 +564,12 @@ def _build_media_fetcher(settings: WorkerRuntimeSettings) -> Callable[[str], Pat
     return _fetch
 
 
-def _run_whisperx_subprocess(media_path: Path, settings: WorkerRuntimeSettings) -> dict[str, Any]:
+def _run_whisperx_subprocess(
+    media_path: Path,
+    settings: WorkerRuntimeSettings,
+    *,
+    interrupt_check: Callable[[], str | None] | None = None,
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="evodox-whisperx-out-") as output_dir_raw:
         output_dir = Path(output_dir_raw)
         completed = _run_whisperx_command(
@@ -526,6 +580,7 @@ def _run_whisperx_subprocess(media_path: Path, settings: WorkerRuntimeSettings) 
                 include_diarization=settings.enable_diarization,
             ),
             settings=settings,
+            interrupt_check=interrupt_check,
         )
         if completed.returncode != 0 and settings.enable_diarization:
             LOGGER.warning(
@@ -547,6 +602,7 @@ def _run_whisperx_subprocess(media_path: Path, settings: WorkerRuntimeSettings) 
                     include_diarization=False,
                 ),
                 settings=settings,
+                interrupt_check=interrupt_check,
             )
 
         if completed.returncode != 0:
@@ -568,14 +624,39 @@ def _run_whisperx_subprocess(media_path: Path, settings: WorkerRuntimeSettings) 
         return {"transcript": transcript, "diarization": diarization}
 
 
-def _run_whisperx_command(*, command: list[str], settings: WorkerRuntimeSettings) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _run_whisperx_command(
+    *,
+    command: list[str],
+    settings: WorkerRuntimeSettings,
+    interrupt_check: Callable[[], str | None] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-        timeout=settings.whisperx_timeout_seconds,
     )
+    start_ts = time.monotonic()
+    timeout_seconds = settings.whisperx_timeout_seconds if settings.whisperx_timeout_seconds > 0 else None
+    while True:
+        if interrupt_check is not None:
+            requested_status = str(interrupt_check() or "").strip()
+            if requested_status in {"pause_requested", "cancel_requested", "deleted"}:
+                _terminate_process(process)
+                raise WorkerInterruptionRequested(requested_status=requested_status)
+        if timeout_seconds is not None and (time.monotonic() - start_ts) >= timeout_seconds:
+            _terminate_process(process)
+            raise TerminalWorkerError("worker.transcription_timeout")
+        returncode = process.poll()
+        if returncode is not None:
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        time.sleep(1.0)
 
 
 def _build_whisperx_command(
@@ -722,6 +803,24 @@ def _safe_unlink(path: Path) -> None:
         path.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    try:
+        process.terminate()
+    except Exception:
+        return
+    try:
+        process.wait(timeout=10)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=5)
+        except Exception:
+            pass
 
 
 def _is_due(next_attempt_at: str | None, *, now: datetime) -> bool:

@@ -6,6 +6,7 @@ MILESTONE_PROGRESS = {
     "queued": 5,
     "processing": 20,
     "pause_requested": 20,
+    "cancel_requested": 20,
     "paused": 20,
     "failed_retryable": 20,
     "failed_terminal": 20,

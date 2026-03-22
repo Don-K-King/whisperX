@@ -7,7 +7,7 @@ ENV PYTHONPATH=/app
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends curl \
+    && apt-get install --yes --no-install-recommends curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY evodox /app/evodox
@@ -15,5 +15,4 @@ COPY whisperx /app/whisperx
 COPY pyproject.toml /app/pyproject.toml
 COPY README.md /app/README.md
 
-RUN pip install --no-cache-dir fastapi uvicorn pydantic boto3
-
+RUN pip install --no-cache-dir . fastapi uvicorn pydantic boto3
