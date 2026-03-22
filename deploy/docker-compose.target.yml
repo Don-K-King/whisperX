@@ -60,7 +60,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:18080/health/ready"]
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/18080'"]
       interval: 15s
       timeout: 5s
       retries: 12
@@ -90,22 +90,31 @@ services:
     depends_on:
       object-storage:
         condition: service_healthy
+    volumes:
+      - runtime-data:/runtime
 
   api:
     image: ${EVODOX_IMAGE:?required}
     restart: unless-stopped
-    command: ["uv", "run", "uvicorn", "evodox.web.fastapi_adapter:create_fastapi_app", "--factory", "--host", "0.0.0.0", "--port", "18000"]
+    command: ["python", "-m", "uvicorn", "evodox.runtime.api_app:create_app", "--factory", "--host", "0.0.0.0", "--port", "18000"]
     env_file:
       - .env
+    environment:
+      API_DB_PATH: /runtime/jobs.db
+      API_AUDIT_LOG_PATH: /runtime/audit/api-audit.jsonl
+      API_UPLOAD_BASE_URL: http://object-storage:9000
+      API_UPLOAD_BUCKET: uploads
+      API_AUTH_MODE: ${API_AUTH_MODE:-dev}
+      API_OBJECT_STORAGE_MODE: ${API_OBJECT_STORAGE_MODE:-stub}
     depends_on:
       db:
         condition: service_healthy
       broker:
         condition: service_healthy
-      auth:
-        condition: service_healthy
       retention-preflight:
         condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:18000/docs"]
       interval: 15s
@@ -115,9 +124,15 @@ services:
   worker:
     image: ${EVODOX_IMAGE:?required}
     restart: unless-stopped
-    command: ["uv", "run", "python", "-m", "evodox.jobs.worker_pipeline_service"]
+    command: ["python", "-m", "evodox.runtime.worker_runner"]
     env_file:
       - .env
+    environment:
+      WORKER_DB_PATH: /runtime/jobs.db
+      WORKER_MODE: ${WORKER_MODE:-stub}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-25}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+      WORKER_AUDIT_LOG_PATH: /runtime/audit/worker-audit.jsonl
     depends_on:
       db:
         condition: service_healthy
@@ -125,6 +140,8 @@ services:
         condition: service_healthy
       retention-preflight:
         condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
     healthcheck:
       test: ["CMD", "python", "-c", "print('worker healthy')"]
       interval: 30s
@@ -134,7 +151,7 @@ services:
   retention-runner:
     image: ${EVODOX_IMAGE:?required}
     restart: unless-stopped
-    command: ["uv", "run", "python", "-m", "evodox.runtime.retention_scheduler_runner"]
+    command: ["python", "-m", "evodox.runtime.retention_scheduler_runner"]
     env_file:
       - .env
     environment:
@@ -146,6 +163,8 @@ services:
         condition: service_healthy
       retention-preflight:
         condition: service_completed_successfully
+    volumes:
+      - runtime-data:/runtime
     healthcheck:
       test: ["CMD", "python", "-c", "from pathlib import Path; Path('/tmp/retention-runner-health').touch(); print('ok')"]
       interval: 30s
@@ -156,3 +175,4 @@ volumes:
   postgres-data:
   rabbitmq-data:
   minio-data:
+  runtime-data:

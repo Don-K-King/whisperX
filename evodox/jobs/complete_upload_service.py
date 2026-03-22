@@ -62,6 +62,23 @@ class InMemoryJobStore:
             raise KeyError("job not found")
         self._jobs[key]["status"] = status
 
+    def mark_queued(
+        self,
+        tenant_id: str,
+        job_id: str,
+        *,
+        object_key: str,
+        checksum_sha256: str,
+        upload_session_id: str,
+    ) -> None:
+        key = (tenant_id, job_id)
+        if key not in self._jobs:
+            raise KeyError("job not found")
+        self._jobs[key]["status"] = "queued"
+        self._jobs[key]["object_key"] = object_key
+        self._jobs[key]["checksum_sha256"] = checksum_sha256
+        self._jobs[key]["upload_session_id"] = upload_session_id
+
 
 class InMemoryObjectStorage:
     def __init__(self) -> None:
@@ -134,7 +151,17 @@ def complete_upload(
         size_bytes=int(job.get("size_bytes", 0)),
     )
 
-    job_store.set_status(tenant_id, request.job_id, "queued")
+    mark_queued = getattr(job_store, "mark_queued", None)
+    if callable(mark_queued):
+        mark_queued(
+            tenant_id,
+            request.job_id,
+            object_key=request.object_key,
+            checksum_sha256=request.checksum_sha256,
+            upload_session_id=request.upload_session_id,
+        )
+    else:
+        job_store.set_status(tenant_id, request.job_id, "queued")
     outbox.append(
         {
             "event_type": "job.queued",

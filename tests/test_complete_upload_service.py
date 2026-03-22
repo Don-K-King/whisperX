@@ -51,7 +51,11 @@ class CompleteUploadServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, "queued")
         self.assertEqual(response.queue, "gpu-standard")
-        self.assertEqual(self.jobs.get("tenant-a", "job_1")["status"], "queued")
+        saved_job = self.jobs.get("tenant-a", "job_1")
+        self.assertEqual(saved_job["status"], "queued")
+        self.assertEqual(saved_job["object_key"], "tenant/tenant-a/job_1/hearing.mp4")
+        self.assertEqual(saved_job["checksum_sha256"], "a" * 64)
+        self.assertEqual(saved_job["upload_session_id"], "up_1")
         self.assertEqual(len(self.outbox.events), 1)
         self.assertEqual(self.outbox.events[0]["event_type"], "job.queued")
 

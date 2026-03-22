@@ -1,7 +1,7 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
+from uuid import uuid4
 
 from evodox.auth.context import AuthzError, authorize_request
 from evodox.jobs.complete_upload_service import (
@@ -56,6 +56,25 @@ def map_job_status_response(response: Any) -> dict[str, Any]:
         "progress": response.progress,
         "retention_until": response.retention_until,
     }
+
+
+def map_job_list_item(row: dict[str, Any]) -> dict[str, Any]:
+    status = str(row.get("status", "created"))
+    progress = row.get("progress")
+    if not isinstance(progress, int):
+        progress = 100 if status == "completed" else 0
+    return {
+        "job_id": row.get("job_id"),
+        "filename": row.get("filename"),
+        "status": status,
+        "progress": max(0, min(100, int(progress))),
+        "retention_months": row.get("retention_months"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def map_jobs_list_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"jobs": [map_job_list_item(row) for row in rows]}
 
 
 def map_transcript_response(response: Any) -> dict[str, Any]:
@@ -122,18 +141,29 @@ def create_fastapi_app(
         format: str
         transcript_version: int
 
-    def _require_auth(authorization: str | None):
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise HTTPException(status_code=401, detail={"error_code": "auth.invalid_token"})
-        token = authorization.split(" ", 1)[1].strip()
-        claims = token_verifier(token)
-        return authorize_request(
-            claims=claims,
-            expected_issuer=settings.expected_issuer,
-            expected_audience=settings.expected_audience,
-            now=claims.get("now", 0),
-            required_roles={"user", "reviewer", "admin"},
+    def _http_error(status_code: int, error_code: str, correlation_id: str | None = None) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={"error_code": error_code, "correlation_id": correlation_id or str(uuid4())},
         )
+
+    def _require_auth(authorization: str | None, *, required_roles: set[str] | None = None):
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise _http_error(401, "auth.invalid_token")
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            claims = token_verifier(token)
+            return authorize_request(
+                claims=claims,
+                expected_issuer=settings.expected_issuer,
+                expected_audience=settings.expected_audience,
+                now=int(claims.get("now", int(datetime.now(tz=timezone.utc).timestamp()))),
+                required_roles=required_roles or {"user", "reviewer", "admin"},
+            )
+        except AuthzError:
+            raise
+        except Exception as exc:
+            raise _http_error(401, "auth.invalid_token") from exc
 
     @app.post("/api/v1/jobs")
     def post_jobs(
@@ -164,12 +194,25 @@ def create_fastapi_app(
             )
             return map_create_job_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(422, exc.error_code) from exc
+
+    @app.get("/api/v1/jobs")
+    def get_jobs(
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            list_for_tenant = getattr(job_repository, "list_for_tenant", None)
+            if not callable(list_for_tenant):
+                raise _http_error(503, "jobs.unavailable")
+            rows = list_for_tenant(auth_context.tenant_id)
+            return map_jobs_list_response(rows)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
 
     @app.post("/api/v1/jobs/{job_id}/complete-upload")
     def post_complete_upload(
@@ -206,13 +249,10 @@ def create_fastapi_app(
             )
             return map_complete_upload_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except CompleteUploadValidationError as exc:
             status_code = 404 if exc.error_code == "job.not_found" else 422
-            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(status_code, exc.error_code) from exc
 
     @app.get("/api/v1/jobs/{job_id}")
     def get_job(
@@ -226,12 +266,9 @@ def create_fastapi_app(
             result = get_job_status(job_id=job_id, tenant_id=auth_context.tenant_id, job_store=job_repository)
             return map_job_status_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except JobStatusNotFoundError as exc:
-            raise HTTPException(status_code=404, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(404, exc.error_code) from exc
 
     @app.get("/api/v1/jobs/{job_id}/transcript")
     def get_job_transcript(
@@ -247,13 +284,10 @@ def create_fastapi_app(
             result = get_transcript(tenant_id=auth_context.tenant_id, job_id=job_id, transcript_repo=transcript_repository)
             return map_transcript_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except TranscriptValidationError as exc:
             status_code = 404 if exc.error_code == "transcript.not_found" else 422
-            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(status_code, exc.error_code) from exc
 
     @app.put("/api/v1/jobs/{job_id}/transcript")
     def put_job_transcript(
@@ -281,15 +315,12 @@ def create_fastapi_app(
             )
             return map_transcript_update_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except TranscriptConflictError as exc:
-            raise HTTPException(status_code=409, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(409, exc.error_code) from exc
         except TranscriptValidationError as exc:
             status_code = 404 if exc.error_code == "transcript.not_found" else 422
-            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(status_code, exc.error_code) from exc
 
     @app.post("/api/v1/jobs/{job_id}/export")
     def post_job_export(
@@ -319,13 +350,31 @@ def create_fastapi_app(
             )
             return map_export_response(result)
         except AuthzError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error_code": exc.error_code, "correlation_id": exc.correlation_id},
-            ) from exc
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except ExportValidationError as exc:
             status_code = 404 if exc.error_code == "export.transcript_not_found" else 422
-            raise HTTPException(status_code=status_code, detail={"error_code": exc.error_code}) from exc
+            raise _http_error(status_code, exc.error_code) from exc
+
+    @app.get("/api/v1/audit")
+    def get_audit_events(
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization, required_roles={"admin"})
+            list_for_tenant = getattr(audit_log, "list_for_tenant", None)
+            if callable(list_for_tenant):
+                events = list_for_tenant(tenant_id=auth_context.tenant_id, limit=200)
+            else:
+                list_all = getattr(audit_log, "list_all", None)
+                if callable(list_all):
+                    events = [item for item in list_all(limit=1000) if item.get("tenant_id") == auth_context.tenant_id][:200]
+                else:
+                    events = []
+            return {"events": events}
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
 
 
     return app

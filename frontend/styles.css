@@ -130,6 +130,19 @@ h1 { margin-top: 0; }
 
 .error { color: var(--danger); }
 
+.transcript-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.transcript-list li {
+  margin-bottom: 0.75rem;
+}
+
+.transcript-list p {
+  margin: 0.25rem 0 0;
+}
+
 .dropzone {
   border: 2px dashed var(--border);
   border-radius: 0.85rem;

@@ -262,7 +262,7 @@ Erwartung: keine Treffer für produktive Werte; `latest` ist unzulässig.
 **Variante B:** Source-Build aus GitHub-Checkout und anschließend lokal/tagged bereitstellen.
 
 **Architekturkonflikt-Hinweis:**
-Im Repository ist `deploy/docker-compose.target.yml` vorhanden, aber kein Dockerfile im Baum. Für Variante B ist ein reproduzierbares Build-Recipe (inkl. Digest/SBOM/Signatur) in der Infrastruktur zwingend; sonst Build-/Runtime-Drift.
+Für Variante B muss ein reproduzierbares Build-Recipe inkl. Digest/SBOM/Signatur genutzt werden, sonst droht Build-/Runtime-Drift. Für den lokalen Runtime-Slice steht dafuer `deploy/Dockerfile.runtime` bereit.
 
 ### Schritt 4) Preflight zwingend ausführen (harte Deployment-Sperre)
 ```bash
@@ -332,3 +332,28 @@ python -m unittest discover -s tests -p "test_*.py"
 docker compose -f deploy/docker-compose.target.yml down
 ```
 Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schritt 4–7 erneut ausrollen.
+
+## 2026-03-22 - Local Docker Runtime Slice
+- API Entrypoint: uvicorn evodox.runtime.api_app:create_app --factory.
+- Worker Entrypoint: python -m evodox.runtime.worker_runner.
+- Lokaler Startmodus nutzt standardmaessig API_AUTH_MODE=dev und API_OBJECT_STORAGE_MODE=stub fuer den ersten End-to-End-Durchlauf.
+- Produktionsnahe Konfiguration bleibt API_AUTH_MODE=oidc und API_OBJECT_STORAGE_MODE=strict.
+- Gemeinsame Laufzeitdaten (SQLite + Audit-Logs) liegen im Compose-Volume runtime-data unter /runtime.
+- Lokaler Image-Build fuer Docker-Tests: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .`
+
+## 2026-03-22 - Naechster TDD-Schritt: Transcript Vertical Slice bis Frontend
+### Ziel
+- Uploader kann nach `complete-upload` das erzeugte Transcript samt Speaker-Diarization im Frontend sehen.
+
+### Red-Green-Reihenfolge
+1. Red: API-Contract-Test fuer `GET /api/v1/jobs/{job_id}/transcript` mit tenant-scoped Zugriff und klaren Fehlerfaellen.
+2. Red: Frontend-Test fuer Job-Detail-Ansicht mit Transcript- und Speaker-Segment-Anzeige.
+3. Green: Transcript-Repository im Runtime-Wiring aktivieren und Worker-Output dort persistieren.
+4. Green: Frontend von der reinen Jobliste auf Upload-Fluss mit Transcript-Ansicht erweitern.
+
+### Abnahme-Gates
+1. `python -m unittest discover -s tests -p "test_*.py"`
+2. `node --test frontend/tests/*.test.js`
+3. Docker-Smoke mit `docker compose --env-file .env -f deploy/docker-compose.target.yml run --rm retention-preflight`
+4. Lokaler E2E-Check: Job anlegen, Upload finalisieren, Transcript abrufen, Speaker-Segmente im UI sichtbar.
+

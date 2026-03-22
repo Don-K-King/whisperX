@@ -9,7 +9,7 @@ class TargetPortAllocationTests(unittest.TestCase):
         compose = Path("deploy/docker-compose.target.yml").read_text(encoding="utf-8")
 
         self.assertIn('"--http-port=18080"', compose)
-        self.assertIn('http://localhost:18080/health/ready', compose)
+        self.assertIn("/dev/tcp/127.0.0.1/18080", compose)
         self.assertIn('"--port", "18000"', compose)
         self.assertIn('http://localhost:18000/docs', compose)
 

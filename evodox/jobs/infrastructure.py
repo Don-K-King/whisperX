@@ -15,6 +15,7 @@ from .complete_upload_service import CompleteUploadIdempotencyRecord, CompleteUp
 from .create_service import CreateJobResponse, IdempotencyRecord, UploadSession
 from .retention_scheduler import RetentionFailureRecord
 from .retention_service import RetentionCandidate
+from .transcript_service import TranscriptConflictError, TranscriptResponse, TranscriptValidationError
 
 
 class SQLiteJobRepository:
@@ -39,6 +40,10 @@ class SQLiteJobRepository:
                     content_type TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     retention_months INTEGER NOT NULL,
+                    upload_session_id TEXT,
+                    object_key TEXT,
+                    checksum_sha256 TEXT,
+                    progress INTEGER,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     deleted_at TEXT
@@ -48,14 +53,25 @@ class SQLiteJobRepository:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             if "deleted_at" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN deleted_at TEXT")
+            if "upload_session_id" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN upload_session_id TEXT")
+            if "object_key" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN object_key TEXT")
+            if "checksum_sha256" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN checksum_sha256 TEXT")
+            if "progress" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN progress INTEGER")
 
     def create(self, job: Any) -> None:
         payload = _to_dict(job)
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs (job_id, tenant_id, actor_id, filename, content_type, size_bytes, retention_months, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO jobs (
+                    job_id, tenant_id, actor_id, filename, content_type, size_bytes, retention_months,
+                    upload_session_id, object_key, checksum_sha256, progress, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["job_id"],
@@ -65,6 +81,10 @@ class SQLiteJobRepository:
                     payload["content_type"],
                     int(payload["size_bytes"]),
                     int(payload["retention_months"]),
+                    payload.get("upload_session_id"),
+                    payload.get("object_key"),
+                    payload.get("checksum_sha256"),
+                    payload.get("progress"),
                     payload["status"],
                 ),
             )
@@ -77,11 +97,42 @@ class SQLiteJobRepository:
             ).fetchone()
         return None if row is None else dict(row)
 
-    def set_status(self, tenant_id: str, job_id: str, status: str) -> None:
+    def set_status(self, tenant_id: str, job_id: str, status: str, *, progress: int | None = None) -> None:
+        with self._connect() as conn:
+            if progress is None:
+                updated = conn.execute(
+                    "UPDATE jobs SET status = ? WHERE tenant_id = ? AND job_id = ?",
+                    (status, tenant_id, job_id),
+                )
+            else:
+                updated = conn.execute(
+                    "UPDATE jobs SET status = ?, progress = ? WHERE tenant_id = ? AND job_id = ?",
+                    (status, int(progress), tenant_id, job_id),
+                )
+        if updated.rowcount == 0:
+            raise KeyError("job not found")
+
+    def mark_queued(
+        self,
+        tenant_id: str,
+        job_id: str,
+        *,
+        object_key: str,
+        checksum_sha256: str,
+        upload_session_id: str,
+    ) -> None:
         with self._connect() as conn:
             updated = conn.execute(
-                "UPDATE jobs SET status = ? WHERE tenant_id = ? AND job_id = ?",
-                (status, tenant_id, job_id),
+                """
+                UPDATE jobs
+                SET status = 'queued',
+                    upload_session_id = ?,
+                    object_key = ?,
+                    checksum_sha256 = ?,
+                    progress = 0
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (upload_session_id, object_key, checksum_sha256, tenant_id, job_id),
             )
         if updated.rowcount == 0:
             raise KeyError("job not found")
@@ -90,6 +141,14 @@ class SQLiteJobRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs WHERE tenant_id = ? ORDER BY created_at", (tenant_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_queued_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT ?",
+                (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -978,6 +1037,28 @@ class JsonlAuditLog:
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(enriched, ensure_ascii=False, sort_keys=True) + "\n")
 
+    def list_for_tenant(self, *, tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        return [event for event in self.list_all(limit=limit * 5) if event.get("tenant_id") == tenant_id][:limit]
+
+    def list_all(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if not self.log_path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        with self.log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if len(events) >= limit:
+                    break
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    events.append(payload)
+        return events
+
 
 class LocalObjectStorageCatalog:
     def __init__(self) -> None:
@@ -988,6 +1069,176 @@ class LocalObjectStorageCatalog:
 
     def exists_with_checksum(self, object_key: str, checksum_sha256: str) -> bool:
         return self._objects.get(object_key) == checksum_sha256
+
+
+class LenientObjectStorageCatalog(LocalObjectStorageCatalog):
+    def exists_with_checksum(self, object_key: str, checksum_sha256: str) -> bool:
+        if super().exists_with_checksum(object_key, checksum_sha256):
+            return True
+        if not object_key.startswith("tenant/"):
+            return False
+        if len(checksum_sha256) != 64:
+            return False
+        return all(ch in "0123456789abcdefABCDEF" for ch in checksum_sha256)
+
+
+class SQLiteWorkerArtifactStore:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS worker_artifacts (
+                    tenant_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (tenant_id, job_id)
+                )
+                """
+            )
+
+    def put_transcript(self, *, tenant_id: str, job_id: str, artifact: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO worker_artifacts (tenant_id, job_id, payload_json)
+                VALUES (?, ?, ?)
+                """,
+                (tenant_id, job_id, json.dumps(artifact, sort_keys=True)),
+            )
+
+    def get(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM worker_artifacts WHERE tenant_id = ? AND job_id = ?",
+                (tenant_id, job_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["payload_json"])
+
+
+class SQLiteTranscriptRepository:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = str(db_path)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transcript_versions (
+                    tenant_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    segments_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (tenant_id, job_id, version)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_transcript_versions_latest
+                ON transcript_versions (tenant_id, job_id, version DESC)
+                """
+            )
+
+    def get_current(self, tenant_id: str, job_id: str) -> TranscriptResponse | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT version, segments_json
+                FROM transcript_versions
+                WHERE tenant_id = ? AND job_id = ?
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (tenant_id, job_id),
+            ).fetchone()
+            if row is not None:
+                return TranscriptResponse(
+                    job_id=job_id,
+                    version=int(row["version"]),
+                    segments=_safe_json_segments(row["segments_json"]),
+                )
+
+            artifact = _load_worker_artifact(conn, tenant_id=tenant_id, job_id=job_id)
+            if artifact is None:
+                return None
+            segments = _segments_from_worker_artifact(artifact)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO transcript_versions (tenant_id, job_id, version, segments_json)
+                VALUES (?, ?, 1, ?)
+                """,
+                (tenant_id, job_id, json.dumps(segments, sort_keys=True)),
+            )
+            return TranscriptResponse(job_id=job_id, version=1, segments=segments)
+
+    def save_new_version(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        expected_base_version: int,
+        segments: list[dict[str, Any]],
+    ) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT version
+                FROM transcript_versions
+                WHERE tenant_id = ? AND job_id = ?
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (tenant_id, job_id),
+            ).fetchone()
+
+            current_version: int
+            if row is None:
+                artifact = _load_worker_artifact(conn, tenant_id=tenant_id, job_id=job_id)
+                if artifact is None:
+                    raise TranscriptValidationError("transcript.not_found", "Transcript wurde nicht gefunden.")
+                initial_segments = _segments_from_worker_artifact(artifact)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO transcript_versions (tenant_id, job_id, version, segments_json)
+                    VALUES (?, ?, 1, ?)
+                    """,
+                    (tenant_id, job_id, json.dumps(initial_segments, sort_keys=True)),
+                )
+                current_version = 1
+            else:
+                current_version = int(row["version"])
+
+            if current_version != int(expected_base_version):
+                raise TranscriptConflictError()
+
+            new_version = current_version + 1
+            conn.execute(
+                """
+                INSERT INTO transcript_versions (tenant_id, job_id, version, segments_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (tenant_id, job_id, new_version, json.dumps(segments, sort_keys=True)),
+            )
+            return new_version
 
 
 def _response_to_dict(response: CreateJobResponse) -> dict[str, Any]:
@@ -1010,3 +1261,67 @@ def _to_dict(value: Any) -> dict[str, Any]:
     if is_dataclass(value):
         return asdict(value)
     raise TypeError("Adapter erwartet dict oder dataclass payload.")
+
+
+def _load_worker_artifact(conn: sqlite3.Connection, *, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'worker_artifacts'"
+    ).fetchone()
+    if table_exists is None:
+        return None
+    row = conn.execute(
+        "SELECT payload_json FROM worker_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (tenant_id, job_id),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row["payload_json"])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _segments_from_worker_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    transcript = artifact.get("transcript", {})
+    diarization = artifact.get("diarization", {})
+    transcript_segments = transcript.get("segments", []) if isinstance(transcript, dict) else []
+    diarization_segments = diarization.get("segments", []) if isinstance(diarization, dict) else []
+
+    segments: list[dict[str, Any]] = []
+    if isinstance(transcript_segments, list):
+        for idx, segment in enumerate(transcript_segments):
+            if not isinstance(segment, dict):
+                continue
+            diarized = diarization_segments[idx] if idx < len(diarization_segments) else {}
+            speaker = (
+                str(diarized.get("speaker"))
+                if isinstance(diarized, dict) and diarized.get("speaker")
+                else "UNKNOWN"
+            )
+            segments.append(
+                {
+                    "start": float(segment.get("start", 0.0)),
+                    "end": float(segment.get("end", 0.0)),
+                    "speaker": speaker,
+                    "text": str(segment.get("text", "")),
+                }
+            )
+
+    if segments:
+        return segments
+
+    text = ""
+    if isinstance(transcript, dict):
+        text = str(transcript.get("text", ""))
+    return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+
+
+def _safe_json_segments(raw: str) -> list[dict[str, Any]]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]

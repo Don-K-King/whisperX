@@ -1,4 +1,9 @@
-import { parseToken, sanitizedError } from './utils.js';
+import {
+  buildCompleteUploadPayload,
+  mapTranscriptToSpeakerRows,
+  parseToken,
+  sanitizedError,
+} from './utils.js';
 
 const state = {
   lang: 'de',
@@ -164,11 +169,13 @@ async function loadRoute() {
       await callApi(`/api/v1/jobs/${created.job_id}/complete-upload`, {
         method: 'POST',
         headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({
-          upload_session_id: created.upload.session_id,
-          object_key: `tenant/${state.auth.tenant_id}/${created.job_id}/${state.selectedFile.name}`,
-          checksum_sha256: 'a'.repeat(64),
-        }),
+        body: JSON.stringify(buildCompleteUploadPayload({
+          tenantId: state.auth.tenant_id,
+          jobId: created.job_id,
+          filename: state.selectedFile.name,
+          uploadSessionId: created.upload.session_id,
+          checksumSha256: 'a'.repeat(64),
+        })),
       });
       state.route = `job:${created.job_id}`;
       await loadRoute();
@@ -180,12 +187,30 @@ async function loadRoute() {
     const jobId = state.route.split(':')[1];
     try {
       const job = await callApi(`/api/v1/jobs/${jobId}`);
+      let transcriptPanel = '';
+      if (job.status === 'completed') {
+        try {
+          const transcript = await callApi(`/api/v1/jobs/${jobId}/transcript`);
+          const rows = mapTranscriptToSpeakerRows(transcript);
+          transcriptPanel = `
+            <section class="card">
+              <h2>Transcript v${transcript.version}</h2>
+              <ul class="transcript-list">
+                ${rows.map((row) => `<li><strong>${row.speaker}</strong> <small>${row.timeRange}</small><p>${row.text}</p></li>`).join('')}
+              </ul>
+            </section>
+          `;
+        } catch (problem) {
+          transcriptPanel = `<p class="error">${sanitizedError(problem)}</p>`;
+        }
+      }
       app.innerHTML = `
         <h1>${t('detail')}</h1>
         <p>${jobId}</p>
         <div class="progress"><span style="width:${job.progress}%"></span></div>
         <ol><li>created</li><li>uploaded</li><li>queued</li><li>processing</li><li>completed</li></ol>
         <details><summary>${t('errors')}</summary><p class="error" id="job-error"></p></details>
+        ${transcriptPanel}
       `;
     } catch (problem) {
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;

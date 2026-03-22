@@ -21,7 +21,10 @@ from evodox.jobs.infrastructure import (
     SQLiteRetentionExecutionRepository,
     SQLiteRetentionRetryStore,
     SQLiteSchedulerLeaseStore,
+    SQLiteTranscriptRepository,
+    SQLiteWorkerArtifactStore,
 )
+from evodox.jobs.transcript_service import TranscriptConflictError
 from evodox.jobs.retention_scheduler import RetentionFailureRecord
 
 
@@ -92,6 +95,8 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             payload = json.loads(lines[0])
             self.assertEqual(payload["action"], "job.create")
+            self.assertEqual(len(audit.list_for_tenant(tenant_id="tenant-a")), 1)
+            self.assertEqual(len(audit.list_for_tenant(tenant_id="tenant-b")), 0)
 
     def test_rabbitmq_publisher_maps_broker_failure_to_retryable_error(self):
         publisher = RabbitMQQueuePublisher(amqp_url="amqp://guest:guest@localhost:5672/%2F")
@@ -156,6 +161,92 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(len(due), 1)
             self.assertEqual(due[0].tenant_id, "tenant-a")
             self.assertEqual(due[0].job_id, "job_1")
+
+    def test_job_repo_mark_queued_persists_worker_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_q1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.mp3",
+                    "content_type": "audio/mpeg",
+                    "size_bytes": 12,
+                    "retention_months": 6,
+                    "status": "upload_pending",
+                }
+            )
+
+            repo.mark_queued(
+                "tenant-a",
+                "job_q1",
+                object_key="tenant/tenant-a/job_q1/audio.mp3",
+                checksum_sha256="a" * 64,
+                upload_session_id="up_123",
+            )
+            row = repo.get("tenant-a", "job_q1")
+            self.assertEqual(row["status"], "queued")
+            self.assertEqual(row["object_key"], "tenant/tenant-a/job_q1/audio.mp3")
+            self.assertEqual(row["upload_session_id"], "up_123")
+            self.assertEqual(row["checksum_sha256"], "a" * 64)
+
+    def test_transcript_repository_reads_worker_artifact_as_version_1(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_1",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+
+            repo = SQLiteTranscriptRepository(db_path)
+            current = repo.get_current("tenant-a", "job_1")
+
+            self.assertIsNotNone(current)
+            assert current is not None
+            self.assertEqual(current.version, 1)
+            self.assertEqual(current.segments[0]["speaker"], "SPEAKER_00")
+            self.assertEqual(current.segments[0]["text"], "Hallo")
+
+    def test_transcript_repository_save_new_version_enforces_optimistic_locking(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_2",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Orig"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+
+            v2 = repo.save_new_version(
+                tenant_id="tenant-a",
+                job_id="job_2",
+                expected_base_version=1,
+                segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Edited"}],
+            )
+            self.assertEqual(v2, 2)
+            latest = repo.get_current("tenant-a", "job_2")
+            assert latest is not None
+            self.assertEqual(latest.version, 2)
+            self.assertEqual(latest.segments[0]["text"], "Edited")
+
+            with self.assertRaises(TranscriptConflictError):
+                repo.save_new_version(
+                    tenant_id="tenant-a",
+                    job_id="job_2",
+                    expected_base_version=1,
+                    segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Stale"}],
+                )
 
     def test_retention_execution_repo_marks_deleted_and_prunes_outbox_for_tenant(self):
         with tempfile.TemporaryDirectory() as tmpdir:

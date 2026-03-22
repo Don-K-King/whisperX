@@ -38,6 +38,10 @@ class JobRecord:
     content_type: str
     size_bytes: int
     retention_months: int
+    upload_session_id: str | None = None
+    object_key: str | None = None
+    checksum_sha256: str | None = None
+    progress: int | None = None
     status: str = "upload_pending"
 
 
@@ -138,6 +142,11 @@ def create_job(
         return existing.response
 
     job_id = f"job_{uuid4().hex[:12]}"
+    upload_session = upload_session_factory.create_session(
+        tenant_id=actor_context.tenant_id,
+        job_id=job_id,
+        filename=request.filename,
+    )
     job = JobRecord(
         job_id=job_id,
         tenant_id=actor_context.tenant_id,
@@ -146,11 +155,8 @@ def create_job(
         content_type=request.content_type,
         size_bytes=request.size_bytes,
         retention_months=request.retention_months,
-    )
-    upload_session = upload_session_factory.create_session(
-        tenant_id=actor_context.tenant_id,
-        job_id=job_id,
-        filename=request.filename,
+        upload_session_id=upload_session.session_id,
+        object_key=upload_session.object_key,
     )
 
     response = CreateJobResponse(

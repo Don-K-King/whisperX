@@ -147,3 +147,9 @@
 - Begründung: reduziert Kollisionsrisiko bei späteren Betriebsmodi (`ports:`-Freigaben, Host-Networking, Debug-Publishes) auf bereits belegten Zielinstanz-Ports.
 - Security-Bewertung: keine zusätzliche Exposition, da weiterhin keine externen Port-Bindings gesetzt werden; Änderung betrifft nur interne Service-Kommunikation/Healthchecks.
 - Nachweis/Analyse: `docs/operations/port-conflict-report-2026-03-09.md`.
+
+## 2026-03-22 - Status-Tracking: Local Docker Runtime Slice abgeschlossen, Transcript Vertical Slice als naechster Schritt
+- Aktueller Stand: lokaler Docker-Vertical-Slice ist funktional und per E2E geprueft (`create -> complete-upload -> queued -> processing -> completed`).
+- Fertig: API-Factory aus ENV, Hybrid-Auth `oidc|dev`, tenant-scoped Jobs/Audit-Endpoints, Stub-Worker-Runner, lokale Compose- und Runtime-Entrypoints.
+- Offen: Transcript-API-Pfad, Persistenz des Worker-Outputs als abrufbares Transcript, Frontend-Upload per Presigned-Flow und Anzeige von Transcript/Speaker-Diarization.
+- Naechster TDD-Schritt: Transcript Vertical Slice bis Frontend, zuerst Red-Tests fuer API-Contract und Frontend-Detailansicht, dann Runtime-Wiring und UI-Integration.

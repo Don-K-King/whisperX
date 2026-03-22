@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-22
+- Lokaler Runtime-Vertical-Slice fuer Docker ergaenzt: API startet jetzt ueber ENV-basierte Factory (evodox.runtime.api_app:create_app) ohne manuelles DI im Startkommando.
+- Hybrid-Auth fuer lokale Inkremente eingefuehrt (API_AUTH_MODE=oidc|dev) bei beibehaltenem Claim-Validierungspfad.
+- API um fehlende Frontend-Endpunkte erweitert: tenant-scoped GET /api/v1/jobs und admin-scoped GET /api/v1/audit.
+- complete-upload persistiert jetzt Worker-relevante Metadaten (upload_session_id, object_key, checksum_sha256) im Job-Datensatz.
+- Dedizierter Stub-Worker-Runner ergaenzt (evodox.runtime.worker_runner) fuer deterministische lokale Verarbeitung queued -> processing -> completed.
+- Compose-Zielbetrieb auf neue Runtime-Entrypoints umgestellt und gemeinsames Runtime-Volume fuer SQLite/Audit hinzugefuegt.
+- Lokales Runtime-Image fuer den Docker-Slice ergaenzt (`deploy/Dockerfile.runtime`) und Compose-Runtime-Kommandos auf `python -m ...` vereinheitlicht.
+- Testabdeckung erweitert: Runtime-Entrypoints, neue API-Endpunkte, Worker-Runner sowie lokaler Smoke-Flow (FastAPI-abhaengig).
+- Status jetzt: Docker-Vertical-Slice ist lokal lauffaehig und per E2E geprueft; offen sind Transcript-API, Frontend-Upload mit Presigned-Flow und Anzeige von Transcript/Speaker-Diarization.
+
 ## 2026-03-06
 - Architektur präzisiert: Multi-Tenant, On-Prem Docker, RabbitMQ/Celery Skalierungsstrategie, lokale Modellbereitstellung.
 - Produktanforderung ergänzt: Löschfristen im Frontend/Job-Kontext, Default per ENV in Monaten.
@@ -90,6 +101,7 @@
 - Recovery-Failure-Klassen werden versioniert über `RETENTION_RECOVERY_MAPPING_VERSION` gesteuert (aktuell `v1`).
 - Neuer Betriebsmodus zur Deployment-Härtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
 - Neue vollständige Konfigurationsvorlage: `.env.example`.
+
 
 
 
