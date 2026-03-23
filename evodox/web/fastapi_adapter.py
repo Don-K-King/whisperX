@@ -18,10 +18,17 @@ from evodox.jobs.transcript_service import (
     TranscriptConflictError,
     TranscriptValidationError,
     UpdateTranscriptInput,
+    UpdateTranscriptSpeakerLabelsInput,
     get_transcript,
     update_transcript,
+    update_transcript_speaker_labels,
 )
 from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
+from evodox.jobs.transcription_settings_service import (
+    TranscriptionSettingsValidationError,
+    get_transcription_settings,
+    update_transcription_settings,
+)
 
 
 @dataclass(frozen=True)
@@ -78,7 +85,12 @@ def map_jobs_list_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def map_transcript_response(response: Any) -> dict[str, Any]:
-    return {"job_id": response.job_id, "version": response.version, "segments": response.segments}
+    return {
+        "job_id": response.job_id,
+        "version": response.version,
+        "segments": response.segments,
+        "speaker_labels": dict(getattr(response, "speaker_labels", {}) or {}),
+    }
 
 
 def map_transcript_update_response(response: Any) -> dict[str, Any]:
@@ -105,6 +117,7 @@ def create_fastapi_app(
     export_artifact_store: Any | None = None,
     checkpoint_store: Any | None = None,
     worker_artifact_store: Any | None = None,
+    transcription_settings_store: Any | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException
@@ -122,6 +135,7 @@ def create_fastapi_app(
         content_type: str
         size_bytes: int
         retention_months: int
+        language: str = Field(default="de")
 
     class CompleteUploadPayload(BaseModel):
         upload_session_id: str = Field(min_length=1)
@@ -137,6 +151,11 @@ def create_fastapi_app(
     class TranscriptUpdatePayload(BaseModel):
         base_version: int
         segments: list[TranscriptUpdateSegment]
+        edit_reason: str = Field(min_length=3, max_length=255)
+
+    class TranscriptSpeakerLabelsUpdatePayload(BaseModel):
+        base_version: int
+        speaker_labels: dict[str, str]
         edit_reason: str = Field(min_length=3, max_length=255)
 
     class ExportPayload(BaseModel):
@@ -187,6 +206,7 @@ def create_fastapi_app(
                     size_bytes=payload.size_bytes,
                     retention_months=payload.retention_months,
                     idempotency_key=idempotency_key,
+                    language=payload.language,
                 ),
                 actor_context=auth_context,
                 job_repository=job_repository,
@@ -248,12 +268,56 @@ def create_fastapi_app(
                 outbox=outbox,
                 idempotency_store=complete_upload_idempotency_store,
                 queue_policy=queue_policy,
+                transcription_settings_store=transcription_settings_store,
             )
             return map_complete_upload_response(result)
         except AuthzError as exc:
             raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except CompleteUploadValidationError as exc:
             status_code = 404 if exc.error_code == "job.not_found" else 422
+            raise _http_error(status_code, exc.error_code) from exc
+
+    @app.get("/api/v1/admin/transcription-settings")
+    def get_admin_transcription_settings(
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcription_settings_store is None:
+            raise _http_error(503, "transcription_settings.unavailable")
+        try:
+            auth_context = _require_auth(authorization, required_roles={"admin"})
+            return get_transcription_settings(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                settings_store=transcription_settings_store,
+                audit_log=audit_log,
+            )
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+
+    @app.put("/api/v1/admin/transcription-settings")
+    def put_admin_transcription_settings(
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcription_settings_store is None:
+            raise _http_error(503, "transcription_settings.unavailable")
+        try:
+            auth_context = _require_auth(authorization, required_roles={"admin"})
+            return update_transcription_settings(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                payload=payload,
+                settings_store=transcription_settings_store,
+                audit_log=audit_log,
+            )
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptionSettingsValidationError as exc:
+            status_code = 503 if exc.error_code == "transcription_settings.unavailable" else 422
             raise _http_error(status_code, exc.error_code) from exc
 
     @app.get("/api/v1/jobs/{job_id}")
@@ -417,6 +481,39 @@ def create_fastapi_app(
                     job_id=job_id,
                     base_version=payload.base_version,
                     segments=[item.model_dump() for item in payload.segments],
+                    edit_reason=payload.edit_reason,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                audit_log=audit_log,
+            )
+            return map_transcript_update_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptConflictError as exc:
+            raise _http_error(409, exc.error_code) from exc
+        except TranscriptValidationError as exc:
+            status_code = 404 if exc.error_code == "transcript.not_found" else 422
+            raise _http_error(status_code, exc.error_code) from exc
+
+    @app.put("/api/v1/jobs/{job_id}/transcript/speaker-labels")
+    def put_job_transcript_speaker_labels(
+        job_id: str,
+        payload: TranscriptSpeakerLabelsUpdatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = update_transcript_speaker_labels(
+                UpdateTranscriptSpeakerLabelsInput(
+                    job_id=job_id,
+                    base_version=payload.base_version,
+                    speaker_labels=payload.speaker_labels,
                     edit_reason=payload.edit_reason,
                 ),
                 tenant_id=auth_context.tenant_id,

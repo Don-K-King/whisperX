@@ -94,6 +94,7 @@ class LocalRuntimeSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(len(body["segments"]), 1)
             self.assertEqual(body["segments"][0]["speaker"], "SPEAKER_00")
             self.assertIn("Stub transcript", body["segments"][0]["text"])
+            self.assertEqual(body["speaker_labels"], {})
 
             jobs = client.get("/api/v1/jobs", headers={"Authorization": "Bearer dev:tenant-a:user:u-1"})
             self.assertEqual(jobs.status_code, 200)

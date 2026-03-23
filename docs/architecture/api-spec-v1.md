@@ -115,6 +115,10 @@ Response 200:
 {
   "job_id": "job_01",
   "version": 3,
+  "speaker_labels": {
+    "SPEAKER_01": "Patrick",
+    "SPEAKER_02": "Angela"
+  },
   "segments": [
     {"start": 0.0, "end": 3.1, "speaker": "S1", "text": "..."}
   ]
@@ -122,6 +126,32 @@ Response 200:
 ```
 
 Fehlercodes: `401, 403, 404`.
+
+### PUT /api/v1/jobs/{id}/transcript/speaker-labels
+**AuthZ:** `user|reviewer|admin`, tenant-scoped write.
+
+Request:
+```json
+{
+  "base_version": 3,
+  "speaker_labels": {
+    "SPEAKER_01": "Patrick",
+    "SPEAKER_02": "Angela"
+  },
+  "edit_reason": "Speaker-Namen pflegen"
+}
+```
+
+Response 200:
+```json
+{
+  "job_id": "job_01",
+  "version": 4,
+  "saved_at": "2026-03-22T12:15:00Z"
+}
+```
+
+Fehlercodes: `401, 403, 404, 409, 422`.
 
 ### PUT /api/v1/jobs/{id}/transcript
 **AuthZ:** `user|reviewer|admin`, tenant-scoped write.
@@ -182,6 +212,7 @@ Fehlercodes: `400, 401, 403`.
 - `filename`: max 255, Unicode-normalisiert, keine Steuerzeichen.
 - `format`: enum `txt|json|srt|vtt`.
 - `language`: ISO-639-1 sofern gesetzt.
+- `speaker_labels`: Mapping von Roh-Speaker-Labels auf Anzeigenamen; Leerzeichen trimmen, Steuerzeichen und leere Werte ablehnen.
 - Pfad-/Header-Injections, Nullbytes, doppelte Extensions werden verworfen.
 
 

@@ -194,3 +194,23 @@
 - Queue-Pool-Vorbereitung umgesetzt: `WORKER_ALLOWED_QUEUES` + Outbox-Filter fuer dedizierte Worker-Rollen.
 - Compose-Zielbetrieb erweitert: Standard-`worker` ist GPU-first; zusaetzliche Profile-Services `worker-gpu-0`, `worker-gpu-1`, `worker-cpu` fuer dedizierte Server-Pools.
 - Referenz: ADR-0017 (`/docs/adr/ADR-0017-gpu-first-local-und-multi-gpu-compose-worker-pools.md`).
+
+## 2026-03-22 - ADR-0018 Tenant-Admin Decoding Settings + Job-Snapshot
+- Neue admin-only Endpunkte fuer tenant-scoped Decoding-Defaults eingefuehrt (`GET/PUT /api/v1/admin/transcription-settings`).
+- Persistenzmodell erweitert: `tenant_transcription_settings` (Tenant-Defaults) und `jobs.transcription_options_json` (Queueing-Snapshot pro Job).
+- Queue/Worker-Wiring erweitert: `job.queued` und `resume` fuehren `transcription_options` mit; Worker mappt Whitelist-Felder auf WhisperX-CLI-Flags.
+- Security-Haertung: strikte Feld-Whitelist und Wertevalidierung, Audit ohne Klartext-Prompt (nur Hash/Laenge fuer `initial_prompt`).
+- Referenz: ADR-0018 (`/docs/adr/ADR-0018-tenant-admin-decoding-settings-und-job-snapshot.md`).
+
+## 2026-03-22 - ADR-0019 Speaker-Aliase + Blockbildung
+- Speaker-Aliase werden versioniert pro Transcript-Snapshot gespeichert, um Reproduzierbarkeit und Mehrgeraet-Use-Cases zu erhalten.
+- Task-View-Rendering gruppiert aufeinanderfolgende Segmente mit gleichem Roh-Speaker zu lesbaren Blocken.
+- Neue API fuer Speaker-Alias-Updates wird tenant-scoped und optimistic-locking-basiert umgesetzt.
+- Referenz: ADR-0019 (`/docs/adr/ADR-0019-transcript-speaker-alias-und-blockbildung.md`).
+
+## 2026-03-23 - ADR-0020 WhisperX large-v3 Erzwingung + Sprachwahl + Chunk/VAD Exposition
+- Entscheidung: WhisperX-Worker erzwingt large-v3 im Runtime-Pfad, um inkonsistente Modellqualitaet durch ENV-Drift zu verhindern.
+- Entscheidung: Sprache wird pro Job bei create erfasst (de Default, auto optional), im Snapshot persistiert und bei Queueing/Worker priorisiert.
+- Entscheidung: Tenant-Admin Decoding-Settings werden um chunk_size, vad_onset, vad_offset erweitert und strikt validiert.
+- Sicherheitsentscheidung: Eingaben bleiben whitelist-/range-basiert, Snapshot-Verarbeitung bleibt fail-safe ueber safe_worker_decoding_options.
+- Referenz: ADR-0020 (/docs/adr/ADR-0020-whisperx-large-v3-erzwingung-sprache-und-chunk-vad.md).

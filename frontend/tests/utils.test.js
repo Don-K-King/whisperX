@@ -4,6 +4,8 @@ import {
   buildCompleteUploadPayload,
   deriveProgress,
   jobActionsForStatus,
+  mapTranscriptToSpeakerAliases,
+  mapTranscriptToSpeakerBlocks,
   mapTranscriptToSpeakerRows,
   nextPollingIntervalMs,
   parseToken,
@@ -53,10 +55,74 @@ test('mapTranscriptToSpeakerRows maps transcript API payload for frontend render
 
   assert.equal(rows.length, 2);
   assert.deepEqual(rows[0], {
+    speakerKey: 'SPEAKER_00',
     speaker: 'SPEAKER_00',
     timeRange: '00:00:00 - 00:00:01',
     text: 'Hallo Welt',
   });
+});
+
+test('mapTranscriptToSpeakerRows prefers persisted speaker labels for display', () => {
+  const rows = mapTranscriptToSpeakerRows({
+    version: 2,
+    speaker_labels: { SPEAKER_00: 'Patrick' },
+    segments: [
+      { start: 0.0, end: 1.2, speaker: 'SPEAKER_00', text: 'Hallo Welt' },
+    ],
+  });
+
+  assert.equal(rows[0].speakerKey, 'SPEAKER_00');
+  assert.equal(rows[0].speaker, 'Patrick');
+});
+
+test('mapTranscriptToSpeakerBlocks merges only consecutive segments for same speaker', () => {
+  const blocks = mapTranscriptToSpeakerBlocks({
+    version: 3,
+    speaker_labels: { SPEAKER_01: 'Patrick', SPEAKER_02: 'Angela' },
+    segments: [
+      { start: 0.0, end: 2.0, speaker: 'SPEAKER_01', text: 'Erster Satz.' },
+      { start: 2.0, end: 4.0, speaker: 'SPEAKER_01', text: 'Zweiter Satz.' },
+      { start: 4.0, end: 5.0, speaker: 'SPEAKER_02', text: 'Antwort.' },
+      { start: 5.0, end: 6.0, speaker: 'SPEAKER_01', text: 'Rueckfrage.' },
+    ],
+  });
+
+  assert.equal(blocks.length, 3);
+  assert.deepEqual(blocks[0], {
+    speakerKey: 'SPEAKER_01',
+    speaker: 'Patrick',
+    timeRange: '00:00:00 - 00:00:04',
+    text: 'Erster Satz.\nZweiter Satz.',
+  });
+  assert.deepEqual(blocks[1], {
+    speakerKey: 'SPEAKER_02',
+    speaker: 'Angela',
+    timeRange: '00:00:04 - 00:00:05',
+    text: 'Antwort.',
+  });
+  assert.deepEqual(blocks[2], {
+    speakerKey: 'SPEAKER_01',
+    speaker: 'Patrick',
+    timeRange: '00:00:05 - 00:00:06',
+    text: 'Rueckfrage.',
+  });
+});
+
+test('mapTranscriptToSpeakerAliases keeps segment order and includes persisted aliases', () => {
+  const aliases = mapTranscriptToSpeakerAliases({
+    speaker_labels: { SPEAKER_99: 'Gast', SPEAKER_01: 'Patrick' },
+    segments: [
+      { speaker: 'SPEAKER_01', text: 'A' },
+      { speaker: 'SPEAKER_02', text: 'B' },
+      { speaker: 'SPEAKER_01', text: 'C' },
+    ],
+  });
+
+  assert.deepEqual(aliases, [
+    { speakerKey: 'SPEAKER_01', alias: 'Patrick' },
+    { speakerKey: 'SPEAKER_02', alias: '' },
+    { speakerKey: 'SPEAKER_99', alias: 'Gast' },
+  ]);
 });
 
 test('deriveProgress uses milestone defaults when API omits progress', () => {

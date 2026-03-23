@@ -51,7 +51,7 @@ class WorkerRunnerTests(unittest.TestCase):
             mode="whisperx",
             hf_token="hf_test",
             enable_diarization=True,
-            diarization_model="pyannote/speaker-diarization",
+            diarization_model="pyannote/speaker-diarization-community-1",
             min_speakers=1,
             max_speakers=3,
         )
@@ -64,7 +64,7 @@ class WorkerRunnerTests(unittest.TestCase):
         )
 
         self.assertIn("--diarize", command)
-        self.assertIn("pyannote/speaker-diarization", command)
+        self.assertIn("pyannote/speaker-diarization-community-1", command)
         self.assertIn("--hf_token", command)
         self.assertIn("--device_index", command)
 
@@ -99,10 +99,97 @@ class WorkerRunnerTests(unittest.TestCase):
             output_dir=Path("/tmp/out"),
             settings=settings,
             include_diarization=False,
+            transcription_options=None,
         )
 
         self.assertNotIn("--diarize", command)
         self.assertNotIn("--hf_token", command)
+
+    def test_build_whisperx_command_includes_snapshot_decoding_flags(self) -> None:
+        settings = WorkerRuntimeSettings(
+            db_path=Path("/tmp/jobs.db"),
+            mode="whisperx",
+            enable_diarization=False,
+        )
+        command = _build_whisperx_command(
+            media_path=Path("/tmp/demo.wav"),
+            output_dir=Path("/tmp/out"),
+            settings=settings,
+            include_diarization=False,
+            transcription_options={
+                "temperature": 0.3,
+                "beam_size": 4,
+                "patience": 1.2,
+                "length_penalty": 1.1,
+                "compression_ratio_threshold": 2.1,
+                "logprob_threshold": -1.2,
+                "no_speech_threshold": 0.55,
+                "suppress_tokens": "-1,12",
+                "initial_prompt": "Fachsprache",
+                "condition_on_previous_text": True,
+                "chunk_size": 24,
+                "vad_onset": 0.4,
+                "vad_offset": 0.3,
+                "language": "de",
+            },
+        )
+
+        self.assertIn("--temperature", command)
+        self.assertIn("0.3", command)
+        self.assertIn("--beam_size", command)
+        self.assertIn("4", command)
+        self.assertIn("--initial_prompt", command)
+        self.assertIn("Fachsprache", command)
+        self.assertIn("--condition_on_previous_text", command)
+        self.assertIn("True", command)
+        self.assertIn("--chunk_size", command)
+        self.assertIn("24", command)
+        self.assertIn("--vad_onset", command)
+        self.assertIn("0.4", command)
+        self.assertIn("--vad_offset", command)
+        self.assertIn("0.3", command)
+        self.assertIn("--language", command)
+        self.assertIn("de", command)
+
+    def test_build_whisperx_command_omits_language_flag_for_auto(self) -> None:
+        settings = WorkerRuntimeSettings(
+            db_path=Path("/tmp/jobs.db"),
+            mode="whisperx",
+            enable_diarization=False,
+        )
+        command = _build_whisperx_command(
+            media_path=Path("/tmp/demo.wav"),
+            output_dir=Path("/tmp/out"),
+            settings=settings,
+            include_diarization=False,
+            transcription_options={"language": "auto"},
+        )
+
+        self.assertNotIn("--language", command)
+
+    def test_build_whisperx_command_ignores_invalid_snapshot_and_uses_defaults(self) -> None:
+        settings = WorkerRuntimeSettings(
+            db_path=Path("/tmp/jobs.db"),
+            mode="whisperx",
+            enable_diarization=False,
+        )
+        command = _build_whisperx_command(
+            media_path=Path("/tmp/demo.wav"),
+            output_dir=Path("/tmp/out"),
+            settings=settings,
+            include_diarization=False,
+            transcription_options={
+                "temperature": 9.0,
+                "beam_size": 999,
+                "unknown_option": True,
+            },
+        )
+
+        temp_index = command.index("--temperature")
+        beam_index = command.index("--beam_size")
+        self.assertEqual(command[temp_index + 1], "0.0")
+        self.assertEqual(command[beam_index + 1], "5")
+        self.assertNotIn("--unknown_option", command)
 
     def test_settings_require_hf_token_for_whisperx_diarization_mode(self) -> None:
         with self.assertRaises(WorkerRuntimeConfigError):
@@ -125,6 +212,31 @@ class WorkerRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(settings.mode, "whisperx")
+
+    def test_settings_default_to_community_diarization_model(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "true",
+                "HF_TOKEN": "hf_test_token",
+            }
+        )
+
+        self.assertEqual(settings.diarization_model, "pyannote/speaker-diarization-community-1")
+
+    def test_settings_normalize_legacy_diarization_model(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "true",
+                "HF_TOKEN": "hf_test_token",
+                "WORKER_WHISPERX_DIARIZATION_MODEL": "pyannote/speaker-diarization",
+            }
+        )
+
+        self.assertEqual(settings.diarization_model, "pyannote/speaker-diarization-community-1")
 
     def test_settings_accept_zero_whisperx_timeout(self) -> None:
         settings = WorkerRuntimeSettings.from_env(
@@ -338,12 +450,25 @@ class WorkerRunnerTests(unittest.TestCase):
                     "object_key": "tenant/tenant-a/job_3/meeting.mp4",
                     "checksum_sha256": "a" * 64,
                     "upload_session_id": "up_3",
+                    "transcription_options": {
+                        "temperature": 0.2,
+                        "beam_size": 4,
+                        "patience": 1.1,
+                        "length_penalty": 1.0,
+                        "compression_ratio_threshold": 2.2,
+                        "logprob_threshold": -1.0,
+                        "no_speech_threshold": 0.5,
+                        "suppress_tokens": "-1,12",
+                        "initial_prompt": "Fachsprache",
+                        "condition_on_previous_text": True,
+                    },
                 }
             )
 
             media_file = Path(tmpdir) / "meeting.mp4"
             media_file.write_bytes(b"fake-video-content")
 
+            observed_options = {}
             runtime = WorkerRuntime(
                 settings=WorkerRuntimeSettings(
                     db_path=db_path,
@@ -355,22 +480,26 @@ class WorkerRunnerTests(unittest.TestCase):
                     enable_diarization=True,
                 ),
                 media_fetcher=lambda _object_key: media_file,
-                whisperx_runner=lambda _media_path, _settings: {
-                    "transcript": {
-                        "text": "Hallo zusammen",
-                        "language": "de",
-                        "segments": [{"start": 0.0, "end": 1.0, "text": "Hallo zusammen"}],
+                whisperx_runner=lambda _media_path, _settings, transcription_options=None: (
+                    observed_options.update({"value": transcription_options}),
+                    {
+                        "transcript": {
+                            "text": "Hallo zusammen",
+                            "language": "de",
+                            "segments": [{"start": 0.0, "end": 1.0, "text": "Hallo zusammen"}],
+                        },
+                        "diarization": {
+                            "segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]
+                        },
                     },
-                    "diarization": {
-                        "segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]
-                    },
-                },
+                )[1],
             )
             result = runtime.run_once()
 
             self.assertEqual(result.processed, 1)
             row = repo.get("tenant-a", "job_3")
             self.assertEqual(row["status"], "completed")
+            self.assertEqual(observed_options["value"]["beam_size"], 4)
 
     def test_runtime_falls_back_to_cpu_when_cuda_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -436,6 +565,27 @@ class WorkerRunnerTests(unittest.TestCase):
             events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             fallback_events = [event for event in events if event.get("action") == "worker.runtime.gpu_fallback"]
             self.assertEqual(len(fallback_events), 1)
+
+    def test_runtime_forces_large_v3_model_and_audits_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            audit_path = Path(tmpdir) / "worker-audit.jsonl"
+            runtime = WorkerRuntime(
+                settings=WorkerRuntimeSettings(
+                    db_path=db_path,
+                    mode="whisperx",
+                    whisperx_model="tiny",
+                    audit_log_path=audit_path,
+                    enable_diarization=False,
+                )
+            )
+
+            self.assertEqual(runtime.settings.whisperx_model, "large-v3")
+            events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            model_events = [event for event in events if event.get("action") == "worker.runtime.model_forced"]
+            self.assertEqual(len(model_events), 1)
+            self.assertEqual(model_events[0]["configured_model"], "tiny")
+            self.assertEqual(model_events[0]["effective_model"], "large-v3")
 
     def test_run_once_respects_allowed_queues_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

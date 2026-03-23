@@ -99,6 +99,26 @@ class CreateJobValidationTests(unittest.TestCase):
 
         self.assertEqual(exc_info.exception.error_code, "job.validation.filename")
 
+    def test_rejects_unknown_language(self):
+        with self.assertRaises(ValidationError) as exc_info:
+            create_job(
+                CreateJobInput(
+                    filename="audio.mp3",
+                    content_type="audio/mpeg",
+                    size_bytes=2048,
+                    retention_months=12,
+                    idempotency_key="idemp-lang-invalid",
+                    language="xx",
+                ),
+                actor_context=self.ctx,
+                job_repository=InMemoryJobRepository(),
+                upload_session_factory=InMemoryUploadSessionFactory(),
+                audit_log=InMemoryAuditLog(),
+                idempotency_store=InMemoryIdempotencyStore(),
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.validation.language")
+
 
 class CreateJobIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -129,6 +149,7 @@ class CreateJobIntegrationTests(unittest.TestCase):
         self.assertTrue(response.upload.session_id.startswith("up_"))
         self.assertEqual(len(self.repo.jobs), 1)
         self.assertEqual(self.repo.jobs[0].tenant_id, "tenant-a")
+        self.assertEqual(self.repo.jobs[0].transcription_options_json["language"], "de")
         self.assertEqual(len(self.audit.events), 1)
         self.assertEqual(self.audit.events[0]["action"], "job.create")
 
@@ -187,6 +208,42 @@ class CreateJobIntegrationTests(unittest.TestCase):
                     size_bytes=11,
                     retention_months=3,
                     idempotency_key="idemp-conflict",
+                ),
+                actor_context=self.ctx,
+                job_repository=self.repo,
+                upload_session_factory=self.sessions,
+                audit_log=self.audit,
+                idempotency_store=self.idempotency,
+            )
+
+        self.assertEqual(exc_info.exception.error_code, "job.idempotency.conflict")
+
+    def test_idempotency_key_conflict_when_language_changes(self):
+        create_job(
+            CreateJobInput(
+                filename="a.mp3",
+                content_type="audio/mpeg",
+                size_bytes=10,
+                retention_months=3,
+                idempotency_key="idemp-language-conflict",
+                language="de",
+            ),
+            actor_context=self.ctx,
+            job_repository=self.repo,
+            upload_session_factory=self.sessions,
+            audit_log=self.audit,
+            idempotency_store=self.idempotency,
+        )
+
+        with self.assertRaises(ValidationError) as exc_info:
+            create_job(
+                CreateJobInput(
+                    filename="a.mp3",
+                    content_type="audio/mpeg",
+                    size_bytes=10,
+                    retention_months=3,
+                    idempotency_key="idemp-language-conflict",
+                    language="en",
                 ),
                 actor_context=self.ctx,
                 job_repository=self.repo,

@@ -50,6 +50,7 @@
 - `transcript_id` (FK)
 - `version_number`
 - `segments_json`
+- `speaker_labels_json`
 - `created_by_user_id`
 - `edit_reason`
 - `created_at`
@@ -136,3 +137,8 @@ Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
   - `processing -> pause_requested -> paused`
   - `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
 - `canceled` ist terminal, kein Rueckweg nach `queued`.
+
+## 2026-03-22 - Addendum: Transcript-Aliase als Versions-Snapshot
+- `speaker_labels_json` speichert das Mapping `Roh-Speaker -> Anzeigename` zusammen mit jeder Transcript-Version.
+- Alias-Aenderungen erzeugen eine neue `transcript_version`, damit vergangene Versionen und Exporte reproduzierbar bleiben.
+- Das Alias-Mapping ist tenant- und job-gebunden und darf nicht zwischen Jobs oder Tenants wiederverwendet werden.

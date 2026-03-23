@@ -302,21 +302,21 @@ docker compose -f deploy/docker-compose.target.yml logs --tail=200 api worker re
 ### Schritt 7) End-to-End-Basisprüfung + tenant-sichere Negativtests
 #### 7.1 API-Erreichbarkeit
 ```bash
-curl -fsS http://localhost:8000/docs >/dev/null
+curl -fsS http://localhost:18081/api/docs >/dev/null
 ```
 
 #### 7.2 Auth/tenant-Grundprüfung (mit gültigem Bearer-Token)
 ```bash
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token>"
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token>"
 ```
 
 #### 7.3 Negativtests (Security by Default)
 ```bash
 # fehlendes Token -> 401
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>
 
 # tenant-fremder Zugriff -> 403/404 gemäß Endpoint-Regel
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token-aus-anderem-tenant>"
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token-aus-anderem-tenant>"
 ```
 
 ### Pflicht-Checks nach jeder Änderung am Deployment-Setup
@@ -375,7 +375,7 @@ Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schri
 
 ## 2026-03-22 - Erstes lokales Video End-to-End transkribieren (Docker)
 ### Voraussetzungen
-- `.env` enthaelt `API_AUTH_MODE=dev`, `WORKER_MODE=whisperx`, `HF_TOKEN=<dein-token>` und `WORKER_WHISPERX_DIARIZATION_MODEL=pyannote/speaker-diarization`.
+- `.env` enthaelt `API_AUTH_MODE=dev`, `WORKER_MODE=whisperx`, `HF_TOKEN=<dein-token>` und `WORKER_WHISPERX_DIARIZATION_MODEL=pyannote/speaker-diarization-community-1`.
 - Runtime-Image gebaut: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .`
 
 ### Start
@@ -424,9 +424,25 @@ Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schri
    ```bash
    docker compose --env-file .env -f deploy/docker-compose.target.yml up -d worker
    ```
-3. Startlog pruefen (`worker.runner.started`):
-   - Erwartet: `whisperx_device=cuda`.
-   - Bei fehlender GPU: kontrollierter Fallback auf `cpu` + Audit-Event `worker.runtime.gpu_fallback`.
+3. Effektiven Device-Modus robust pruefen:
+   - ENV-Defaults im laufenden Container:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker env | grep WORKER_WHISPERX_
+     ```
+   - CUDA-Verfuegbarkeit in Runtime:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+     ```
+   - Audit-Fallback-Check:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker sh -lc "test -f /runtime/audit/worker-audit.jsonl && tail -n 200 /runtime/audit/worker-audit.jsonl | grep -n worker.runtime.gpu_fallback || true"
+     ```
+   - Hinweis: `worker.runner.started` enthaelt Device-Felder strukturiert im Event; je nach Log-Formatter sind diese Felder nicht als Klartext im Message-String sichtbar.
+4. Falls zuvor `--profile multi-gpu` genutzt wurde: lokale Zusatz-Worker stoppen, damit nur der lokale GPU-First-Worker laeuft:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml stop worker-cpu worker-gpu-0 worker-gpu-1
+   ```
+5. Queue-Routing lokal: Audio und Video werden auf `gpu-standard` geroutet (GPU-First), CPU-Pool bleibt fuer dedizierte Server-Szenarien reserviert.
 
 ### Multi-GPU Compose-Profile (vorbereitet)
 1. Dedizierte Worker-Pools starten:
@@ -444,3 +460,38 @@ Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schri
 ### Betriebsrisiko / Governance
 - `WORKER_ALLOWED_QUEUES` muss je Worker-Rolle explizit gesetzt sein, um Pool-Kollisionen zu vermeiden.
 - Pro GPU initial nur ein Worker-Prozess betreiben; Batch-Groesse schrittweise erhoehen.
+
+## 2026-03-22 - Incident: Dashboard zeigt `unknown_error`
+### Symptome
+- Frontend laedt Task-Cards nicht oder `New Task` endet mit `unknown_error`.
+- API-Requests im Browser laufen auf `/api/...` und liefern `5xx`/`502`.
+
+### Wahrscheinliche Ursache im lokalen Compose-Betrieb
+- Frontend-Proxy (`frontend`/NGINX) kann `api:18000` nicht erreichen (Upstream-Connect-Fehler), obwohl API-Container ggf. laeuft.
+
+### Diagnose
+1. Frontend-Logs auf Proxy-Upstream-Fehler pruefen:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml logs --tail=200 frontend
+   ```
+2. API intern pruefen:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml ps api
+   docker compose --env-file .env -f deploy/docker-compose.target.yml logs --tail=200 api
+   ```
+3. Endpunkt ueber Frontend-Proxy pruefen:
+   ```bash
+   curl -i http://localhost:18081/api/v1/jobs -H "Authorization: Bearer dev:tenant-a:user:u-1"
+   ```
+
+### Behebung
+1. Frontend-Proxy neu starten:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml restart frontend
+   ```
+2. Falls API nicht healthy: API neu starten und Logs validieren.
+3. Danach API-Proxy-Call erneut testen (siehe Diagnose Schritt 3).
+
+### Security-Hinweis
+- `unknown_error` kann wie ein UI-Fehler wirken, ist aber oft ein Infrastruktur-/Proxy-Fehler.
+- Keine Secrets in Frontend-/API-Logs mitschreiben; Bearer-Tokens nur maskiert protokollieren.

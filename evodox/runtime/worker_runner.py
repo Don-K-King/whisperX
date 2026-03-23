@@ -32,8 +32,15 @@ from evodox.jobs.worker_pipeline_service import (
     WorkerInterruptionRequested,
     WorkerProcessInput,
 )
+from evodox.jobs.transcription_settings_service import safe_worker_decoding_options
 
 LOGGER = logging.getLogger("evodox.runtime.worker_runner")
+
+_DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+_ENFORCED_WHISPERX_MODEL = "large-v3"
+_DIARIZATION_MODEL_ALIASES = {
+    "pyannote/speaker-diarization": _DEFAULT_DIARIZATION_MODEL,
+}
 
 
 class WorkerRuntimeConfigError(ValueError):
@@ -50,14 +57,14 @@ class WorkerRuntimeSettings:
     max_ticks: int | None = None
     object_storage_base_url: str = "http://object-storage:9000"
     object_storage_bucket: str = "uploads"
-    whisperx_model: str = "tiny"
+    whisperx_model: str = _ENFORCED_WHISPERX_MODEL
     whisperx_device: str = "cuda"
     whisperx_compute_type: str = "float16"
     whisperx_device_index: int = 0
     whisperx_batch_size: int = 4
     whisperx_model_dir: Path = Path("/runtime/models")
     enable_diarization: bool = True
-    diarization_model: str = "pyannote/speaker-diarization"
+    diarization_model: str = _DEFAULT_DIARIZATION_MODEL
     hf_token: str | None = None
     min_speakers: int | None = None
     max_speakers: int | None = None
@@ -84,7 +91,7 @@ class WorkerRuntimeSettings:
         max_ticks = _parse_optional_positive_int(source.get("WORKER_MAX_TICKS", ""), "WORKER_MAX_TICKS")
         object_storage_base_url = source.get("WORKER_OBJECT_STORAGE_BASE_URL", "http://object-storage:9000").strip()
         object_storage_bucket = source.get("WORKER_OBJECT_STORAGE_BUCKET", "uploads").strip()
-        whisperx_model = source.get("WORKER_WHISPERX_MODEL", "tiny").strip()
+        whisperx_model = source.get("WORKER_WHISPERX_MODEL", _ENFORCED_WHISPERX_MODEL).strip()
         whisperx_device = source.get("WORKER_WHISPERX_DEVICE", "cuda").strip().lower()
         whisperx_compute_type = source.get("WORKER_WHISPERX_COMPUTE_TYPE", "float16").strip().lower()
         whisperx_device_index = _parse_non_negative_int(
@@ -94,10 +101,9 @@ class WorkerRuntimeSettings:
         whisperx_batch_size = _parse_positive_int(source.get("WORKER_WHISPERX_BATCH_SIZE", "4"), "WORKER_WHISPERX_BATCH_SIZE")
         whisperx_model_dir = Path(source.get("WORKER_WHISPERX_MODEL_DIR", "/runtime/models").strip())
         enable_diarization = _parse_bool(source.get("WORKER_ENABLE_DIARIZATION", "true"))
-        diarization_model = source.get(
-            "WORKER_WHISPERX_DIARIZATION_MODEL",
-            "pyannote/speaker-diarization",
-        ).strip()
+        diarization_model = _normalize_diarization_model_name(
+            source.get("WORKER_WHISPERX_DIARIZATION_MODEL", _DEFAULT_DIARIZATION_MODEL)
+        )
         hf_token = (
             source.get("WORKER_HF_TOKEN")
             or source.get("HF_TOKEN")
@@ -138,14 +144,14 @@ class WorkerRuntimeSettings:
             max_ticks=max_ticks,
             object_storage_base_url=object_storage_base_url,
             object_storage_bucket=object_storage_bucket,
-            whisperx_model=whisperx_model or "tiny",
+            whisperx_model=whisperx_model or _ENFORCED_WHISPERX_MODEL,
             whisperx_device=whisperx_device or "cuda",
             whisperx_compute_type=whisperx_compute_type or "float16",
             whisperx_device_index=whisperx_device_index,
             whisperx_batch_size=whisperx_batch_size,
             whisperx_model_dir=whisperx_model_dir,
             enable_diarization=enable_diarization,
-            diarization_model=diarization_model or "pyannote/speaker-diarization",
+            diarization_model=diarization_model or _DEFAULT_DIARIZATION_MODEL,
             hf_token=hf_token or None,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
@@ -181,6 +187,11 @@ class WorkerRuntime:
         self.job_repository = SQLiteJobRepository(self.settings.db_path)
         self.outbox = SQLiteOutbox(self.settings.db_path)
         self.audit_log = JsonlAuditLog(self.settings.audit_log_path)
+        model_settings, model_forced_event = _enforce_whisperx_model(self.settings)
+        self.settings = model_settings
+        if model_forced_event is not None:
+            self.audit_log.append(model_forced_event)
+            LOGGER.warning("worker.runtime.model_forced", extra={"event": model_forced_event})
         effective_settings, fallback_event = _resolve_effective_whisperx_settings(
             self.settings,
             cuda_available_fn=cuda_available_fn or _default_cuda_available,
@@ -237,6 +248,7 @@ class WorkerRuntime:
             object_key = str(payload.get("object_key") or "").strip()
             checksum_sha256 = str(payload.get("checksum_sha256") or "").strip()
             upload_session_id = str(payload.get("upload_session_id") or "").strip()
+            transcription_options = safe_worker_decoding_options(payload.get("transcription_options"))
             if not tenant_id or not job_id:
                 self.outbox.mark_dlq(
                     event["event_id"],
@@ -280,13 +292,23 @@ class WorkerRuntime:
 
             try:
                 if object_key:
-                    self.job_repository.mark_queued(
-                        tenant_id,
-                        job_id,
-                        object_key=object_key,
-                        checksum_sha256=checksum_sha256,
-                        upload_session_id=upload_session_id,
-                    )
+                    try:
+                        self.job_repository.mark_queued(
+                            tenant_id,
+                            job_id,
+                            object_key=object_key,
+                            checksum_sha256=checksum_sha256,
+                            upload_session_id=upload_session_id,
+                            transcription_options=transcription_options,
+                        )
+                    except TypeError:
+                        self.job_repository.mark_queued(
+                            tenant_id,
+                            job_id,
+                            object_key=object_key,
+                            checksum_sha256=checksum_sha256,
+                            upload_session_id=upload_session_id,
+                        )
                 result = self.pipeline.process(WorkerProcessInput(tenant_id=tenant_id, job_id=job_id))
                 if result.status in {"completed", "paused", "canceled", "deleted"}:
                     self.outbox.mark_published(event["event_id"])
@@ -515,21 +537,27 @@ def _create_whisperx_asr_engine(
         object_key: str,
         *,
         stage_offset: int = 0,
+        transcription_options: dict[str, Any] | None = None,
         interrupt_check: Callable[[], str | None] | None = None,
     ) -> dict[str, Any]:
         del stage_offset
         media_path = media_fetcher(object_key)
         try:
             supports_interrupt_check = False
+            supports_transcription_options = False
             try:
                 signature = inspect.signature(whisperx_runner)
                 supports_interrupt_check = "interrupt_check" in signature.parameters
+                supports_transcription_options = "transcription_options" in signature.parameters
             except (TypeError, ValueError):
                 supports_interrupt_check = False
+                supports_transcription_options = False
+            kwargs: dict[str, Any] = {}
             if supports_interrupt_check:
-                payload = whisperx_runner(media_path, settings, interrupt_check=interrupt_check)
-            else:
-                payload = whisperx_runner(media_path, settings)
+                kwargs["interrupt_check"] = interrupt_check
+            if supports_transcription_options:
+                kwargs["transcription_options"] = safe_worker_decoding_options(transcription_options)
+            payload = whisperx_runner(media_path, settings, **kwargs) if kwargs else whisperx_runner(media_path, settings)
             transcript = _normalize_transcript(payload.get("transcript"))
             diarization = _normalize_diarization(payload.get("diarization"), transcript_segments=transcript.get("segments", []))
             transcript["__diarization"] = diarization
@@ -598,6 +626,7 @@ def _run_whisperx_subprocess(
     media_path: Path,
     settings: WorkerRuntimeSettings,
     *,
+    transcription_options: dict[str, Any] | None = None,
     interrupt_check: Callable[[], str | None] | None = None,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="evodox-whisperx-out-") as output_dir_raw:
@@ -608,6 +637,7 @@ def _run_whisperx_subprocess(
                 output_dir=output_dir,
                 settings=settings,
                 include_diarization=settings.enable_diarization,
+                transcription_options=transcription_options,
             ),
             settings=settings,
             interrupt_check=interrupt_check,
@@ -630,6 +660,7 @@ def _run_whisperx_subprocess(
                     output_dir=output_dir,
                     settings=settings,
                     include_diarization=False,
+                    transcription_options=transcription_options,
                 ),
                 settings=settings,
                 interrupt_check=interrupt_check,
@@ -695,7 +726,9 @@ def _build_whisperx_command(
     output_dir: Path,
     settings: WorkerRuntimeSettings,
     include_diarization: bool,
+    transcription_options: dict[str, Any] | None = None,
 ) -> list[str]:
+    decoding_options = safe_worker_decoding_options(transcription_options)
     command = [
         sys.executable,
         "-m",
@@ -723,7 +756,37 @@ def _build_whisperx_command(
         "False",
         "--vad_method",
         settings.whisperx_vad_method,
+        "--vad_onset",
+        str(decoding_options["vad_onset"]),
+        "--vad_offset",
+        str(decoding_options["vad_offset"]),
+        "--chunk_size",
+        str(decoding_options["chunk_size"]),
+        "--temperature",
+        str(decoding_options["temperature"]),
+        "--beam_size",
+        str(decoding_options["beam_size"]),
+        "--patience",
+        str(decoding_options["patience"]),
+        "--length_penalty",
+        str(decoding_options["length_penalty"]),
+        "--compression_ratio_threshold",
+        str(decoding_options["compression_ratio_threshold"]),
+        "--logprob_threshold",
+        str(decoding_options["logprob_threshold"]),
+        "--no_speech_threshold",
+        str(decoding_options["no_speech_threshold"]),
+        "--suppress_tokens",
+        str(decoding_options["suppress_tokens"]),
+        "--condition_on_previous_text",
+        str(bool(decoding_options["condition_on_previous_text"])),
     ]
+    language = str(decoding_options.get("language") or "auto").strip().lower()
+    if language and language != "auto":
+        command.extend(["--language", language])
+    prompt = str(decoding_options.get("initial_prompt") or "")
+    if prompt:
+        command.extend(["--initial_prompt", prompt])
 
     if include_diarization:
         command.extend(
@@ -922,6 +985,21 @@ def _resolve_effective_whisperx_settings(
     return fallback_settings, event
 
 
+def _enforce_whisperx_model(settings: WorkerRuntimeSettings) -> tuple[WorkerRuntimeSettings, dict[str, Any] | None]:
+    if settings.mode != "whisperx":
+        return settings, None
+    if settings.whisperx_model == _ENFORCED_WHISPERX_MODEL:
+        return settings, None
+    enforced = replace(settings, whisperx_model=_ENFORCED_WHISPERX_MODEL)
+    event = {
+        "action": "worker.runtime.model_forced",
+        "configured_model": settings.whisperx_model,
+        "effective_model": enforced.whisperx_model,
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    return enforced, event
+
+
 def _install_signal_handlers(stop_event: threading.Event, *, signal_module: Any, logger: logging.Logger) -> None:
     def _handle_shutdown(signum: int, _frame: Any) -> None:
         logger.info("worker.runner.shutdown_requested", extra={"event": {"signal": signum}})
@@ -977,6 +1055,16 @@ def _parse_csv_list(raw: str) -> tuple[str, ...]:
             continue
         values.append(value)
     return tuple(values)
+
+
+def _normalize_diarization_model_name(raw_model: str) -> str:
+    value = str(raw_model or "").strip()
+    if not value:
+        return _DEFAULT_DIARIZATION_MODEL
+    lowered = value.lower()
+    if lowered in _DIARIZATION_MODEL_ALIASES:
+        return _DIARIZATION_MODEL_ALIASES[lowered]
+    return value
 
 
 if __name__ == "__main__":

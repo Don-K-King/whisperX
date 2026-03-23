@@ -11,10 +11,12 @@ class TranscriptHttpAdapterTests(unittest.TestCase):
                 job_id="job_1",
                 version=3,
                 segments=[{"start": 0.0, "end": 1.0, "speaker": "S1", "text": "Hi"}],
+                speaker_labels={"S1": "Patrick"},
             )
         )
         self.assertEqual(payload["job_id"], "job_1")
         self.assertEqual(payload["version"], 3)
+        self.assertEqual(payload["speaker_labels"]["S1"], "Patrick")
 
     def test_maps_put_transcript_response(self):
         payload = map_transcript_update_response(

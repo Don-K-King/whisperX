@@ -39,6 +39,7 @@ test('createAndQueueJobUpload orchestrates create/upload/complete in order', asy
     uploadFileToPresignedUrl,
     tenantId: 'tenant-a',
     file: { name: 'meeting.mp4', type: 'video/mp4', size: 2048 },
+    language: 'de',
     retentionMonths: 12,
     idempotencyKeyFactory: () => `idem-${++idCounter}`,
     onUploadProgress: (value) => progressUpdates.push(value),
@@ -58,6 +59,7 @@ test('createAndQueueJobUpload orchestrates create/upload/complete in order', asy
     content_type: 'video/mp4',
     size_bytes: 2048,
     retention_months: 12,
+    language: 'de',
   });
   assert.equal(apiCalls[1][0], '/api/v1/jobs/job_1/complete-upload');
   assert.equal(apiCalls[1][1].headers['Idempotency-Key'], 'idem-2');
@@ -94,4 +96,35 @@ test('createAndQueueJobUpload does not upload when create-job fails', async () =
     (error) => error?.error_code === 'job.validation.content_type',
   );
   assert.equal(uploadCalled, false);
+});
+
+test('createAndQueueJobUpload forwards selected language', async () => {
+  const apiCalls = [];
+  const callApi = async (path, options = {}) => {
+    apiCalls.push([path, options]);
+    if (path === '/api/v1/jobs') {
+      return {
+        job_id: 'job_2',
+        upload: {
+          session_id: 'up_2',
+          presigned_url: 'https://object.local/upload-2',
+        },
+      };
+    }
+    if (path === '/api/v1/jobs/job_2/complete-upload') {
+      return { status: 'queued', queue: 'gpu-standard' };
+    }
+    throw new Error(`unexpected call: ${path}`);
+  };
+
+  await createAndQueueJobUpload({
+    callApi,
+    uploadFileToPresignedUrl: async () => 'b'.repeat(64),
+    tenantId: 'tenant-a',
+    file: { name: 'meeting.mp4', type: 'video/mp4', size: 2048 },
+    language: 'fr',
+    idempotencyKeyFactory: () => 'idem-lang',
+  });
+
+  assert.equal(JSON.parse(apiCalls[0][1].body).language, 'fr');
 });

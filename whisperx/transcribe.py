@@ -104,7 +104,7 @@ def transcribe_task(args: dict, parser: argparse.ArgumentParser):
         "compression_ratio_threshold": args.pop("compression_ratio_threshold"),
         "log_prob_threshold": args.pop("logprob_threshold"),
         "no_speech_threshold": args.pop("no_speech_threshold"),
-        "condition_on_previous_text": False,
+        "condition_on_previous_text": args.pop("condition_on_previous_text"),
         "initial_prompt": args.pop("initial_prompt"),
         "hotwords": args.pop("hotwords"),
         "suppress_tokens": [int(x) for x in args.pop("suppress_tokens").split(",")],

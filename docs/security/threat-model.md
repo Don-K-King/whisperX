@@ -79,3 +79,16 @@
 - **Threat:** Unklare Status-/Progress-Semantik führt zu fehlerhaften Operator-Entscheidungen.
   - **Control:** normierte Fallback-Progresslogik und explizites Response-Mapping.
   - **Test:** `tests/test_job_status_service.py`, `tests/test_job_status_http_adapter.py`.
+## Ergaenzung 2026-03-22 - Tenant-Admin Decoding-Settings
+- **Threat:** Privilegienmissbrauch auf transkriptionsrelevante Runtime-Parameter.
+  - **Control:** `GET/PUT /api/v1/admin/transcription-settings` nur mit `admin`-Rolle.
+  - **Test:** `tests/test_fastapi_http_adapter_integration.py` (`403` fuer Non-Admin, `200` fuer Admin).
+- **Threat:** Cross-Tenant-Konfigurationsmanipulation.
+  - **Control:** tenant-scoped Persistenz (`tenant_transcription_settings`) und tenant-gebundene API-Auswertung.
+  - **Test:** Integrations-/Repository-Tests fuer tenant-sicheren Roundtrip.
+- **Threat:** Schad- oder Fehlkonfiguration durch unvalidierte Decoding-Parameter.
+  - **Control:** Feld-Whitelist + Range-Validation + defensive Worker-Normalisierung.
+  - **Test:** `tests/test_transcription_settings_service.py`, `tests/test_worker_runner.py`.
+- **Threat:** Informationsabfluss ueber Audit durch Klartext-`initial_prompt`.
+  - **Control:** Audit nur mit Prompt-Hash/Laenge, ohne Klartext.
+  - **Test:** Service-Tests auf audit payload ohne `initial_prompt`.
