@@ -18,8 +18,10 @@ from evodox.jobs.transcript_service import (
     TranscriptConflictError,
     TranscriptValidationError,
     UpdateTranscriptInput,
+    UpdateTranscriptSpeakerLabelsInput,
     get_transcript,
     update_transcript,
+    update_transcript_speaker_labels,
 )
 from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
 from evodox.jobs.transcription_settings_service import (
@@ -83,7 +85,12 @@ def map_jobs_list_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def map_transcript_response(response: Any) -> dict[str, Any]:
-    return {"job_id": response.job_id, "version": response.version, "segments": response.segments}
+    return {
+        "job_id": response.job_id,
+        "version": response.version,
+        "segments": response.segments,
+        "speaker_labels": dict(getattr(response, "speaker_labels", {}) or {}),
+    }
 
 
 def map_transcript_update_response(response: Any) -> dict[str, Any]:
@@ -128,6 +135,7 @@ def create_fastapi_app(
         content_type: str
         size_bytes: int
         retention_months: int
+        language: str = Field(default="de")
 
     class CompleteUploadPayload(BaseModel):
         upload_session_id: str = Field(min_length=1)
@@ -143,6 +151,11 @@ def create_fastapi_app(
     class TranscriptUpdatePayload(BaseModel):
         base_version: int
         segments: list[TranscriptUpdateSegment]
+        edit_reason: str = Field(min_length=3, max_length=255)
+
+    class TranscriptSpeakerLabelsUpdatePayload(BaseModel):
+        base_version: int
+        speaker_labels: dict[str, str]
         edit_reason: str = Field(min_length=3, max_length=255)
 
     class ExportPayload(BaseModel):
@@ -193,6 +206,7 @@ def create_fastapi_app(
                     size_bytes=payload.size_bytes,
                     retention_months=payload.retention_months,
                     idempotency_key=idempotency_key,
+                    language=payload.language,
                 ),
                 actor_context=auth_context,
                 job_repository=job_repository,
@@ -467,6 +481,39 @@ def create_fastapi_app(
                     job_id=job_id,
                     base_version=payload.base_version,
                     segments=[item.model_dump() for item in payload.segments],
+                    edit_reason=payload.edit_reason,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                audit_log=audit_log,
+            )
+            return map_transcript_update_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptConflictError as exc:
+            raise _http_error(409, exc.error_code) from exc
+        except TranscriptValidationError as exc:
+            status_code = 404 if exc.error_code == "transcript.not_found" else 422
+            raise _http_error(status_code, exc.error_code) from exc
+
+    @app.put("/api/v1/jobs/{job_id}/transcript/speaker-labels")
+    def put_job_transcript_speaker_labels(
+        job_id: str,
+        payload: TranscriptSpeakerLabelsUpdatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = update_transcript_speaker_labels(
+                UpdateTranscriptSpeakerLabelsInput(
+                    job_id=job_id,
+                    base_version=payload.base_version,
+                    speaker_labels=payload.speaker_labels,
                     edit_reason=payload.edit_reason,
                 ),
                 tenant_id=auth_context.tenant_id,

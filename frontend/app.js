@@ -1,7 +1,8 @@
 import {
   deriveProgress,
   jobActionsForStatus,
-  mapTranscriptToSpeakerRows,
+  mapTranscriptToSpeakerAliases,
+  mapTranscriptToSpeakerBlocks,
   nextPollingIntervalMs,
   parseToken,
   sanitizedError,
@@ -43,6 +44,15 @@ const i18n = {
 };
 
 function t(key) { return i18n[state.lang][key] ?? key; }
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 async function callApi(path, options = {}) {
   const response = await fetch(path, {
@@ -237,6 +247,17 @@ async function loadRoute({ fromPoll = false } = {}) {
     app.innerHTML = `
       <h1>${t('newjob')}</h1>
       <div class="dropzone"><input id="file-input" type="file" accept="audio/*,video/*" /></div>
+      <div class="input-row">
+        <label for="language-select">Sprache</label>
+        <select id="language-select">
+          <option value="de" selected>Deutsch (de)</option>
+          <option value="auto">Auto</option>
+          <option value="en">English (en)</option>
+          <option value="fr">Français (fr)</option>
+          <option value="es">Español (es)</option>
+          <option value="it">Italiano (it)</option>
+        </select>
+      </div>
       <div class="input-row"><label>${t('retention')}</label><input value="12" readonly /></div>
       <p id="upload-progress">Upload progress: 0%</p>
       <div class="progress" id="upload-progress-bar" hidden><span id="upload-progress-value" style="width:0%"></span></div>
@@ -264,6 +285,7 @@ async function loadRoute({ fromPoll = false } = {}) {
           uploadFileToPresignedUrl,
           tenantId: state.auth.tenant_id,
           file: state.selectedFile,
+          language: String(document.getElementById('language-select')?.value ?? 'de'),
           retentionMonths: 12,
           idempotencyKeyFactory: () => crypto.randomUUID(),
           onUploadProgress: (progress) => updateUploadProgress(progress),
@@ -287,18 +309,76 @@ async function loadRoute({ fromPoll = false } = {}) {
       const progress = deriveProgress(job);
       const actions = jobActionsForStatus(job.status);
       let transcriptPanel = '';
+      let bindTranscriptInteractions = () => {};
       if (job.status === 'completed') {
         try {
           const transcript = await callApi(`/api/v1/jobs/${jobId}/transcript`);
-          const rows = mapTranscriptToSpeakerRows(transcript);
+          const blocks = mapTranscriptToSpeakerBlocks(transcript);
+          const aliases = mapTranscriptToSpeakerAliases(transcript);
+          const transcriptVersion = Number(transcript?.version ?? 1);
           transcriptPanel = `
             <section class="card">
-              <h2>Transcript v${transcript.version}</h2>
+              <h2>Transcript v${transcriptVersion}</h2>
+              <div class="card">
+                <h3>Speaker labels</h3>
+                ${aliases.map((entry, index) => `
+                  <div class="input-row">
+                    <label for="speaker-alias-${index}">${escapeHtml(entry.speakerKey)}</label>
+                    <input id="speaker-alias-${index}" value="${escapeHtml(entry.alias)}" />
+                  </div>
+                `).join('')}
+                <button id="save-speaker-labels" class="btn-secondary">Save speaker labels</button>
+                <p id="speaker-labels-status"></p>
+              </div>
               <ul class="transcript-list">
-                ${rows.map((row) => `<li><strong>${row.speaker}</strong> <small>${row.timeRange}</small><p>${row.text}</p></li>`).join('')}
+                ${blocks.map((block) => `
+                  <li>
+                    <strong>${escapeHtml(block.speaker)}</strong>
+                    <small>${escapeHtml(block.timeRange)}</small>
+                    <p>${escapeHtml(block.text).replaceAll('\n', '<br />')}</p>
+                  </li>
+                `).join('')}
               </ul>
             </section>
           `;
+          bindTranscriptInteractions = () => {
+            const saveSpeakerLabels = async () => {
+              const payload = {};
+              aliases.forEach((entry, index) => {
+                const inputNode = document.getElementById(`speaker-alias-${index}`);
+                if (!inputNode) return;
+                const value = String(inputNode.value ?? '').trim();
+                if (value.length === 0) return;
+                payload[entry.speakerKey] = value;
+              });
+              try {
+                await callApi(`/api/v1/jobs/${jobId}/transcript/speaker-labels`, {
+                  method: 'PUT',
+                  body: JSON.stringify({
+                    base_version: transcriptVersion,
+                    speaker_labels: payload,
+                    edit_reason: 'Speaker labels updated',
+                  }),
+                });
+                const statusNode = document.getElementById('speaker-labels-status');
+                if (statusNode) statusNode.textContent = 'saved';
+                await loadRoute();
+              } catch (problem) {
+                const statusNode = document.getElementById('speaker-labels-status');
+                if (statusNode) statusNode.textContent = sanitizedError(problem);
+                if (problem?.status_code === 409) {
+                  await loadRoute();
+                }
+              }
+            };
+
+            const button = document.getElementById('save-speaker-labels');
+            if (button) {
+              button.onclick = () => {
+                void saveSpeakerLabels();
+              };
+            }
+          };
         } catch (problem) {
           transcriptPanel = `<p class="error">${sanitizedError(problem)}</p>`;
         }
@@ -320,6 +400,7 @@ async function loadRoute({ fromPoll = false } = {}) {
         <details><summary>${t('errors')}</summary><p class="error" id="job-error"></p></details>
         ${transcriptPanel}
       `;
+      bindTranscriptInteractions();
 
       const setJobError = (problem) => {
         const errorNode = document.getElementById('job-error');
@@ -428,6 +509,9 @@ async function loadRoute({ fromPoll = false } = {}) {
           <div class="input-row"><label>suppress_tokens</label><input id="ts-suppress-tokens" /></div>
           <div class="input-row"><label>initial_prompt</label><input id="ts-initial-prompt" /></div>
           <div class="input-row"><label>condition_on_previous_text</label><input id="ts-condition-on-previous-text" type="checkbox" /></div>
+          <div class="input-row"><label>chunk_size</label><input id="ts-chunk-size" type="number" step="1" /></div>
+          <div class="input-row"><label>vad_onset</label><input id="ts-vad-onset" type="number" step="0.001" /></div>
+          <div class="input-row"><label>vad_offset</label><input id="ts-vad-offset" type="number" step="0.001" /></div>
           <button id="save-transcription-settings">${t('create')}</button>
           <p id="transcription-settings-status"></p>
         </div>
@@ -442,6 +526,9 @@ async function loadRoute({ fromPoll = false } = {}) {
       document.getElementById('ts-suppress-tokens').value = String(options.suppress_tokens ?? '');
       document.getElementById('ts-initial-prompt').value = String(options.initial_prompt ?? '');
       document.getElementById('ts-condition-on-previous-text').checked = Boolean(options.condition_on_previous_text);
+      document.getElementById('ts-chunk-size').value = String(options.chunk_size);
+      document.getElementById('ts-vad-onset').value = String(options.vad_onset);
+      document.getElementById('ts-vad-offset').value = String(options.vad_offset);
 
       document.getElementById('save-transcription-settings').onclick = async () => {
         const payload = {
@@ -455,6 +542,9 @@ async function loadRoute({ fromPoll = false } = {}) {
           suppress_tokens: document.getElementById('ts-suppress-tokens').value,
           initial_prompt: document.getElementById('ts-initial-prompt').value,
           condition_on_previous_text: document.getElementById('ts-condition-on-previous-text').checked,
+          chunk_size: document.getElementById('ts-chunk-size').value,
+          vad_onset: document.getElementById('ts-vad-onset').value,
+          vad_offset: document.getElementById('ts-vad-offset').value,
         };
         try {
           await saveTranscriptionSettings({ callApi, decodingOptions: payload });

@@ -5,6 +5,7 @@ export async function createAndQueueJobUpload({
   uploadFileToPresignedUrl,
   tenantId,
   file,
+  language = 'de',
   retentionMonths = 12,
   idempotencyKeyFactory = () => globalThis.crypto.randomUUID(),
   onUploadProgress = null,
@@ -25,6 +26,7 @@ export async function createAndQueueJobUpload({
       content_type: contentType,
       size_bytes: file.size,
       retention_months: retentionMonths,
+      language,
     }),
   });
 

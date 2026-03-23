@@ -276,6 +276,7 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(current.version, 1)
             self.assertEqual(current.segments[0]["speaker"], "SPEAKER_00")
             self.assertEqual(current.segments[0]["text"], "Hallo")
+            self.assertEqual(current.speaker_labels, {})
 
     def test_transcript_repository_save_new_version_enforces_optimistic_locking(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -302,6 +303,7 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             assert latest is not None
             self.assertEqual(latest.version, 2)
             self.assertEqual(latest.segments[0]["text"], "Edited")
+            self.assertEqual(latest.speaker_labels, {})
 
             with self.assertRaises(TranscriptConflictError):
                 repo.save_new_version(
@@ -310,6 +312,40 @@ class InfrastructureAdaptersTests(unittest.TestCase):
                     expected_base_version=1,
                     segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Stale"}],
                 )
+
+    def test_transcript_repository_persists_speaker_label_snapshots_per_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_alias_1",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+
+            version_2 = repo.save_new_version(
+                tenant_id="tenant-a",
+                job_id="job_alias_1",
+                expected_base_version=1,
+                segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_01", "text": "Hallo"}],
+                speaker_labels={"SPEAKER_01": "Patrick"},
+            )
+            self.assertEqual(version_2, 2)
+
+            current = repo.get_current("tenant-a", "job_alias_1")
+            assert current is not None
+            self.assertEqual(current.speaker_labels, {"SPEAKER_01": "Patrick"})
+
+            version_1 = repo.get_version("tenant-a", "job_alias_1", 1)
+            assert version_1 is not None
+            self.assertEqual(version_1["speaker_labels"], {})
+            version_2_payload = repo.get_version("tenant-a", "job_alias_1", 2)
+            assert version_2_payload is not None
+            self.assertEqual(version_2_payload["speaker_labels"], {"SPEAKER_01": "Patrick"})
 
     def test_delete_helpers_remove_worker_artifacts_and_transcript_versions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

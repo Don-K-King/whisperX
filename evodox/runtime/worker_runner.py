@@ -37,6 +37,7 @@ from evodox.jobs.transcription_settings_service import safe_worker_decoding_opti
 LOGGER = logging.getLogger("evodox.runtime.worker_runner")
 
 _DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+_ENFORCED_WHISPERX_MODEL = "large-v3"
 _DIARIZATION_MODEL_ALIASES = {
     "pyannote/speaker-diarization": _DEFAULT_DIARIZATION_MODEL,
 }
@@ -56,7 +57,7 @@ class WorkerRuntimeSettings:
     max_ticks: int | None = None
     object_storage_base_url: str = "http://object-storage:9000"
     object_storage_bucket: str = "uploads"
-    whisperx_model: str = "tiny"
+    whisperx_model: str = _ENFORCED_WHISPERX_MODEL
     whisperx_device: str = "cuda"
     whisperx_compute_type: str = "float16"
     whisperx_device_index: int = 0
@@ -90,7 +91,7 @@ class WorkerRuntimeSettings:
         max_ticks = _parse_optional_positive_int(source.get("WORKER_MAX_TICKS", ""), "WORKER_MAX_TICKS")
         object_storage_base_url = source.get("WORKER_OBJECT_STORAGE_BASE_URL", "http://object-storage:9000").strip()
         object_storage_bucket = source.get("WORKER_OBJECT_STORAGE_BUCKET", "uploads").strip()
-        whisperx_model = source.get("WORKER_WHISPERX_MODEL", "tiny").strip()
+        whisperx_model = source.get("WORKER_WHISPERX_MODEL", _ENFORCED_WHISPERX_MODEL).strip()
         whisperx_device = source.get("WORKER_WHISPERX_DEVICE", "cuda").strip().lower()
         whisperx_compute_type = source.get("WORKER_WHISPERX_COMPUTE_TYPE", "float16").strip().lower()
         whisperx_device_index = _parse_non_negative_int(
@@ -143,7 +144,7 @@ class WorkerRuntimeSettings:
             max_ticks=max_ticks,
             object_storage_base_url=object_storage_base_url,
             object_storage_bucket=object_storage_bucket,
-            whisperx_model=whisperx_model or "tiny",
+            whisperx_model=whisperx_model or _ENFORCED_WHISPERX_MODEL,
             whisperx_device=whisperx_device or "cuda",
             whisperx_compute_type=whisperx_compute_type or "float16",
             whisperx_device_index=whisperx_device_index,
@@ -186,6 +187,11 @@ class WorkerRuntime:
         self.job_repository = SQLiteJobRepository(self.settings.db_path)
         self.outbox = SQLiteOutbox(self.settings.db_path)
         self.audit_log = JsonlAuditLog(self.settings.audit_log_path)
+        model_settings, model_forced_event = _enforce_whisperx_model(self.settings)
+        self.settings = model_settings
+        if model_forced_event is not None:
+            self.audit_log.append(model_forced_event)
+            LOGGER.warning("worker.runtime.model_forced", extra={"event": model_forced_event})
         effective_settings, fallback_event = _resolve_effective_whisperx_settings(
             self.settings,
             cuda_available_fn=cuda_available_fn or _default_cuda_available,
@@ -750,6 +756,12 @@ def _build_whisperx_command(
         "False",
         "--vad_method",
         settings.whisperx_vad_method,
+        "--vad_onset",
+        str(decoding_options["vad_onset"]),
+        "--vad_offset",
+        str(decoding_options["vad_offset"]),
+        "--chunk_size",
+        str(decoding_options["chunk_size"]),
         "--temperature",
         str(decoding_options["temperature"]),
         "--beam_size",
@@ -769,6 +781,9 @@ def _build_whisperx_command(
         "--condition_on_previous_text",
         str(bool(decoding_options["condition_on_previous_text"])),
     ]
+    language = str(decoding_options.get("language") or "auto").strip().lower()
+    if language and language != "auto":
+        command.extend(["--language", language])
     prompt = str(decoding_options.get("initial_prompt") or "")
     if prompt:
         command.extend(["--initial_prompt", prompt])
@@ -968,6 +983,21 @@ def _resolve_effective_whisperx_settings(
         "ts": datetime.now(tz=timezone.utc).isoformat(),
     }
     return fallback_settings, event
+
+
+def _enforce_whisperx_model(settings: WorkerRuntimeSettings) -> tuple[WorkerRuntimeSettings, dict[str, Any] | None]:
+    if settings.mode != "whisperx":
+        return settings, None
+    if settings.whisperx_model == _ENFORCED_WHISPERX_MODEL:
+        return settings, None
+    enforced = replace(settings, whisperx_model=_ENFORCED_WHISPERX_MODEL)
+    event = {
+        "action": "worker.runtime.model_forced",
+        "configured_model": settings.whisperx_model,
+        "effective_model": enforced.whisperx_model,
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    return enforced, event
 
 
 def _install_signal_handlers(stop_event: threading.Event, *, signal_module: Any, logger: logging.Logger) -> None:

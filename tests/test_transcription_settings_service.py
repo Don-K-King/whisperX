@@ -25,6 +25,10 @@ class TranscriptionSettingsServiceTests(unittest.TestCase):
         self.assertEqual(result["decoding_options"]["beam_size"], 5)
         self.assertEqual(result["decoding_options"]["temperature"], 0.0)
         self.assertEqual(result["decoding_options"]["condition_on_previous_text"], False)
+        self.assertEqual(result["decoding_options"]["chunk_size"], 30)
+        self.assertEqual(result["decoding_options"]["vad_onset"], 0.5)
+        self.assertEqual(result["decoding_options"]["vad_offset"], 0.363)
+        self.assertEqual(result["decoding_options"]["language"], "auto")
         self.assertEqual(len(self.audit_log), 1)
         self.assertEqual(self.audit_log[0]["action"], "transcription_settings.read")
         self.assertNotIn("initial_prompt", self.audit_log[0])
@@ -44,12 +48,18 @@ class TranscriptionSettingsServiceTests(unittest.TestCase):
                 "suppress_tokens": "-1,12",
                 "initial_prompt": "Fachsprache beachten",
                 "condition_on_previous_text": True,
+                "chunk_size": 24,
+                "vad_onset": 0.4,
+                "vad_offset": 0.3,
+                "language": "de",
             },
             settings_store=self.store,
             audit_log=self.audit_log,
         )
 
         self.assertEqual(update["decoding_options"]["temperature"], 0.4)
+        self.assertEqual(update["decoding_options"]["chunk_size"], 24)
+        self.assertEqual(update["decoding_options"]["language"], "de")
         fetched = get_transcription_settings(
             tenant_id="tenant-a",
             actor_id="admin-1",
@@ -58,6 +68,8 @@ class TranscriptionSettingsServiceTests(unittest.TestCase):
         )
         self.assertEqual(fetched["decoding_options"]["temperature"], 0.4)
         self.assertEqual(fetched["decoding_options"]["suppress_tokens"], "-1,12")
+        self.assertEqual(fetched["decoding_options"]["vad_onset"], 0.4)
+        self.assertEqual(fetched["decoding_options"]["vad_offset"], 0.3)
         update_events = [e for e in self.audit_log if e.get("action") == "transcription_settings.updated"]
         self.assertEqual(len(update_events), 1)
         self.assertNotIn("initial_prompt", update_events[0])
@@ -96,7 +108,28 @@ class TranscriptionSettingsServiceTests(unittest.TestCase):
             )
         self.assertEqual(exc.exception.error_code, "transcription_settings.invalid_payload")
 
+    def test_update_rejects_out_of_range_chunk_size(self) -> None:
+        with self.assertRaises(TranscriptionSettingsValidationError) as exc:
+            update_transcription_settings(
+                tenant_id="tenant-a",
+                actor_id="admin-1",
+                payload={"chunk_size": 2},
+                settings_store=self.store,
+                audit_log=self.audit_log,
+            )
+        self.assertEqual(exc.exception.error_code, "transcription_settings.invalid_payload")
+
+    def test_update_rejects_unsupported_language(self) -> None:
+        with self.assertRaises(TranscriptionSettingsValidationError) as exc:
+            update_transcription_settings(
+                tenant_id="tenant-a",
+                actor_id="admin-1",
+                payload={"language": "xx"},
+                settings_store=self.store,
+                audit_log=self.audit_log,
+            )
+        self.assertEqual(exc.exception.error_code, "transcription_settings.invalid_payload")
+
 
 if __name__ == "__main__":
     unittest.main()
-

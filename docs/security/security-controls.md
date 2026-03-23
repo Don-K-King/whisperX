@@ -14,6 +14,14 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Query-Guards und Service-Layer-Prüfungen
 - Export nur innerhalb Tenant Scope
 - Tenant-scoped Object Keys in MinIO
+- Speaker-Aliase werden als Daten behandelt und nur tenant-/job-scoped gespeichert; kein globales Alias-Reuse.
+
+## Transcript-Aliase und UI-Rendering
+- Speaker-Label-Updates validieren Roh-Labels und Anzeigenamen streng: keine Steuerzeichen, keine leeren Werte, Trim auf beiden Seiten.
+- Alias-Updates sind optimistic-locking-basiert und erzeugen auditierbare Versionsspruenge statt stiller Ueberschreibung.
+- Task-View-Rendering escaped Alias-Namen und Transcript-Text, damit Speaker-Namen nicht als HTML oder Anweisungen interpretiert werden.
+- Gruppierung der Transcript-Bloecke basiert auf Roh-Speaker-Wechseln; Alias-Gleichheit darf nicht zu stiller Segmentfusion fuehren.
+- Audit-Events muessen Alias-Reads und Alias-Updates nachvollziehbar machen, mindestens mit `tenant_id`, `job_id`, `transcript_version` und `actor_id`.
 
 ## Upload- und Verarbeitungs-Sicherheit
 - Dateityp-/Signaturprüfung (MIME + Magic Bytes)
@@ -105,6 +113,7 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Optimistic Locking erzwingt konsistente Parallel-Edits (`base_version`), Konflikte werden ohne stilles Überschreiben abgewiesen.
 - Segmenttexte werden auf unzulässige Steuerzeichen geprüft; missbräuchliche Inhalte werden abgelehnt.
 - Export-Format ist strikt allowlisted (`txt|json|srt|vtt`); unbekannte Formate werden geblockt.
+- Speaker-Alias-Updates folgen denselben Tenant- und Conflict-Guards wie Transcript-Edits.
 - Textbasierte Exportformate behandeln Transcript-Inhalte als Daten (Escaping), um XSS-/Markup-Injection zu erschweren.
 - Tenant-scoped Transcript-Lookup vor Export verhindert Cross-Tenant-Datenabfluss.
 
@@ -184,3 +193,10 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Queueing Snapshot Integrity.** Beim `complete-upload` wird ein validierter Snapshot pro Job persistiert und in Outbox/Resume konsistent weitergegeben.
 - **Control: Defensive Worker Consumption.** Worker uebernimmt nur validierte Whitelist-Felder in WhisperX-CLI-Flags; invalide Payloads fallen auf sichere Defaults zurueck.
 - **Control: Prompt Confidentiality in Audit.** `initial_prompt` wird nicht im Klartext auditiert; nur Hash/Laenge werden protokolliert.
+
+## 2026-03-23 - Controls fuer language + chunk/vad + model forcing
+- **Control: Harte Modell-Governance.** WhisperX-Worker akzeptiert kein freies Modell-Override; effektives Modell ist immer large-v3 und Override-Versuche werden als worker.runtime.model_forced auditiert.
+- **Control: Strikte Sprach-Whitelist.** Job-Input language ist auf auto|de|en|fr|es|it begrenzt; unbekannte Werte werden mit 422 abgewiesen.
+- **Control: Parameter-Range-Validation.** chunk_size (5..60), vad_onset (0.0..1.0), vad_offset (0.0..1.0) werden serverseitig validiert, bevor sie in Queue/Worker gelangen.
+- **Control: Data-not-code Behandlung.** Neue Transcription-Optionen werden ausschliesslich als Daten im Snapshot verarbeitet; keine dynamische Ausfuehrung von Input-Inhalten.
+- **Control: Defensive Worker Consumption.** Ungueltige Snapshot-/Settings-Payloads fallen weiterhin auf sichere Defaults zurueck (safe_worker_decoding_options).

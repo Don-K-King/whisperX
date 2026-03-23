@@ -84,10 +84,73 @@ export function buildCompleteUploadPayload({ tenantId, jobId, filename, uploadSe
 
 export function mapTranscriptToSpeakerRows(payload) {
   const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  const speakerLabels = normalizeSpeakerLabels(payload?.speaker_labels);
   return segments.map((segment) => ({
-    speaker: String(segment?.speaker ?? 'UNKNOWN'),
+    speaker: resolveSpeakerLabel({
+      speakerKey: String(segment?.speaker ?? 'UNKNOWN'),
+      speakerLabels,
+    }),
+    speakerKey: String(segment?.speaker ?? 'UNKNOWN'),
     timeRange: `${formatSeconds(segment?.start) ?? '00:00:00'} - ${formatSeconds(segment?.end) ?? '00:00:00'}`,
     text: String(segment?.text ?? ''),
+  }));
+}
+
+export function mapTranscriptToSpeakerBlocks(payload) {
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  const speakerLabels = normalizeSpeakerLabels(payload?.speaker_labels);
+  const blocks = [];
+
+  for (const segment of segments) {
+    const speakerKey = String(segment?.speaker ?? 'UNKNOWN');
+    const text = String(segment?.text ?? '');
+    const start = Number(segment?.start ?? 0);
+    const end = Number(segment?.end ?? 0);
+    const lastBlock = blocks[blocks.length - 1];
+    if (lastBlock && lastBlock.speakerKey === speakerKey) {
+      lastBlock.end = end;
+      lastBlock.lines.push(text);
+      continue;
+    }
+    blocks.push({
+      speakerKey,
+      speaker: resolveSpeakerLabel({ speakerKey, speakerLabels }),
+      start,
+      end,
+      lines: [text],
+    });
+  }
+
+  return blocks.map((block) => ({
+    speakerKey: block.speakerKey,
+    speaker: block.speaker,
+    timeRange: `${formatSeconds(block.start)} - ${formatSeconds(block.end)}`,
+    text: block.lines.join('\n'),
+  }));
+}
+
+export function mapTranscriptToSpeakerAliases(payload) {
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  const speakerLabels = normalizeSpeakerLabels(payload?.speaker_labels);
+  const uniqueSpeakerKeys = [];
+  const seen = new Set();
+
+  for (const segment of segments) {
+    const speakerKey = String(segment?.speaker ?? 'UNKNOWN');
+    if (seen.has(speakerKey)) continue;
+    seen.add(speakerKey);
+    uniqueSpeakerKeys.push(speakerKey);
+  }
+
+  for (const speakerKey of Object.keys(speakerLabels)) {
+    if (seen.has(speakerKey)) continue;
+    seen.add(speakerKey);
+    uniqueSpeakerKeys.push(speakerKey);
+  }
+
+  return uniqueSpeakerKeys.map((speakerKey) => ({
+    speakerKey,
+    alias: speakerLabels[speakerKey] ?? '',
   }));
 }
 
@@ -160,4 +223,23 @@ function formatSeconds(rawValue) {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function normalizeSpeakerLabels(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return {};
+  }
+  const normalized = {};
+  for (const [rawKey, rawLabel] of Object.entries(rawValue)) {
+    const speakerKey = String(rawKey ?? '').trim();
+    const speakerLabel = String(rawLabel ?? '').trim();
+    if (!speakerKey || !speakerLabel) continue;
+    normalized[speakerKey] = speakerLabel;
+  }
+  return normalized;
+}
+
+function resolveSpeakerLabel({ speakerKey, speakerLabels }) {
+  const label = speakerLabels[speakerKey];
+  return label ? label : speakerKey;
 }

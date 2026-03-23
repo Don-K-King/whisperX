@@ -1,95 +1,99 @@
-# Test Strategy (TDD) – inkl. Edge/Security-Tests pro Entwicklungsschritt
+﻿# Test Strategy (TDD) â€“ inkl. Edge/Security-Tests pro Entwicklungsschritt
 
 Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 
 ## 1) Verbindlicher Ablauf je Arbeitspaket
 1. Akzeptanzkriterien + Security-Akzeptanzkriterien festlegen
-2. Edge-Case-Katalog für das Paket definieren
+2. Edge-Case-Katalog fÃ¼r das Paket definieren
 3. Failing Tests zuerst schreiben (Red)
 4. Minimal implementieren (Green)
-5. Refactor ohne Verhaltensänderung
+5. Refactor ohne VerhaltensÃ¤nderung
 6. Security-Review + Doku-Update als DoD-Pflicht
 
-## 2) Testebenen (für alle Schritte)
+## 2) Testebenen (fÃ¼r alle Schritte)
 - **Unit:** Business-Regeln (Tenant-Scoping, Retention, Statuswechsel, Validatoren)
-- **Integration:** API↔DB, API↔Queue, Worker↔Storage, Auth-Flow gegen Keycloak-Testumgebung
+- **Integration:** APIâ†”DB, APIâ†”Queue, Workerâ†”Storage, Auth-Flow gegen Keycloak-Testumgebung
 - **Contract:** API- und Event-Schema-Tests
-- **E2E:** Upload → Queue → Verarbeitung → Edit → Export
+- **E2E:** Upload â†’ Queue â†’ Verarbeitung â†’ Edit â†’ Export
 - **Security/Abuse:** Negative Tests (AuthZ-Bypass, Rate-Limit-Evasion, Payload-Manipulation)
 
 ## 3) Edge-/Abuse-Testkatalog (global verpflichtend)
 - **Prompt-Injection/Instruction-Injection:**
-  - Transkript-/Metadateninhalte mit „ignore previous instructions“, Script-Tags, Command-Mustern dürfen keine privilegierten Aktionen auslösen.
+  - Transkript-/Metadateninhalte mit â€žignore previous instructionsâ€œ, Script-Tags, Command-Mustern dÃ¼rfen keine privilegierten Aktionen auslÃ¶sen.
   - Inhalte werden als Daten behandelt, nie als Steueranweisung.
 - **Rate-Limiting & Abuse:**
   - Burst- und Sustained-Traffic-Tests pro Tenant/Benutzer/IP.
-  - Retry-Stürme (Client + Worker) dürfen System nicht destabilisieren.
+  - Retry-StÃ¼rme (Client + Worker) dÃ¼rfen System nicht destabilisieren.
 - **Unkonventionelle Eingaben:**
-  - Sehr lange Dateinamen, Unicode/RTL, Nullbytes, doppelte Extensions, ungültige MIME-Header.
-  - Korruptes Media, unvollständige Chunks, Out-of-order Chunks.
+  - Sehr lange Dateinamen, Unicode/RTL, Nullbytes, doppelte Extensions, ungÃ¼ltige MIME-Header.
+  - Korruptes Media, unvollstÃ¤ndige Chunks, Out-of-order Chunks.
 - **Eingabevalidierung:**
-  - Schema-Validation für API-Inputs (z. B. `retention_months` Grenzen, Job-Parameter-Whitelists).
+  - Schema-Validation fÃ¼r API-Inputs (z. B. `retention_months` Grenzen, Job-Parameter-Whitelists).
   - Path Traversal, SQLi-/NoSQLi-Muster, Header Injection, JSON Bombs.
 
 ## 4) Entwicklungsschritt-spezifische Teststrategie
 
-### Schritt 1 – Architektur- und Governance-Festlegung
+### Schritt 1 â€“ Architektur- und Governance-Festlegung
 - DoR: Security- und Testanforderungen pro Komponente dokumentiert.
-- Tests: Dokumentations-Qualitätschecks (Vollständigkeit, Konsistenz der Testpflichten).
-- Edge-Fokus: Kein Schritt ohne definierten Edge-Testkatalog zulässig.
+- Tests: Dokumentations-QualitÃ¤tschecks (VollstÃ¤ndigkeit, Konsistenz der Testpflichten).
+- Edge-Fokus: Kein Schritt ohne definierten Edge-Testkatalog zulÃ¤ssig.
 
-### Schritt 2 – Repo-/Infra-Struktur (On-Prem Docker)
+### Schritt 2 â€“ Repo-/Infra-Struktur (On-Prem Docker)
 - Integration: Container-Netzwerk, Secrets-Mounts, Healthchecks.
 - Edge/Security:
-  - Fehlkonfigurationen (offene Ports, Default-Passwörter) müssen fehlschlagen.
+  - Fehlkonfigurationen (offene Ports, Default-PasswÃ¶rter) mÃ¼ssen fehlschlagen.
   - Image- und Dependency-Scans als Gate.
   - Rate-Limit-Konfiguration am Proxy automatisiert testen.
 
-### Schritt 3 – Auth + Upload Skeleton
+### Schritt 3 â€“ Auth + Upload Skeleton
 - Integration/E2E:
   - OIDC Login, Tenant-Claims, Token-Expiry/Refresh-Verhalten.
   - Chunked Upload Happy Path + Abbruch/Fortsetzen.
 - Edge/Security:
   - AuthZ-Bypass-Versuche (Cross-Tenant IDs, manipulierte Claims).
-  - Upload-Fuzzing: MIME-Spoofing, oversized files, ungültige Chunks.
+  - Upload-Fuzzing: MIME-Spoofing, oversized files, ungÃ¼ltige Chunks.
   - Rate-Limit- und Throttling-Tests gegen Upload-/Job-Endpunkte.
 
-### Schritt 4 – Processing Pipeline (Queue + Worker + Skalierung)
+### Schritt 4 â€“ Processing Pipeline (Queue + Worker + Skalierung)
 - Integration:
   - Queue-Routing (gpu-long/gpu-standard/cpu-short), Retry/Backoff/DLQ.
-  - Long-running Jobs (mehrstündige MP4) unter begrenzter GPU.
+  - Long-running Jobs (mehrstÃ¼ndige MP4) unter begrenzter GPU.
 - Edge/Security:
   - Poison Messages, Duplicate Delivery, Worker-Restart-Recovery.
-  - Prompt-Injection-artige Inhalte in Transkripten dürfen keine Systemlogik beeinflussen.
+  - Prompt-Injection-artige Inhalte in Transkripten dÃ¼rfen keine Systemlogik beeinflussen.
   - Tenant-Fairness unter Last (keine Starvation eines Tenants).
 
-### Schritt 5 – Transcript Edit + Export
+### Schritt 5 â€“ Transcript Edit + Export
 - E2E:
   - Versionierung, optimistic locking, Export-Erzeugung.
+- E2E/Integration:
+  - Speaker-Alias-Snapshot pro Transcript-Version.
+  - Blockbildung in der Task View: gleiche Roh-Speaker in Folge werden zusammengefasst.
 - Edge/Security:
   - XSS/HTML-Injection in Editoren und Exportvorschau.
   - Export-Zugriff nur im Tenant Scope.
   - Malformed Unicode/Control Characters in Transkripttexten.
+  - Alias-Input mit Steuerzeichen, leeren Werten und Cross-Tenant-Scoping wird abgewiesen.
 
-### Schritt 6 – Retention, Compliance, Betriebshärtung
+### Schritt 6 â€“ Retention, Compliance, BetriebshÃ¤rtung
 - Integration:
   - `EVIDOX_DEFAULT_RETENTION_MONTHS` Default und Policy-Override.
-  - Löschjobs inkl. Audit-Nachweis.
+  - LÃ¶schjobs inkl. Audit-Nachweis.
 - Edge/Security:
   - Manipulationsversuche an Retention-Feldern.
-  - Restore-Tests mit Tenant-Konsistenzprüfung.
+  - Restore-Tests mit Tenant-KonsistenzprÃ¼fung.
   - Incident-Runbook-Drills (Queue-Stau, AuthZ-Anomalien).
 
 ## 5) Regression-Gates (verbindlich)
-- Vollständige Regression bei Änderungen an Pipeline, Build, Architektur, Mandantenmodell, Queueing.
-- Für reine Doku-Änderungen: keine Runtime-Regression erforderlich, aber Konsistenzchecks der Doku verpflichtend.
+- VollstÃ¤ndige Regression bei Ã„nderungen an Pipeline, Build, Architektur, Mandantenmodell, Queueing.
+- FÃ¼r reine Doku-Ã„nderungen: keine Runtime-Regression erforderlich, aber Konsistenzchecks der Doku verpflichtend.
 
 
-## 6) Freeze-Gates für Implementierungsstart (Schritt 3)
+## 6) Freeze-Gates fÃ¼r Implementierungsstart (Schritt 3)
 - Keine offenen Muss-Anforderungen.
-- API-Operationen vollständig mit AuthZ/Tenant/Validierung dokumentiert.
-- Datenentitäten vollständig mit Retention/Audit-Regeln dokumentiert.
-- Kritische Risiken mit Gegenmaßnahmen und Testfällen hinterlegt.
+- API-Operationen vollstÃ¤ndig mit AuthZ/Tenant/Validierung dokumentiert.
+- DatenentitÃ¤ten vollstÃ¤ndig mit Retention/Audit-Regeln dokumentiert.
+- Kritische Risiken mit GegenmaÃŸnahmen und TestfÃ¤llen hinterlegt.
 
 
 ## 7) Gate-Profile (CI-Blocker) je Entwicklungsschritt
@@ -101,7 +105,7 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 
 ### Schritt 4 (Pipeline + Queue + Worker)
 - Pflicht-Gates: Lint/Schema, Unit, Integration, Contract, Security/Abuse, Regression.
-- Blocker: DLQ/Retry/Poison-Message-Resilience-Test schlägt fehl; Tenant-Fairness nicht erfüllt.
+- Blocker: DLQ/Retry/Poison-Message-Resilience-Test schlÃ¤gt fehl; Tenant-Fairness nicht erfÃ¼llt.
 - Verantwortlich: Worker-Team + Ops + QA.
 
 ### Schritt 5 (Edit + Export)
@@ -111,8 +115,14 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 
 ### Schritt 6 (Retention + Compliance)
 - Pflicht-Gates: Lint/Schema, Unit, Integration, Security/Abuse, E2E/Operations-Drills, Regression.
-- Blocker: fehlender Audit-Nachweis für Löschpfade oder Restore-Konsistenzverletzung.
+- Blocker: fehlender Audit-Nachweis fÃ¼r LÃ¶schpfade oder Restore-Konsistenzverletzung.
 - Verantwortlich: Ops + API + Security + QA.
+
+## WP-5.1/5.2 Nachweis (Transcript-Versionierung + Speaker-Aliase)
+- Unit/Integration: `tests/test_transcript_service.py` und neue Frontend-Tests decken Alias-Snapshot, Blockbildung und Conflict-Faelle ab.
+- Contract/Core HTTP: `tests/test_transcript_http_adapter.py` prueft GET/PUT-Transcript-Responses inklusive Speaker-Label-Update.
+- Security/Abuse: Alias-Injection, Cross-Tenant-Missbrauch, Control Characters und falsche Blockfusion werden explizit getestet.
+- Ergebnisnachweis: Versionierte Aliase und gruppierte Speaker-Bloecke muessen im UI und in der API konsistent sein.
 
 ## 2026-03-22 - Erweiterung fuer Midpoint-Checkpointing und terminalen Cancel
 - API-Contract Pflichttests: `POST /cancel` fuer erlaubte/verbotene Zustaende, tenant-scope, RBAC, idempotentes Verhalten und `resume` auf `canceled` => `409`.
@@ -131,3 +141,11 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
   - Compose/ENV-Artefakte pruefen GPU-First-Defaults und dedizierte Multi-GPU-Service-Definitionen.
 - Regression-Gate bleibt verpflichtend:
   - Vollstaendige Python-Suite (`test_*.py`) plus Frontend-Tests (`frontend/tests/*.test.js`) bei Pipeline-/Build-/Architektur-Aenderungen.
+
+
+## 2026-03-23 - Erweiterung fuer language + chunk/vad + model forcing
+- Pflicht Unit-Tests: serverseitige Validation fuer language, chunk_size, vad_onset, vad_offset inkl. Negativfaelle.
+- Pflicht Integrationstests: POST /api/v1/jobs persistiert language im Job-Snapshot; complete-upload merged Snapshot mit Tenant-Defaults (Job-Wert gewinnt).
+- Pflicht Worker-Tests: Modell-Erzwingung auf large-v3 inkl. Audit-Event worker.runtime.model_forced.
+- Pflicht Worker-Command-Tests: --chunk_size, --vad_onset, --vad_offset werden gemappt; --language nur bei Sprache != auto.
+- Pflicht Frontend-Tests: Upload-Flow sendet language; Settings-Flow validiert neue Felder clientseitig.

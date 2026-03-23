@@ -9,6 +9,10 @@ export const DEFAULT_DECODING_OPTIONS = {
   suppress_tokens: '-1',
   initial_prompt: '',
   condition_on_previous_text: false,
+  chunk_size: 30,
+  vad_onset: 0.5,
+  vad_offset: 0.363,
+  language: 'auto',
 };
 
 const FLOAT_RANGES = {
@@ -18,11 +22,15 @@ const FLOAT_RANGES = {
   compression_ratio_threshold: [0.5, 5.0],
   logprob_threshold: [-5.0, 0.0],
   no_speech_threshold: [0.0, 1.0],
+  vad_onset: [0.0, 1.0],
+  vad_offset: [0.0, 1.0],
 };
 
 const INT_RANGES = {
   beam_size: [1, 10],
+  chunk_size: [5, 60],
 };
+const ALLOWED_LANGUAGES = new Set(['auto', 'de', 'en', 'fr', 'es', 'it']);
 
 function validationError(message){
   const err = new Error(message);
@@ -89,6 +97,11 @@ export function validateDecodingOptions(input){
   if ('condition_on_previous_text' in input){
     normalized.condition_on_previous_text = normalizeCondition(input.condition_on_previous_text);
   }
+  if ('language' in input){
+    const value = String(input.language ?? '').trim().toLowerCase();
+    if (!ALLOWED_LANGUAGES.has(value)) throw validationError('language not supported');
+    normalized.language = value;
+  }
 
   return normalized;
 }
@@ -113,4 +126,3 @@ export async function saveTranscriptionSettings({ callApi, decodingOptions }){
     decoding_options: validateDecodingOptions(response?.decoding_options ?? payload),
   };
 }
-

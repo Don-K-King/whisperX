@@ -47,6 +47,10 @@ test('saveTranscriptionSettings validates and persists options via PUT', async (
       suppress_tokens: '-1,12',
       initial_prompt: 'Fachsprache',
       condition_on_previous_text: true,
+      chunk_size: 24,
+      vad_onset: 0.4,
+      vad_offset: 0.3,
+      language: 'de',
     },
   });
 
@@ -55,6 +59,10 @@ test('saveTranscriptionSettings validates and persists options via PUT', async (
   assert.equal(apiCalls[0][1].method, 'PUT');
   assert.equal(result.decoding_options.beam_size, 4);
   assert.equal(result.decoding_options.condition_on_previous_text, true);
+  assert.equal(result.decoding_options.chunk_size, 24);
+  assert.equal(result.decoding_options.vad_onset, 0.4);
+  assert.equal(result.decoding_options.vad_offset, 0.3);
+  assert.equal(result.decoding_options.language, 'de');
 });
 
 test('validateDecodingOptions rejects out-of-range values', () => {
@@ -71,3 +79,9 @@ test('validateDecodingOptions rejects malformed suppress_tokens', () => {
   );
 });
 
+test('validateDecodingOptions rejects chunk_size outside allowed range', () => {
+  assert.throws(
+    () => validateDecodingOptions({ ...DEFAULT_DECODING_OPTIONS, chunk_size: 2 }),
+    (error) => error?.error_code === 'transcription_settings.invalid_payload',
+  );
+});

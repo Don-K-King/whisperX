@@ -172,3 +172,26 @@
   - `docs/testing/screenshots/transcription-settings-validation-error.png`
   - `docs/testing/screenshots/transcription-settings-responsive.png`
 - Bewertung: Screenshot-Pflicht fuer Default-, Validierungs-/Fehler- und Responsive-Zustand erfuellt.
+
+## 2026-03-23 - Regression nach WhisperX large-v3 Erzwingung + Sprachwahl + Chunk/VAD
+- Anlass: Runtime-/API-/UI-Aenderung fuer harte Modellwahl (large-v3), Sprachwahl pro Job und neue Decoding-Parameter (chunk_size, vad_onset, vad_offset).
+- Ausgefuehrt (gezielte Frontend-Tests): node --test frontend/tests/upload_flow.test.js frontend/tests/transcription_settings_flow.test.js.
+- Ergebnis (gezielt Frontend): Gruen.
+- Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
+- Ergebnis (Frontend Regression): Gruen, 23 Tests.
+- Ausgefuehrt (gezielte Backend-Tests): docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_job_create_service tests.test_complete_upload_service tests.test_transcription_settings_service tests.test_worker_runner tests.test_fastapi_http_adapter_integration".
+- Ergebnis (gezielt Backend): Gruen, 65 Tests.
+- Ausgefuehrt (Backend Vollsuite): docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'".
+- Ergebnis (Backend Vollsuite): Gruen, 187 Tests.
+- Bewertung: Keine Regression in bestehenden Lifecycle-/Queue-/Worker-Pfaden; neue Spracheinstellungen und Chunk/VAD-Wiring sind testseitig abgesichert.
+## 2026-03-23 - UI Screenshot-Nachweis (New Job Sprache + Transcription Settings)
+- Anlass: UI-Aenderungen in New-Job-View (Sprach-Dropdown) und Admin-Transcription-Settings (chunk_size, vad_onset, vad_offset).
+- Ausgefuehrt: node scripts/capture_new_job_language_screenshots.mjs.
+- Ausgefuehrt: node scripts/capture_transcription_settings_screenshots.mjs.
+- Ergebnis:
+  - docs/testing/screenshots/new-job-language-default.png
+  - docs/testing/screenshots/new-job-language-responsive.png
+  - docs/testing/screenshots/transcription-settings-default.png
+  - docs/testing/screenshots/transcription-settings-validation-error.png
+  - docs/testing/screenshots/transcription-settings-responsive.png
+- Bewertung: Screenshot-Pflicht fuer betroffene Hauptscreens und relevante Zustaende ist erfuellt.

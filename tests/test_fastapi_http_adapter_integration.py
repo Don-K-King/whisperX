@@ -9,7 +9,9 @@ from evodox.jobs.infrastructure import (
     SQLiteIdempotencyStore,
     SQLiteJobRepository,
     SQLiteOutbox,
+    SQLiteTranscriptRepository,
     SQLiteTenantTranscriptionSettingsStore,
+    SQLiteWorkerArtifactStore,
 )
 from evodox.web.fastapi_adapter import FastAPIAdapterSettings, create_fastapi_app
 
@@ -37,13 +39,14 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "evodox.db"
+            repo = SQLiteJobRepository(db_path)
             app = create_fastapi_app(
                 settings=FastAPIAdapterSettings(
                     expected_issuer="https://keycloak.prod/realms/evodox",
                     expected_audience="evodox-api",
                 ),
                 token_verifier=lambda _token: self._claims(),
-                job_repository=SQLiteJobRepository(db_path),
+                job_repository=repo,
                 upload_session_factory=LocalPresignUploadSessionFactory(
                     base_url="https://minio.local", bucket="uploads"
                 ),
@@ -70,6 +73,54 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["tenant_id"], "tenant-a")
+            created = repo.get("tenant-a", response.json()["job_id"])
+            self.assertIsNotNone(created)
+            self.assertIn('"language": "de"', str(created.get("transcription_options_json")))
+
+    def test_post_jobs_accepts_explicit_language(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            repo = SQLiteJobRepository(db_path)
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(),
+                job_repository=repo,
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+            )
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/jobs",
+                headers={
+                    "Authorization": "Bearer token",
+                    "Idempotency-Key": "idempotent-1235",
+                },
+                json={
+                    "filename": "hearing.mp4",
+                    "content_type": "video/mp4",
+                    "size_bytes": 1234,
+                    "retention_months": 6,
+                    "language": "en",
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            created = repo.get("tenant-a", response.json()["job_id"])
+            self.assertIsNotNone(created)
+            self.assertIn('"language": "en"', str(created.get("transcription_options_json")))
 
 
     def test_get_job_status_happy_path(self):
@@ -383,6 +434,114 @@ class FastAPIAdapterIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 422)
             self.assertEqual(response.json()["detail"]["error_code"], "transcription_settings.invalid_payload")
+
+    def test_put_transcript_speaker_labels_creates_new_transcript_version(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            worker_artifacts = SQLiteWorkerArtifactStore(db_path)
+            worker_artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_transcript_alias_1",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            transcript_repo = SQLiteTranscriptRepository(db_path)
+            current = transcript_repo.get_current("tenant-a", "job_transcript_alias_1")
+            assert current is not None
+            self.assertEqual(current.version, 1)
+
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["user"], tenant_id="tenant-a"),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+            )
+            client = TestClient(app)
+
+            response = client.put(
+                "/api/v1/jobs/job_transcript_alias_1/transcript/speaker-labels",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "base_version": 1,
+                    "speaker_labels": {"SPEAKER_01": "Patrick"},
+                    "edit_reason": "Speaker labels",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["version"], 2)
+
+            transcript = client.get(
+                "/api/v1/jobs/job_transcript_alias_1/transcript",
+                headers={"Authorization": "Bearer token"},
+            )
+            self.assertEqual(transcript.status_code, 200)
+            self.assertEqual(transcript.json()["version"], 2)
+            self.assertEqual(transcript.json()["speaker_labels"]["SPEAKER_01"], "Patrick")
+
+    def test_put_transcript_speaker_labels_is_tenant_scoped(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            worker_artifacts = SQLiteWorkerArtifactStore(db_path)
+            worker_artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_transcript_alias_2",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            transcript_repo = SQLiteTranscriptRepository(db_path)
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(roles=["user"], tenant_id="tenant-b"),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(
+                    base_url="https://minio.local", bucket="uploads"
+                ),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+            )
+            client = TestClient(app)
+
+            response = client.put(
+                "/api/v1/jobs/job_transcript_alias_2/transcript/speaker-labels",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "base_version": 1,
+                    "speaker_labels": {"SPEAKER_01": "Patrick"},
+                    "edit_reason": "Speaker labels",
+                },
+            )
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"]["error_code"], "transcript.not_found")
 
     def test_pause_queued_job_transitions_to_paused(self):
         from fastapi.testclient import TestClient

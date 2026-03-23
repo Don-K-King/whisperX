@@ -17,6 +17,10 @@ DEFAULT_DECODING_OPTIONS: dict[str, Any] = {
     "suppress_tokens": "-1",
     "initial_prompt": "",
     "condition_on_previous_text": False,
+    "chunk_size": 30,
+    "vad_onset": 0.5,
+    "vad_offset": 0.363,
+    "language": "auto",
 }
 
 _FLOAT_RANGES: dict[str, tuple[float, float]] = {
@@ -26,10 +30,14 @@ _FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "compression_ratio_threshold": (0.5, 5.0),
     "logprob_threshold": (-5.0, 0.0),
     "no_speech_threshold": (0.0, 1.0),
+    "vad_onset": (0.0, 1.0),
+    "vad_offset": (0.0, 1.0),
 }
 _INT_RANGES: dict[str, tuple[int, int]] = {
     "beam_size": (1, 10),
+    "chunk_size": (5, 60),
 }
+_ALLOWED_LANGUAGES = frozenset({"auto", "de", "en", "fr", "es", "it"})
 
 
 class TranscriptionSettingsValidationError(Exception):
@@ -137,6 +145,15 @@ def normalize_decoding_options(payload: Any) -> dict[str, Any]:
                 "condition_on_previous_text muss bool sein.",
             )
         normalized["condition_on_previous_text"] = raw
+
+    if "language" in data:
+        language = str(data["language"] or "").strip().lower()
+        if language not in _ALLOWED_LANGUAGES:
+            raise TranscriptionSettingsValidationError(
+                "transcription_settings.invalid_payload",
+                f"language muss einer von {', '.join(sorted(_ALLOWED_LANGUAGES))} sein.",
+            )
+        normalized["language"] = language
 
     return normalized
 
@@ -274,4 +291,3 @@ def _audit_append(audit_log: Any, payload: dict[str, Any]) -> None:
     append = getattr(audit_log, "append", None)
     if callable(append):
         append(payload)
-

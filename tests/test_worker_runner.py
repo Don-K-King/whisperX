@@ -127,6 +127,10 @@ class WorkerRunnerTests(unittest.TestCase):
                 "suppress_tokens": "-1,12",
                 "initial_prompt": "Fachsprache",
                 "condition_on_previous_text": True,
+                "chunk_size": 24,
+                "vad_onset": 0.4,
+                "vad_offset": 0.3,
+                "language": "de",
             },
         )
 
@@ -138,6 +142,30 @@ class WorkerRunnerTests(unittest.TestCase):
         self.assertIn("Fachsprache", command)
         self.assertIn("--condition_on_previous_text", command)
         self.assertIn("True", command)
+        self.assertIn("--chunk_size", command)
+        self.assertIn("24", command)
+        self.assertIn("--vad_onset", command)
+        self.assertIn("0.4", command)
+        self.assertIn("--vad_offset", command)
+        self.assertIn("0.3", command)
+        self.assertIn("--language", command)
+        self.assertIn("de", command)
+
+    def test_build_whisperx_command_omits_language_flag_for_auto(self) -> None:
+        settings = WorkerRuntimeSettings(
+            db_path=Path("/tmp/jobs.db"),
+            mode="whisperx",
+            enable_diarization=False,
+        )
+        command = _build_whisperx_command(
+            media_path=Path("/tmp/demo.wav"),
+            output_dir=Path("/tmp/out"),
+            settings=settings,
+            include_diarization=False,
+            transcription_options={"language": "auto"},
+        )
+
+        self.assertNotIn("--language", command)
 
     def test_build_whisperx_command_ignores_invalid_snapshot_and_uses_defaults(self) -> None:
         settings = WorkerRuntimeSettings(
@@ -537,6 +565,27 @@ class WorkerRunnerTests(unittest.TestCase):
             events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             fallback_events = [event for event in events if event.get("action") == "worker.runtime.gpu_fallback"]
             self.assertEqual(len(fallback_events), 1)
+
+    def test_runtime_forces_large_v3_model_and_audits_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            audit_path = Path(tmpdir) / "worker-audit.jsonl"
+            runtime = WorkerRuntime(
+                settings=WorkerRuntimeSettings(
+                    db_path=db_path,
+                    mode="whisperx",
+                    whisperx_model="tiny",
+                    audit_log_path=audit_path,
+                    enable_diarization=False,
+                )
+            )
+
+            self.assertEqual(runtime.settings.whisperx_model, "large-v3")
+            events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            model_events = [event for event in events if event.get("action") == "worker.runtime.model_forced"]
+            self.assertEqual(len(model_events), 1)
+            self.assertEqual(model_events[0]["configured_model"], "tiny")
+            self.assertEqual(model_events[0]["effective_model"], "large-v3")
 
     def test_run_once_respects_allowed_queues_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -245,6 +245,46 @@ class CompleteUploadServiceTests(unittest.TestCase):
 
         self.assertEqual(response.queue, "gpu-standard")
 
+    def test_job_language_override_takes_priority_over_tenant_settings(self):
+        self.jobs.add_job(
+            {
+                "job_id": "job_lang_1",
+                "tenant_id": "tenant-a",
+                "status": "uploaded",
+                "content_type": "audio/mpeg",
+                "size_bytes": 2_000_000,
+                "transcription_options_json": {"language": "fr"},
+            }
+        )
+        self.storage.put("tenant/tenant-a/job_lang_1/audio.mp3", checksum_sha256="c" * 64)
+        self.settings_store.upsert(
+            tenant_id="tenant-a",
+            updated_by="admin-1",
+            decoding_options={"language": "en", "beam_size": 6},
+        )
+
+        response = complete_upload(
+            CompleteUploadInput(
+                job_id="job_lang_1",
+                upload_session_id="up_lang_1",
+                object_key="tenant/tenant-a/job_lang_1/audio.mp3",
+                checksum_sha256="c" * 64,
+                idempotency_key="cpl-idempotent-lang-1",
+            ),
+            tenant_id="tenant-a",
+            actor_id="u-1",
+            job_store=self.jobs,
+            object_storage=self.storage,
+            outbox=self.outbox,
+            idempotency_store=self.idempotency,
+            queue_policy=self.queue_policy,
+            transcription_settings_store=self.settings_store,
+        )
+
+        self.assertEqual(response.status, "queued")
+        self.assertEqual(self.outbox.events[-1]["transcription_options"]["language"], "fr")
+        self.assertEqual(self.outbox.events[-1]["transcription_options"]["beam_size"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()

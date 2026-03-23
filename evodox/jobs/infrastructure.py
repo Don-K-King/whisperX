@@ -1402,11 +1402,20 @@ class SQLiteTranscriptRepository:
                     job_id TEXT NOT NULL,
                     version INTEGER NOT NULL,
                     segments_json TEXT NOT NULL,
+                    speaker_labels_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (tenant_id, job_id, version)
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(transcript_versions)").fetchall()
+            }
+            if "speaker_labels_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE transcript_versions ADD COLUMN speaker_labels_json TEXT NOT NULL DEFAULT '{}'"
+                )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_transcript_versions_latest
@@ -1418,7 +1427,7 @@ class SQLiteTranscriptRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT version, segments_json
+                SELECT version, segments_json, speaker_labels_json
                 FROM transcript_versions
                 WHERE tenant_id = ? AND job_id = ?
                 ORDER BY version DESC
@@ -1431,6 +1440,7 @@ class SQLiteTranscriptRepository:
                     job_id=job_id,
                     version=int(row["version"]),
                     segments=_safe_json_segments(row["segments_json"]),
+                    speaker_labels=_safe_json_speaker_labels(row["speaker_labels_json"]),
                 )
 
             artifact = _load_worker_artifact(conn, tenant_id=tenant_id, job_id=job_id)
@@ -1439,12 +1449,56 @@ class SQLiteTranscriptRepository:
             segments = _segments_from_worker_artifact(artifact)
             conn.execute(
                 """
-                INSERT OR IGNORE INTO transcript_versions (tenant_id, job_id, version, segments_json)
-                VALUES (?, ?, 1, ?)
+                INSERT OR IGNORE INTO transcript_versions (
+                    tenant_id,
+                    job_id,
+                    version,
+                    segments_json,
+                    speaker_labels_json
+                )
+                VALUES (?, ?, 1, ?, ?)
                 """,
-                (tenant_id, job_id, json.dumps(segments, sort_keys=True)),
+                (tenant_id, job_id, json.dumps(segments, sort_keys=True), "{}"),
             )
-            return TranscriptResponse(job_id=job_id, version=1, segments=segments)
+            return TranscriptResponse(job_id=job_id, version=1, segments=segments, speaker_labels={})
+
+    def get_version(self, tenant_id: str, job_id: str, version: int) -> dict[str, Any] | None:
+        requested_version = int(version)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT segments_json, speaker_labels_json
+                FROM transcript_versions
+                WHERE tenant_id = ? AND job_id = ? AND version = ?
+                """,
+                (tenant_id, job_id, requested_version),
+            ).fetchone()
+            if row is not None:
+                return {
+                    "segments": _safe_json_segments(row["segments_json"]),
+                    "speaker_labels": _safe_json_speaker_labels(row["speaker_labels_json"]),
+                }
+
+            if requested_version != 1:
+                return None
+            artifact = _load_worker_artifact(conn, tenant_id=tenant_id, job_id=job_id)
+            if artifact is None:
+                return None
+            initial_segments = _segments_from_worker_artifact(artifact)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO transcript_versions (
+                    tenant_id,
+                    job_id,
+                    version,
+                    segments_json,
+                    speaker_labels_json
+                )
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (tenant_id, job_id, json.dumps(initial_segments, sort_keys=True), "{}"),
+            )
+            return {"segments": initial_segments, "speaker_labels": {}}
 
     def save_new_version(
         self,
@@ -1453,11 +1507,12 @@ class SQLiteTranscriptRepository:
         job_id: str,
         expected_base_version: int,
         segments: list[dict[str, Any]],
+        speaker_labels: dict[str, str] | None = None,
     ) -> int:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT version
+                SELECT version, speaker_labels_json
                 FROM transcript_versions
                 WHERE tenant_id = ? AND job_id = ?
                 ORDER BY version DESC
@@ -1474,25 +1529,48 @@ class SQLiteTranscriptRepository:
                 initial_segments = _segments_from_worker_artifact(artifact)
                 conn.execute(
                     """
-                    INSERT OR IGNORE INTO transcript_versions (tenant_id, job_id, version, segments_json)
-                    VALUES (?, ?, 1, ?)
+                    INSERT OR IGNORE INTO transcript_versions (
+                        tenant_id,
+                        job_id,
+                        version,
+                        segments_json,
+                        speaker_labels_json
+                    )
+                    VALUES (?, ?, 1, ?, ?)
                     """,
-                    (tenant_id, job_id, json.dumps(initial_segments, sort_keys=True)),
+                    (tenant_id, job_id, json.dumps(initial_segments, sort_keys=True), "{}"),
                 )
                 current_version = 1
+                current_speaker_labels: dict[str, str] = {}
             else:
                 current_version = int(row["version"])
+                current_speaker_labels = _safe_json_speaker_labels(row["speaker_labels_json"])
 
             if current_version != int(expected_base_version):
                 raise TranscriptConflictError()
 
             new_version = current_version + 1
+            effective_speaker_labels = (
+                dict(current_speaker_labels) if speaker_labels is None else dict(speaker_labels)
+            )
             conn.execute(
                 """
-                INSERT INTO transcript_versions (tenant_id, job_id, version, segments_json)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO transcript_versions (
+                    tenant_id,
+                    job_id,
+                    version,
+                    segments_json,
+                    speaker_labels_json
+                )
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (tenant_id, job_id, new_version, json.dumps(segments, sort_keys=True)),
+                (
+                    tenant_id,
+                    job_id,
+                    new_version,
+                    json.dumps(segments, sort_keys=True),
+                    json.dumps(effective_speaker_labels, sort_keys=True),
+                ),
             )
             return new_version
 
@@ -1580,11 +1658,26 @@ def _segments_from_worker_artifact(artifact: dict[str, Any]) -> list[dict[str, A
     return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
 
-def _safe_json_segments(raw: str) -> list[dict[str, Any]]:
+def _safe_json_segments(raw: Any) -> list[dict[str, Any]]:
     try:
         value = json.loads(raw)
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         return []
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _safe_json_speaker_labels(raw: Any) -> dict[str, str]:
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    labels: dict[str, str] = {}
+    for key, label in value.items():
+        if key is None:
+            continue
+        labels[str(key)] = str(label)
+    return labels

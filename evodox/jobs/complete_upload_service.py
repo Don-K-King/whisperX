@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from typing import Any
 
 from .transcription_settings_service import (
+    DEFAULT_DECODING_OPTIONS,
     InMemoryTenantTranscriptionSettingsStore,
+    TranscriptionSettingsValidationError,
+    normalize_decoding_options,
     safe_worker_decoding_options,
 )
 
@@ -163,6 +167,7 @@ def complete_upload(
     transcription_options = _resolve_transcription_options(
         tenant_id=tenant_id,
         transcription_settings_store=transcription_settings_store,
+        job=job,
     )
 
     mark_queued = getattr(job_store, "mark_queued", None)
@@ -238,14 +243,58 @@ def _payload_hash(request: CompleteUploadInput) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _resolve_transcription_options(*, tenant_id: str, transcription_settings_store: Any | None) -> dict[str, Any]:
+def _resolve_transcription_options(
+    *,
+    tenant_id: str,
+    transcription_settings_store: Any | None,
+    job: dict[str, Any] | None,
+) -> dict[str, Any]:
+    options = safe_worker_decoding_options(None)
     store = transcription_settings_store
-    if store is None:
-        return safe_worker_decoding_options(None)
-    getter = getattr(store, "get", None)
-    if not callable(getter):
-        return safe_worker_decoding_options(None)
-    row = getter(tenant_id)
-    if not isinstance(row, dict):
-        return safe_worker_decoding_options(None)
-    return safe_worker_decoding_options(row.get("decoding_options"))
+    if store is not None:
+        getter = getattr(store, "get", None)
+        if callable(getter):
+            row = getter(tenant_id)
+            if isinstance(row, dict):
+                options = safe_worker_decoding_options(row.get("decoding_options"))
+    overrides = _extract_job_transcription_overrides(job)
+    if overrides:
+        options = {**options, **overrides}
+    return safe_worker_decoding_options(options)
+
+
+def _extract_job_transcription_overrides(job: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(job, dict):
+        return {}
+
+    if isinstance(job.get("transcription_options"), dict):
+        raw = dict(job.get("transcription_options") or {})
+    else:
+        raw_json = job.get("transcription_options_json")
+        raw = _parse_json_dict(raw_json)
+
+    if not raw:
+        return {}
+
+    candidate = {key: raw[key] for key in raw.keys() if key in DEFAULT_DECODING_OPTIONS}
+    if not candidate:
+        return {}
+    try:
+        normalized = normalize_decoding_options(candidate)
+    except TranscriptionSettingsValidationError:
+        return {}
+    return {key: normalized[key] for key in candidate.keys()}
+
+
+def _parse_json_dict(raw_json: Any) -> dict[str, Any]:
+    if isinstance(raw_json, dict):
+        return dict(raw_json)
+    if not isinstance(raw_json, str):
+        return {}
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return parsed
