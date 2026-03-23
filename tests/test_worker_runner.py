@@ -51,7 +51,7 @@ class WorkerRunnerTests(unittest.TestCase):
             mode="whisperx",
             hf_token="hf_test",
             enable_diarization=True,
-            diarization_model="pyannote/speaker-diarization",
+            diarization_model="pyannote/speaker-diarization-community-1",
             min_speakers=1,
             max_speakers=3,
         )
@@ -64,7 +64,7 @@ class WorkerRunnerTests(unittest.TestCase):
         )
 
         self.assertIn("--diarize", command)
-        self.assertIn("pyannote/speaker-diarization", command)
+        self.assertIn("pyannote/speaker-diarization-community-1", command)
         self.assertIn("--hf_token", command)
         self.assertIn("--device_index", command)
 
@@ -184,6 +184,31 @@ class WorkerRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(settings.mode, "whisperx")
+
+    def test_settings_default_to_community_diarization_model(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "true",
+                "HF_TOKEN": "hf_test_token",
+            }
+        )
+
+        self.assertEqual(settings.diarization_model, "pyannote/speaker-diarization-community-1")
+
+    def test_settings_normalize_legacy_diarization_model(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "true",
+                "HF_TOKEN": "hf_test_token",
+                "WORKER_WHISPERX_DIARIZATION_MODEL": "pyannote/speaker-diarization",
+            }
+        )
+
+        self.assertEqual(settings.diarization_model, "pyannote/speaker-diarization-community-1")
 
     def test_settings_accept_zero_whisperx_timeout(self) -> None:
         settings = WorkerRuntimeSettings.from_env(

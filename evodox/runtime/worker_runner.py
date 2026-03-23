@@ -36,6 +36,11 @@ from evodox.jobs.transcription_settings_service import safe_worker_decoding_opti
 
 LOGGER = logging.getLogger("evodox.runtime.worker_runner")
 
+_DEFAULT_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+_DIARIZATION_MODEL_ALIASES = {
+    "pyannote/speaker-diarization": _DEFAULT_DIARIZATION_MODEL,
+}
+
 
 class WorkerRuntimeConfigError(ValueError):
     pass
@@ -58,7 +63,7 @@ class WorkerRuntimeSettings:
     whisperx_batch_size: int = 4
     whisperx_model_dir: Path = Path("/runtime/models")
     enable_diarization: bool = True
-    diarization_model: str = "pyannote/speaker-diarization"
+    diarization_model: str = _DEFAULT_DIARIZATION_MODEL
     hf_token: str | None = None
     min_speakers: int | None = None
     max_speakers: int | None = None
@@ -95,10 +100,9 @@ class WorkerRuntimeSettings:
         whisperx_batch_size = _parse_positive_int(source.get("WORKER_WHISPERX_BATCH_SIZE", "4"), "WORKER_WHISPERX_BATCH_SIZE")
         whisperx_model_dir = Path(source.get("WORKER_WHISPERX_MODEL_DIR", "/runtime/models").strip())
         enable_diarization = _parse_bool(source.get("WORKER_ENABLE_DIARIZATION", "true"))
-        diarization_model = source.get(
-            "WORKER_WHISPERX_DIARIZATION_MODEL",
-            "pyannote/speaker-diarization",
-        ).strip()
+        diarization_model = _normalize_diarization_model_name(
+            source.get("WORKER_WHISPERX_DIARIZATION_MODEL", _DEFAULT_DIARIZATION_MODEL)
+        )
         hf_token = (
             source.get("WORKER_HF_TOKEN")
             or source.get("HF_TOKEN")
@@ -146,7 +150,7 @@ class WorkerRuntimeSettings:
             whisperx_batch_size=whisperx_batch_size,
             whisperx_model_dir=whisperx_model_dir,
             enable_diarization=enable_diarization,
-            diarization_model=diarization_model or "pyannote/speaker-diarization",
+            diarization_model=diarization_model or _DEFAULT_DIARIZATION_MODEL,
             hf_token=hf_token or None,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
@@ -1021,6 +1025,16 @@ def _parse_csv_list(raw: str) -> tuple[str, ...]:
             continue
         values.append(value)
     return tuple(values)
+
+
+def _normalize_diarization_model_name(raw_model: str) -> str:
+    value = str(raw_model or "").strip()
+    if not value:
+        return _DEFAULT_DIARIZATION_MODEL
+    lowered = value.lower()
+    if lowered in _DIARIZATION_MODEL_ALIASES:
+        return _DIARIZATION_MODEL_ALIASES[lowered]
+    return value
 
 
 if __name__ == "__main__":
