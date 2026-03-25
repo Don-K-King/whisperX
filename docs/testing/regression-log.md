@@ -195,3 +195,24 @@
   - docs/testing/screenshots/transcription-settings-validation-error.png
   - docs/testing/screenshots/transcription-settings-responsive.png
 - Bewertung: Screenshot-Pflicht fuer betroffene Hauptscreens und relevante Zustaende ist erfuellt.
+
+## 2026-03-24 - Korrekturmodus
+- Frontend-Unit-Suite (`node --test frontend/tests/*.test.js`) erfolgreich ausgefuehrt: 28/28 gruen.
+- Backend-Korrekturtests via Docker ausgefuehrt:
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_store tests.test_transcript_correction_http_adapter tests.test_transcript_correction_fastapi_integration"`
+  - Ergebnis: gruen, 17 Tests.
+- Screenshot-Automation fuer Korrekturmodus ausgefuehrt: `node scripts/capture_correction_mode_screenshots.mjs`.
+- Screenshot-Artefakte:
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+
+## 2026-03-25 - Regression Korrekturmodus Stabilisierung + UX/Audio
+- Anlass: Start-Handover auf tabuebergreifenden TTL-Store, neue Media-Source-API, UI-Layout-/Close-Flow-/Audio-Scroll-Anpassungen.
+- Ausgefuehrt (Frontend Unit): `cmd /c npm test` in `frontend/`.
+- Ergebnis (Frontend Unit): Gruen, 32 Tests.
+- Ausgefuehrt (Backend Correction-Suite): `docker run --rm -v C:\Users\patrick\Evidowhisperx:/workspace -w /workspace evodox-local:dev sh -lc "pip install --quiet httpx && python -m unittest tests.test_transcript_correction_fastapi_integration tests.test_transcript_correction_http_adapter tests.test_transcript_correction_service tests.test_transcript_correction_store"`.
+- Ergebnis (Backend Correction-Suite): Gruen, 20 Tests.
+- Ausgefuehrt (UI-Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots): aktualisiert (`correction-shell-default`, `correction-editor-validation-error`, `correction-shell-responsive`).
+- Docker Smoke: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .` und `docker compose -f deploy/docker-compose.target.yml --env-file .env up -d api worker retention-runner frontend`; alle Services healthy.

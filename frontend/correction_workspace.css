@@ -1,0 +1,244 @@
+:root {
+  --cw-bg: #f4f4f0;
+  --cw-surface: #ffffff;
+  --cw-border: #d2d0c8;
+  --cw-text: #1f1f1b;
+  --cw-muted: #626057;
+  --cw-accent: #1360bf;
+  --cw-danger: #9e2f2f;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body[data-theme='dark'] {
+  --cw-bg: #1a1b1d;
+  --cw-surface: #25272a;
+  --cw-border: #393c41;
+  --cw-text: #f0f2f4;
+  --cw-muted: #b6bcc5;
+  --cw-accent: #63a4ff;
+  --cw-danger: #ff8e8e;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 10% 10%, rgba(19, 96, 191, 0.15), transparent 35%), var(--cw-bg);
+  color: var(--cw-text);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.cw-root {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.cw-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--cw-border);
+  background: color-mix(in srgb, var(--cw-surface) 90%, transparent);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.cw-topbar .badge {
+  border: 1px solid var(--cw-border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  color: var(--cw-muted);
+}
+
+.cw-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cw-editor,
+.cw-sidebar,
+.cw-audio {
+  background: var(--cw-surface);
+  border: 1px solid var(--cw-border);
+  border-radius: 12px;
+}
+
+.cw-editor {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.cw-block {
+  border: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
+  border-radius: 10px;
+  padding: 0.8rem;
+  margin-bottom: 0.8rem;
+  background: color-mix(in srgb, var(--cw-surface) 94%, transparent);
+}
+
+.cw-block.active {
+  outline: 2px solid color-mix(in srgb, var(--cw-accent) 65%, transparent);
+}
+
+.cw-block textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  margin-top: 0.5rem;
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.cw-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cw-sidebar {
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  overflow: hidden;
+  position: sticky;
+  top: 0;
+  align-self: start;
+}
+
+.cw-sidebar input,
+.cw-sidebar select,
+.cw-sidebar textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 0.45rem;
+}
+
+.cw-sidebar button,
+.cw-topbar button,
+.cw-editor button {
+  border: 1px solid var(--cw-border);
+  background: color-mix(in srgb, var(--cw-surface) 90%, transparent);
+  color: inherit;
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.cw-sidebar button.primary,
+.cw-topbar button.primary {
+  background: var(--cw-accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.cw-sidebar button.danger,
+.cw-topbar button.danger {
+  color: #fff;
+  background: var(--cw-danger);
+  border-color: transparent;
+}
+
+.cw-log {
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  padding: 0.45rem;
+  font-size: 0.82rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.cw-audio {
+  position: sticky;
+  bottom: 0;
+  padding: 0.7rem 1rem;
+  border-radius: 12px 12px 0 0;
+  margin: 0 1rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  align-items: center;
+  z-index: 2;
+}
+
+.cw-audio audio,
+.cw-audio video {
+  width: min(640px, 100%);
+  max-height: 180px;
+  border-radius: 8px;
+  background: #000;
+}
+
+.cw-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 10;
+}
+
+.cw-modal {
+  width: min(90vw, 420px);
+  background: var(--cw-surface);
+  border: 1px solid var(--cw-border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.cw-status {
+  color: var(--cw-muted);
+  font-size: 0.86rem;
+}
+
+@media (max-width: 980px) {
+  body {
+    overflow: auto;
+  }
+
+  .cw-root {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .cw-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .cw-sidebar {
+    position: static;
+    overflow: auto;
+  }
+
+  .cw-audio {
+    position: static;
+    margin: 1rem;
+    border-radius: 12px;
+  }
+}

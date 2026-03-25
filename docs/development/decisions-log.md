@@ -214,3 +214,19 @@
 - Entscheidung: Tenant-Admin Decoding-Settings werden um chunk_size, vad_onset, vad_offset erweitert und strikt validiert.
 - Sicherheitsentscheidung: Eingaben bleiben whitelist-/range-basiert, Snapshot-Verarbeitung bleibt fail-safe ueber safe_worker_decoding_options.
 - Referenz: ADR-0020 (/docs/adr/ADR-0020-whisperx-large-v3-erzwingung-sprache-und-chunk-vad.md).
+
+## 2026-03-24 - ADR-0021 Korrekturmodus Sessions + Statusfuehrung
+- Neue Transcript-Korrekturlogik eingefuehrt: Session-basierter Draft mit `apply/undo/redo/discard/commit` statt sofortiger Versionspersistenz.
+- Autosave semantisch als Draft-Sicherung umgesetzt (keine automatische Versionserzeugung).
+- Transcript-Status erweitert um `review_status` und `is_final` inkl. eigener API und Audit-Events.
+- Timeline-Guards fuer Korrektur-Operationen verankert (keine Overlaps/Luecken, konsistente Segment-IDs).
+- Frontend um dedizierten Korrektur-Workspace erweitert (`window.open` ohne In-Tab-Fallback, Suche/Ersetzen, Sprecherumteilung, Audio-Mitfuehrung, Status/Final).
+- Handover-Strategie fuer den Korrekturstart auf kurzlebigen tabuebergreifenden Store umgestellt (single-use, TTL, Cleanup), um `Korrektur-Startdaten fehlen` im neuen Tab zu vermeiden.
+- Neue tenant-scoped Media-Quelle fuer den Workspace eingefuehrt (`GET /api/v1/jobs/{id}/media-source`) fuer automatisches Laden der Ursprungsdatei.
+- Security-Hardening nach Implementierungsreview: Session-Reads sind actor-gebunden, `forbidden` wird als `403` gemappt, Status-Updates validieren Transcript-Existenz.
+- Referenz: ADR-0021 (`/docs/adr/ADR-0021-korrekturmodus-sessions-und-status.md`).
+
+## 2026-03-25 - Korrekturmodus Legacy-Schema-Migration (Hotfix)
+- Entscheidung: Session-Insert im Correction-Store wird schema-adaptiv ausgefuehrt; existiert Legacy-Spalte `expires_at`, wird sie beim `create_session` explizit befuellt.
+- Grund: Laufende Runtime-Volumes enthielten ein aelteres Schema mit `expires_at NOT NULL`, wodurch Korrektur-Session-Start mit `IntegrityError` scheiterte.
+- Ergebnis: Korrekturmodus-Start bleibt ohne DB-Reset kompatibel zu Bestandsdaten.

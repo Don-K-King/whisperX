@@ -1,4 +1,4 @@
-﻿# Test Strategy (TDD) â€“ inkl. Edge/Security-Tests pro Entwicklungsschritt
+# Test Strategy (TDD) â€“ inkl. Edge/Security-Tests pro Entwicklungsschritt
 
 Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 
@@ -149,3 +149,16 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 - Pflicht Worker-Tests: Modell-Erzwingung auf large-v3 inkl. Audit-Event worker.runtime.model_forced.
 - Pflicht Worker-Command-Tests: --chunk_size, --vad_onset, --vad_offset werden gemappt; --language nur bei Sprache != auto.
 - Pflicht Frontend-Tests: Upload-Flow sendet language; Settings-Flow validiert neue Felder clientseitig.
+
+## 2026-03-24 - Erweiterung Korrekturmodus
+- Neue Pflichttests fuer Session-Lifecycle (`create/get/patch/apply/undo/redo/discard/commit`) inkl. tenant-scoping und actor-binding.
+- Neue Pflichttests fuer Timeline-Invarianten im Korrekturpfad (keine Overlaps, keine Luecken, `start <= end`, Minimalpassagen erlaubt).
+- Neue Pflichttests fuer Suche/Ersetzen und Sprecher-Teilumteilung inklusive Abuse-Faelle (invalid char ranges, no-match replace, control-char payloads).
+- Neue Pflichttests fuer Statusfuehrung (`review_status`, `is_final`) inklusive Rollenpruefung (`reviewer|admin`) und Audit-Nachweis.
+- Frontend-Pflicht fuer UI-Aenderungen: Screenshot-Nachweise (`default`, `validation/error`, `responsive`) ueber `scripts/capture_correction_mode_screenshots.mjs`.
+
+## Erweiterung 2026-03-25 - Korrekturmodus Stabilisierung
+- Contract/Integration Pflicht: GET /api/v1/jobs/{id}/media-source mit Pfaden 200 (tenant-local), 404 (unknown/cross-tenant) und 503 (fehlende Quelle).
+- Frontend Unit Pflicht: tabuebergreifender Handover (single-use + TTL + Cleanup).
+- Frontend E2E Pflicht: Popup/New-Tab Start ohne In-Tab-Fallback; Haupttab bleibt unveraendert.
+- UX Pflichttests: zentrierter Audio-Fokus, sticky Sidebar/Header/Footer, Close-Flow mit Speichern/Verwerfen/Abbrechen.

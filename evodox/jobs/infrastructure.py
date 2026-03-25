@@ -1403,6 +1403,9 @@ class SQLiteTranscriptRepository:
                     version INTEGER NOT NULL,
                     segments_json TEXT NOT NULL,
                     speaker_labels_json TEXT NOT NULL DEFAULT '{}',
+                    created_by TEXT,
+                    edit_reason TEXT,
+                    save_source TEXT NOT NULL DEFAULT 'manual',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (tenant_id, job_id, version)
                 )
@@ -1416,6 +1419,12 @@ class SQLiteTranscriptRepository:
                 conn.execute(
                     "ALTER TABLE transcript_versions ADD COLUMN speaker_labels_json TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "created_by" not in columns:
+                conn.execute("ALTER TABLE transcript_versions ADD COLUMN created_by TEXT")
+            if "edit_reason" not in columns:
+                conn.execute("ALTER TABLE transcript_versions ADD COLUMN edit_reason TEXT")
+            if "save_source" not in columns:
+                conn.execute("ALTER TABLE transcript_versions ADD COLUMN save_source TEXT NOT NULL DEFAULT 'manual'")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_transcript_versions_latest
@@ -1467,7 +1476,7 @@ class SQLiteTranscriptRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT segments_json, speaker_labels_json
+                SELECT segments_json, speaker_labels_json, created_by, edit_reason, save_source
                 FROM transcript_versions
                 WHERE tenant_id = ? AND job_id = ? AND version = ?
                 """,
@@ -1477,6 +1486,9 @@ class SQLiteTranscriptRepository:
                 return {
                     "segments": _safe_json_segments(row["segments_json"]),
                     "speaker_labels": _safe_json_speaker_labels(row["speaker_labels_json"]),
+                    "created_by": row["created_by"] if "created_by" in row.keys() else None,
+                    "edit_reason": row["edit_reason"] if "edit_reason" in row.keys() else None,
+                    "save_source": row["save_source"] if "save_source" in row.keys() else None,
                 }
 
             if requested_version != 1:
@@ -1508,6 +1520,9 @@ class SQLiteTranscriptRepository:
         expected_base_version: int,
         segments: list[dict[str, Any]],
         speaker_labels: dict[str, str] | None = None,
+        created_by: str | None = None,
+        edit_reason: str | None = None,
+        save_source: str = "manual",
     ) -> int:
         with self._connect() as conn:
             row = conn.execute(
@@ -1560,9 +1575,12 @@ class SQLiteTranscriptRepository:
                     job_id,
                     version,
                     segments_json,
-                    speaker_labels_json
+                    speaker_labels_json,
+                    created_by,
+                    edit_reason,
+                    save_source
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tenant_id,
@@ -1570,6 +1588,9 @@ class SQLiteTranscriptRepository:
                     new_version,
                     json.dumps(segments, sort_keys=True),
                     json.dumps(effective_speaker_labels, sort_keys=True),
+                    created_by,
+                    edit_reason,
+                    str(save_source or "manual"),
                 ),
             )
             return new_version
@@ -1642,6 +1663,7 @@ def _segments_from_worker_artifact(artifact: dict[str, Any]) -> list[dict[str, A
             )
             segments.append(
                 {
+                    "segment_id": f"seg_{idx + 1:06d}",
                     "start": float(segment.get("start", 0.0)),
                     "end": float(segment.get("end", 0.0)),
                     "speaker": speaker,
@@ -1655,7 +1677,7 @@ def _segments_from_worker_artifact(artifact: dict[str, Any]) -> list[dict[str, A
     text = ""
     if isinstance(transcript, dict):
         text = str(transcript.get("text", ""))
-    return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+    return [{"segment_id": "seg_000001", "start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
 
 def _safe_json_segments(raw: Any) -> list[dict[str, Any]]:
@@ -1665,7 +1687,16 @@ def _safe_json_segments(raw: Any) -> list[dict[str, Any]]:
         return []
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        segment = dict(item)
+        segment_id = str(segment.get("segment_id", "")).strip()
+        if len(segment_id) == 0:
+            segment["segment_id"] = f"seg_{index + 1:06d}"
+        normalized.append(segment)
+    return normalized
 
 
 def _safe_json_speaker_labels(raw: Any) -> dict[str, str]:

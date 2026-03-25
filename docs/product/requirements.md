@@ -19,3 +19,6 @@
 
 ## Verbindliche Spezifikationsreferenz
 Die umsetzungsrelevanten Detailanforderungen für Phase 1 sind in `docs/product/phase1-fachliche-spezifikation-v1.md` festgelegt.
+
+## 2026-03-24 Erweiterung
+9. Korrekturmodus als dedizierter Arbeitsbereich mit Session-Draft, Undo/Redo, Sprecherkorrektur, Suche/Ersetzen, Pruefstatus und Final-Fuehrung.

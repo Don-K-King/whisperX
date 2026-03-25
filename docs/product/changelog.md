@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-25
+- Korrekturmodus-Start gegen Legacy-Runtime-DB stabilisiert: Session-Erstellung ist jetzt schema-kompatibel, auch wenn alte transcript_correction_sessions noch expires_at NOT NULL erzwingen.
+- 404/500-Fehlerbild beim Start des Korrekturmodus im Docker-Zielbetrieb beseitigt; Session-Start (POST /api/v1/jobs/{id}/transcript/correction-sessions) liefert wieder erfolgreich 200.
+- Korrektur-Startfluss gehaertet: tabuebergreifender Handover (single-use + TTL) statt sessionStorage-Bindung, damit neue Tabs/Fenster stabil bootstrappen.
+- Korrekturmodus startet jetzt ausschliesslich in neuem Tab/Fenster; In-Tab-Fallback wurde entfernt.
+- Neue API GET /api/v1/jobs/{id}/media-source eingefuehrt; Workspace laedt Audio/Video automatisch ohne manuelle Dateiauswahl.
+- UX verbessert: Sidebar/Topbar/Audioleiste fixiert, nur Editor scrollt; Audio-Fokus wird im Editor zentriert; Schliessen-Flow mit Speichern | Verwerfen | Abbrechen hinzugefuegt.
+- Korrekturmodus uebernimmt jetzt konsolidierte Sprecherbloecke (konsekutive gleiche Speaker) inkl. zusammengefuehrter Zeitfenster.
+
 ## 2026-03-23
 - Speaker-Diarization im Docker-Zielbetrieb stabilisiert: Legacy-Modell pyannote/speaker-diarization wird auf pyannote/speaker-diarization-community-1 normalisiert.
 - Worker-Defaults und Deploy-Compose-Defaults auf pyannote/speaker-diarization-community-1 angehoben, um diarization_fallback mit UNKNOWN-Only-Transkripten zu vermeiden.
@@ -174,3 +183,14 @@
 - Worker setzt --language nur wenn Sprache ungleich auto ist.
 - Tenant-Admin Transcription-Settings wurden um chunk_size, vad_onset, vad_offset erweitert; serverseitige Validation und CLI-Wiring (--chunk_size, --vad_onset, --vad_offset) sind aktiv.
 - Rueckwaertskompatibilitaet: Jobs/Settings ohne neue Felder laufen weiterhin ueber sichere Defaults.
+
+## 2026-03-24
+- Neuer Korrekturmodus eingefuehrt: dedizierter Workspace mit Session-basiertem Draft (`create/get/patch/apply/undo/redo/discard/commit`).
+- Transcript-Status erweitert: `review_status` und `is_final` ueber neuen API-Pfad `PATCH /api/v1/jobs/{id}/transcript/status`.
+- Timeline-Schutz verschaerft: Korrektur-Operationen blockieren Overlaps/Luecken und invaliden Segmentzuschnitt.
+- Segment-IDs im Transcript-Output stabilisiert; fehlende IDs werden deterministisch normalisiert.
+- Frontend erweitert: Korrekturmodus kann aus Job-Detail in eigenem Fenster geoeffnet werden.
+- Neuer Korrektur-Workspace: Fliesstext-Bearbeitung, Suche/Ersetzen, Sprecher-Umteilung, Undo/Redo, Verwerfen, Draft-Speichern, Commit, Audio-Mitfuehrung.
+- Testabdeckung erweitert um Correction-Service/Store/HTTP-Mapping sowie neue Frontend-Utils fuer Korrekturmodus.
+- Screenshot-Automation fuer Korrekturmodus hinzugefuegt (`scripts/capture_correction_mode_screenshots.mjs`).
+

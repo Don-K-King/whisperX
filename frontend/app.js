@@ -13,12 +13,17 @@ import {
   loadTranscriptionSettings,
   saveTranscriptionSettings,
 } from './transcription_settings_flow.js';
+import {
+  cleanupExpiredCorrectionHandoffs,
+  createCorrectionHandoff,
+} from './correction_handoff.js';
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed_terminal', 'deleted', 'canceled']);
+const THEME_STORAGE_KEY = 'evodox-theme';
 
 const state = {
   lang: 'de',
-  theme: 'light',
+  theme: loadPersistedTheme(),
   auth: null,
   route: 'login',
   jobs: [],
@@ -52,6 +57,44 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function openCorrectionWorkspace(jobId) {
+  if (!state.auth?.token || !jobId) {
+    return { ok: false, errorCode: 'correction.missing_context' };
+  }
+  let handoffId = '';
+  try {
+    cleanupExpiredCorrectionHandoffs();
+    handoffId = createCorrectionHandoff({
+      token: state.auth.token,
+      jobId,
+      tenantId: state.auth.tenant_id,
+      theme: state.theme,
+    });
+  } catch (error) {
+    return { ok: false, errorCode: error?.message || 'correction.handoff_failed' };
+  }
+  const workspaceUrl = `./correction_workspace.html?handoff=${encodeURIComponent(handoffId)}`;
+  const popup = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');
+  if (popup) return { ok: true };
+  return { ok: false, errorCode: 'correction.popup_blocked' };
+}
+
+function loadPersistedTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
+function persistTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // ignore persistence errors (private mode / blocked storage)
+  }
 }
 
 async function callApi(path, options = {}) {
@@ -120,6 +163,7 @@ function bindTopbar() {
   });
   document.getElementById('theme-toggle').onclick = () => {
     state.theme = state.theme === 'light' ? 'dark' : 'light';
+    persistTheme(state.theme);
     render();
     void loadRoute();
   };
@@ -319,6 +363,8 @@ async function loadRoute({ fromPoll = false } = {}) {
           transcriptPanel = `
             <section class="card">
               <h2>Transcript v${transcriptVersion}</h2>
+              <button id="open-correction-mode" class="btn-secondary">Korrekturmodus öffnen</button>
+              <p id="open-correction-status" class="error"></p>
               <div class="card">
                 <h3>Speaker labels</h3>
                 ${aliases.map((entry, index) => `
@@ -376,6 +422,24 @@ async function loadRoute({ fromPoll = false } = {}) {
             if (button) {
               button.onclick = () => {
                 void saveSpeakerLabels();
+              };
+            }
+
+            const correctionButton = document.getElementById('open-correction-mode');
+            if (correctionButton) {
+              correctionButton.onclick = () => {
+                const result = openCorrectionWorkspace(jobId);
+                const statusNode = document.getElementById('open-correction-status');
+                if (!statusNode) return;
+                if (result.ok) {
+                  statusNode.textContent = '';
+                  return;
+                }
+                if (result.errorCode === 'correction.popup_blocked') {
+                  statusNode.textContent = 'Neuer Tab/Fenster wurde blockiert. Bitte Popups fuer diese Seite erlauben.';
+                  return;
+                }
+                statusNode.textContent = 'Korrekturmodus konnte nicht geoeffnet werden.';
               };
             }
           };

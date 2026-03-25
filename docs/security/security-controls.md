@@ -165,7 +165,7 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Preflight als Deployment-Guard.** `RETENTION_VALIDATE_ENV_ONLY=true` muss vor Start in Pipeline/Init-Checks ausgeführt werden.
 
 ## 2026-03-08 – Frontend Security Controls (Phase-1 UI)
-- Bearer-Token wird ausschließlich im Laufzeitspeicher gehalten (kein LocalStorage/SessionStorage Persistenzpfad).
+- Bearer-Token wird im Haupt-Frontend im Laufzeitspeicher gehalten; fuer den Korrektur-Workspace wird ein kurzlebiger, single-use Handover im browserweiten Storage mit TTL und sofortigem Consume verwendet.
 - Upload-Flow führt clientseitige Vorvalidierung (Dateigröße, Typfilter) aus; serverseitige Validierung bleibt maßgeblich.
 - Fehlerdarstellung ist sanitisiert (`error_code`, `correlation_id`) und unterdrückt intern-sensible Details.
 
@@ -200,3 +200,10 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Parameter-Range-Validation.** chunk_size (5..60), vad_onset (0.0..1.0), vad_offset (0.0..1.0) werden serverseitig validiert, bevor sie in Queue/Worker gelangen.
 - **Control: Data-not-code Behandlung.** Neue Transcription-Optionen werden ausschliesslich als Daten im Snapshot verarbeitet; keine dynamische Ausfuehrung von Input-Inhalten.
 - **Control: Defensive Worker Consumption.** Ungueltige Snapshot-/Settings-Payloads fallen weiterhin auf sichere Defaults zurueck (safe_worker_decoding_options).
+
+## 2026-03-24 - Controls fuer Korrekturmodus Sessions
+- **Control: Session Tenant+Actor Scope.** Correction-Sessions sind an `(tenant_id, session_id)` und `actor_id` gebunden; fremde Bearbeiter duerfen Session weder lesen noch mutieren.
+- **Control: Timeline Invariants.** Korrektur-Operationen validieren `start/end` strikt auf monotone, lueckenlose Timeline ohne Overlap.
+- **Control: Draft-vs-Version Trennung.** Autosave aktualisiert nur Session-Draft; persistente Transcript-Versionen entstehen ausschliesslich ueber explizites Commit.
+- **Control: Status Governance.** `review_status` und `is_final` werden separat gepflegt und auditierbar protokolliert.
+- **Control: Input Safety.** Sprecher-/Text-/Replace-Inputs werden als Daten behandelt, inklusive Control-Character-Checks und XSS-sicherem Rendering im Workspace.
