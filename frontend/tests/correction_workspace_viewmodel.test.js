@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import {
   buildSpeakerDisplayLabel,
   buildSpeakerOptionEntries,
+  parseSidebarSectionState,
   parseSidebarVisibility,
+  SIDEBAR_SECTION_IDS,
+  serializeSidebarSectionState,
 } from '../correction_workspace_viewmodel.js';
 
 test('buildSpeakerDisplayLabel renders alias plus speaker key', () => {
@@ -49,4 +52,48 @@ test('parseSidebarVisibility supports persisted toggle values', () => {
   assert.equal(parseSidebarVisibility('1'), true);
   assert.equal(parseSidebarVisibility('0'), false);
   assert.equal(parseSidebarVisibility(null), true);
+});
+
+test('parseSidebarSectionState defaults all sections to open', () => {
+  const parsed = parseSidebarSectionState(null);
+  assert.deepEqual(parsed, {
+    status: true,
+    searchReplace: true,
+    speakerReassign: true,
+    changeLog: true,
+  });
+});
+
+test('parseSidebarSectionState applies persisted open sections only for known ids', () => {
+  const parsed = parseSidebarSectionState('["status","changeLog","unknown"]');
+  assert.deepEqual(parsed, {
+    status: true,
+    searchReplace: false,
+    speakerReassign: false,
+    changeLog: true,
+  });
+});
+
+test('serializeSidebarSectionState persists only open and known sections', () => {
+  const serialized = serializeSidebarSectionState({
+    status: true,
+    searchReplace: false,
+    speakerReassign: true,
+    changeLog: false,
+    rogue: true,
+  });
+  assert.equal(serialized, '["status","speakerReassign"]');
+});
+
+test('parse and serialize sidebar section state round-trip', () => {
+  const openState = {
+    status: false,
+    searchReplace: true,
+    speakerReassign: false,
+    changeLog: true,
+  };
+  const serialized = serializeSidebarSectionState(openState);
+  const parsed = parseSidebarSectionState(serialized);
+  assert.deepEqual(parsed, openState);
+  assert.deepEqual(SIDEBAR_SECTION_IDS, ['status', 'searchReplace', 'speakerReassign', 'changeLog']);
 });

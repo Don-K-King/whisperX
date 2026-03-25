@@ -194,3 +194,10 @@
 - Testabdeckung erweitert um Correction-Service/Store/HTTP-Mapping sowie neue Frontend-Utils fuer Korrekturmodus.
 - Screenshot-Automation fuer Korrekturmodus hinzugefuegt (`scripts/capture_correction_mode_screenshots.mjs`).
 
+
+## 2026-03-25
+- Korrekturmodus-Sidebar als aufklappbarer Baum umgesetzt (Status, Suche/Ersetzen, Sprecherumteilung, Aenderungslog).
+- Offene/geschlossene Baumknoten werden nun pro Nutzer lokal persistent gespeichert.
+- Sidebar-Layout entkoppelt: eigener Scrollbereich verhindert Ueberdeckung mit Audio-Footer bei langen Menues.
+- Frontend-Viewmodel-Tests fuer Sidebar-Baumzustand/Persistenz erweitert.
+- Pflicht-Screenshots fuer Korrekturmodus nach UI-Aenderung aktualisiert (Default, Validierung, Responsive).

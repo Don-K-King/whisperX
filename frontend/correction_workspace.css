@@ -66,6 +66,7 @@ body {
   padding: 1rem;
   min-height: 0;
   overflow: hidden;
+  align-items: stretch;
 }
 
 .cw-layout--sidebar-hidden {
@@ -146,13 +147,64 @@ body {
 
 .cw-sidebar {
   padding: 0.8rem;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.cw-sidebar-tree {
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
-  overflow: hidden;
-  position: sticky;
-  top: 0;
-  align-self: start;
+  gap: 0.5rem;
+  padding-right: 0.2rem;
+}
+
+.cw-tree-node {
+  border: 1px solid color-mix(in srgb, var(--cw-border) 85%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cw-surface) 96%, transparent);
+}
+
+.cw-tree-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  padding: 0.5rem 0.6rem;
+}
+
+.cw-tree-summary::-webkit-details-marker {
+  display: none;
+}
+
+.cw-tree-caret {
+  color: var(--cw-muted);
+  font-size: 0.74rem;
+  transition: transform 140ms ease;
+}
+
+.cw-tree-node[open] > .cw-tree-summary .cw-tree-caret {
+  transform: rotate(90deg);
+}
+
+.cw-tree-content {
+  border-top: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
+  padding: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.cw-sidebar-status {
+  margin: 0;
 }
 
 .cw-sidebar input,
@@ -261,8 +313,13 @@ body {
   }
 
   .cw-sidebar {
-    position: static;
-    overflow: auto;
+    height: auto;
+    grid-template-rows: auto auto;
+  }
+
+  .cw-sidebar-tree {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .cw-audio {

@@ -10,11 +10,15 @@ import { consumeCorrectionHandoff } from './correction_handoff.js';
 import {
   buildSpeakerDisplayLabel,
   buildSpeakerOptionEntries,
+  parseSidebarSectionState,
   parseSidebarVisibility,
+  serializeSidebarSectionState,
+  SIDEBAR_SECTION_IDS,
 } from './correction_workspace_viewmodel.js';
 
 const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
+const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
 
 const state = {
   token: '',
@@ -43,6 +47,7 @@ const state = {
   mediaSource: null,
   mediaLoadError: '',
   sidebarVisible: loadPersistedSidebarVisibility(),
+  sidebarSectionsOpen: loadPersistedSidebarSectionState(),
 };
 
 function getBootstrap() {
@@ -111,6 +116,40 @@ function persistSidebarVisibility(visible) {
   }
 }
 
+function loadPersistedSidebarSectionState() {
+  try {
+    return parseSidebarSectionState(localStorage.getItem(SIDEBAR_SECTION_STATE_STORAGE_KEY));
+  } catch {
+    return parseSidebarSectionState(null);
+  }
+}
+
+function persistSidebarSectionState() {
+  try {
+    localStorage.setItem(
+      SIDEBAR_SECTION_STATE_STORAGE_KEY,
+      serializeSidebarSectionState(state.sidebarSectionsOpen),
+    );
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function renderSidebarTreeSection({ id, title, body }) {
+  const isOpen = state.sidebarSectionsOpen?.[id] !== false;
+  return `
+    <details class="cw-tree-node" data-tree-section="${escapeHtml(id)}" ${isOpen ? 'open' : ''}>
+      <summary class="cw-tree-summary">
+        <span class="cw-tree-caret" aria-hidden="true">&#9656;</span>
+        <span>${escapeHtml(title)}</span>
+      </summary>
+      <div class="cw-tree-content">
+        ${body}
+      </div>
+    </details>
+  `;
+}
+
 function markUnsavedChanges() {
   state.hasUnsavedChanges = true;
 }
@@ -177,6 +216,50 @@ function render() {
   const mediaNode = renderMediaNode();
   const sidebarToggleLabel = state.sidebarVisible ? 'Statusfenster ausblenden' : 'Statusfenster einblenden';
   const layoutClass = state.sidebarVisible ? 'cw-layout' : 'cw-layout cw-layout--sidebar-hidden';
+  const sidebarStatusBody = `
+    <div class="cw-row">
+      <label for="cw-review-status">Pruefstatus</label>
+      <input id="cw-review-status" value="${escapeHtml(state.reviewStatus)}" />
+    </div>
+    <div class="cw-row">
+      <label>
+        <input id="cw-final-toggle" type="checkbox" ${state.isFinal ? 'checked' : ''} /> Final
+      </label>
+    </div>
+    <button id="cw-status-save" class="primary">Status speichern</button>
+  `;
+  const sidebarSearchBody = `
+    <input id="cw-search-query" placeholder="Suche" value="${escapeHtml(state.searchQuery)}" />
+    <select id="cw-search-speaker">
+      <option value="">Alle Sprecher</option>
+      ${speakerOptions}
+    </select>
+    <input id="cw-replace-query" placeholder="Ersetze" value="${escapeHtml(state.replaceQuery)}" />
+    <input id="cw-replace-value" placeholder="Durch" value="${escapeHtml(state.replaceValue)}" />
+    <div class="cw-row">
+      <button id="cw-replace-one">Ersetze eins</button>
+      <button id="cw-replace-all" class="primary">Ersetze alle</button>
+    </div>
+  `;
+  const sidebarReassignBody = `
+    <select id="cw-reassign-segment">
+      ${state.segments.map((segment) => {
+    const speakerLabel = buildSpeakerDisplayLabel({
+      speakerKey: segment.speaker,
+      speakerLabels: state.speakerLabels,
+    });
+    const timeRange = `${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`;
+    return `<option value="${escapeHtml(segment.segment_id)}">${escapeHtml(`${speakerLabel} | ${timeRange}`)}</option>`;
+  }).join('')}
+    </select>
+    <select id="cw-reassign-speaker">
+      ${speakerOptions}
+    </select>
+    <input id="cw-reassign-start" type="number" min="0" placeholder="Start-Char (optional)" />
+    <input id="cw-reassign-end" type="number" min="0" placeholder="End-Char (optional)" />
+    <button id="cw-reassign-apply">Sprecher anwenden</button>
+  `;
+  const sidebarChangeLogBody = renderOperationLog();
 
   app.innerHTML = `
     <section class="cw-root">
@@ -203,59 +286,13 @@ function render() {
         <section class="cw-editor" id="cw-editor">${renderEditorBlocks()}</section>
         ${state.sidebarVisible ? `
         <aside class="cw-sidebar">
-          <section>
-            <h3>Status</h3>
-            <div class="cw-row">
-              <label for="cw-review-status">Pruefstatus</label>
-              <input id="cw-review-status" value="${escapeHtml(state.reviewStatus)}" />
-            </div>
-            <div class="cw-row">
-              <label>
-                <input id="cw-final-toggle" type="checkbox" ${state.isFinal ? 'checked' : ''} /> Final
-              </label>
-            </div>
-            <button id="cw-status-save" class="primary">Status speichern</button>
+          <section class="cw-sidebar-tree" role="tree" aria-label="Korrekturwerkzeuge">
+            ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[0], title: 'Status', body: sidebarStatusBody })}
+            ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[1], title: 'Suche & Ersetzen', body: sidebarSearchBody })}
+            ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[2], title: 'Sprecherumteilung', body: sidebarReassignBody })}
+            ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[3], title: 'Aenderungslog', body: sidebarChangeLogBody })}
           </section>
-
-          <section>
-            <h3>Suche & Ersetzen</h3>
-            <input id="cw-search-query" placeholder="Suche" value="${escapeHtml(state.searchQuery)}" />
-            <select id="cw-search-speaker">
-              <option value="">Alle Sprecher</option>
-              ${speakerOptions}
-            </select>
-            <input id="cw-replace-query" placeholder="Ersetze" value="${escapeHtml(state.replaceQuery)}" />
-            <input id="cw-replace-value" placeholder="Durch" value="${escapeHtml(state.replaceValue)}" />
-            <button id="cw-replace-one">Ersetze eins</button>
-            <button id="cw-replace-all" class="primary">Ersetze alle</button>
-          </section>
-
-          <section>
-            <h3>Sprecherumteilung</h3>
-            <select id="cw-reassign-segment">
-              ${state.segments.map((segment) => {
-                const speakerLabel = buildSpeakerDisplayLabel({
-                  speakerKey: segment.speaker,
-                  speakerLabels: state.speakerLabels,
-                });
-                const timeRange = `${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`;
-                return `<option value="${escapeHtml(segment.segment_id)}">${escapeHtml(`${speakerLabel} | ${timeRange}`)}</option>`;
-              }).join('')}
-            </select>
-            <select id="cw-reassign-speaker">
-              ${speakerOptions}
-            </select>
-            <input id="cw-reassign-start" type="number" min="0" placeholder="Start-Char (optional)" />
-            <input id="cw-reassign-end" type="number" min="0" placeholder="End-Char (optional)" />
-            <button id="cw-reassign-apply">Sprecher anwenden</button>
-          </section>
-
-          <section>
-            <h3>Aenderungslog</h3>
-            ${renderOperationLog()}
-          </section>
-
-          <p id="cw-status-message" class="cw-status">${escapeHtml(state.statusMessage)}</p>
+          <p id="cw-status-message" class="cw-status cw-sidebar-status">${escapeHtml(state.statusMessage)}</p>
         </aside>
         ` : ''}
       </section>
@@ -395,6 +432,18 @@ function bindInteractions() {
       render();
     };
   }
+
+  document.querySelectorAll('[data-tree-section]').forEach((node) => {
+    node.addEventListener('toggle', () => {
+      const sectionId = String(node.getAttribute('data-tree-section') || '');
+      if (!SIDEBAR_SECTION_IDS.includes(sectionId)) return;
+      state.sidebarSectionsOpen = {
+        ...state.sidebarSectionsOpen,
+        [sectionId]: Boolean(node.open),
+      };
+      persistSidebarSectionState();
+    });
+  });
 
   const autosaveNode = document.getElementById('cw-autosave');
   if (autosaveNode) {
