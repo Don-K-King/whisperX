@@ -7,8 +7,14 @@ import {
   normalizeSegments,
 } from './correction_utils.js';
 import { consumeCorrectionHandoff } from './correction_handoff.js';
+import {
+  buildSpeakerDisplayLabel,
+  buildSpeakerOptionEntries,
+  parseSidebarVisibility,
+} from './correction_workspace_viewmodel.js';
 
 const THEME_STORAGE_KEY = 'evodox-theme';
+const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 
 const state = {
   token: '',
@@ -36,6 +42,7 @@ const state = {
   closePromptVisible: false,
   mediaSource: null,
   mediaLoadError: '',
+  sidebarVisible: loadPersistedSidebarVisibility(),
 };
 
 function getBootstrap() {
@@ -72,10 +79,10 @@ async function callApi(path, options = {}) {
 
 function setStatus(message) {
   state.statusMessage = message;
-  const node = document.getElementById('cw-status-message');
-  if (node) {
-    node.textContent = message;
-  }
+  const sidebarNode = document.getElementById('cw-status-message');
+  if (sidebarNode) sidebarNode.textContent = message;
+  const footerNode = document.getElementById('cw-global-status');
+  if (footerNode) footerNode.textContent = message;
 }
 
 function setTheme(theme) {
@@ -83,6 +90,22 @@ function setTheme(theme) {
   document.body.dataset.theme = resolved;
   try {
     localStorage.setItem(THEME_STORAGE_KEY, resolved);
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function loadPersistedSidebarVisibility() {
+  try {
+    return parseSidebarVisibility(localStorage.getItem(SIDEBAR_VISIBILITY_STORAGE_KEY));
+  } catch {
+    return true;
+  }
+}
+
+function persistSidebarVisibility(visible) {
+  try {
+    localStorage.setItem(SIDEBAR_VISIBILITY_STORAGE_KEY, visible ? '1' : '0');
   } catch {
     // ignore persistence errors
   }
@@ -101,10 +124,10 @@ function getMediaElement() {
 }
 
 function getSpeakerOptions() {
-  const values = new Set();
-  state.segments.forEach((segment) => values.add(String(segment.speaker ?? 'UNKNOWN')));
-  Object.keys(state.speakerLabels || {}).forEach((speaker) => values.add(speaker));
-  return [...values];
+  return buildSpeakerOptionEntries({
+    segments: state.segments,
+    speakerLabels: state.speakerLabels,
+  });
 }
 
 function renderOperationLog() {
@@ -127,17 +150,17 @@ function escapeHtml(value) {
 function renderEditorBlocks() {
   return state.segments.map((segment, index) => {
     const activeClass = index === state.activeSegmentIndex ? 'active' : '';
+    const selectedClass = String(segment.segment_id) === String(state.selectedSegmentId) ? 'selected' : '';
+    const speakerLabel = buildSpeakerDisplayLabel({
+      speakerKey: segment.speaker,
+      speakerLabels: state.speakerLabels,
+    });
     return `
-      <article class="cw-block ${activeClass}" data-segment-id="${escapeHtml(segment.segment_id)}">
-        <div class="cw-row">
-          <strong>${escapeHtml(segment.speaker)}</strong>
-          <small>${escapeHtml(formatTimestamp(segment.start))} - ${escapeHtml(formatTimestamp(segment.end))}</small>
-          <button type="button" data-select-segment="${escapeHtml(segment.segment_id)}">Auswaehlen</button>
-        </div>
-        <div class="cw-row">
-          <label>Speaker</label>
-          <input data-speaker-input="${escapeHtml(segment.segment_id)}" value="${escapeHtml(segment.speaker)}" />
-        </div>
+      <article class="cw-block ${activeClass} ${selectedClass}" data-segment-id="${escapeHtml(segment.segment_id)}">
+        <header class="cw-block-header">
+          <strong class="cw-block-speaker">${escapeHtml(speakerLabel)}</strong>
+          <small class="cw-block-time">${escapeHtml(formatTimestamp(segment.start))} - ${escapeHtml(formatTimestamp(segment.end))}</small>
+        </header>
         <textarea data-text-input="${escapeHtml(segment.segment_id)}">${escapeHtml(segment.text)}</textarea>
       </article>
     `;
@@ -148,10 +171,12 @@ function render() {
   const app = document.getElementById('correction-app');
   if (!app) return;
   const speakerOptions = getSpeakerOptions()
-    .map((speaker) => `<option value="${escapeHtml(speaker)}">${escapeHtml(speaker)}</option>`)
+    .map((entry) => `<option value="${escapeHtml(entry.key)}">${escapeHtml(entry.label)}</option>`)
     .join('');
   const theme = document.body.dataset.theme === 'dark' ? 'dark' : 'light';
   const mediaNode = renderMediaNode();
+  const sidebarToggleLabel = state.sidebarVisible ? 'Statusfenster ausblenden' : 'Statusfenster einblenden';
+  const layoutClass = state.sidebarVisible ? 'cw-layout' : 'cw-layout cw-layout--sidebar-hidden';
 
   app.innerHTML = `
     <section class="cw-root">
@@ -167,14 +192,16 @@ function render() {
         <button id="cw-discard" class="danger">Verwerfen</button>
         <button id="cw-undo">Undo</button>
         <button id="cw-redo">Redo</button>
+        <button id="cw-sidebar-toggle">${sidebarToggleLabel}</button>
         <button id="cw-theme-toggle">Theme: ${theme === 'dark' ? 'Dark' : 'Light'}</button>
         <button id="cw-close">Fenster schliessen</button>
         <label>
           <input id="cw-autosave" type="checkbox" ${state.autosaveEnabled ? 'checked' : ''} /> Autosave Draft
         </label>
       </header>
-      <section class="cw-layout">
+      <section class="${layoutClass}">
         <section class="cw-editor" id="cw-editor">${renderEditorBlocks()}</section>
+        ${state.sidebarVisible ? `
         <aside class="cw-sidebar">
           <section>
             <h3>Status</h3>
@@ -206,7 +233,14 @@ function render() {
           <section>
             <h3>Sprecherumteilung</h3>
             <select id="cw-reassign-segment">
-              ${state.segments.map((segment) => `<option value="${escapeHtml(segment.segment_id)}">${escapeHtml(segment.segment_id)}</option>`).join('')}
+              ${state.segments.map((segment) => {
+                const speakerLabel = buildSpeakerDisplayLabel({
+                  speakerKey: segment.speaker,
+                  speakerLabels: state.speakerLabels,
+                });
+                const timeRange = `${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`;
+                return `<option value="${escapeHtml(segment.segment_id)}">${escapeHtml(`${speakerLabel} | ${timeRange}`)}</option>`;
+              }).join('')}
             </select>
             <select id="cw-reassign-speaker">
               ${speakerOptions}
@@ -223,6 +257,7 @@ function render() {
 
           <p id="cw-status-message" class="cw-status">${escapeHtml(state.statusMessage)}</p>
         </aside>
+        ` : ''}
       </section>
       <footer class="cw-audio">
         ${mediaNode}
@@ -235,6 +270,7 @@ function render() {
           <option value="2">2.0x</option>
         </select>
         <span class="cw-status">${escapeHtml(state.mediaLoadError || 'Ursprungsdatei automatisch geladen.')}</span>
+        <span id="cw-global-status" class="cw-status">${escapeHtml(state.statusMessage)}</span>
       </footer>
       ${state.closePromptVisible ? `
       <section class="cw-modal-backdrop" role="dialog" aria-modal="true" aria-label="Ungespeicherte Aenderungen">
@@ -274,9 +310,7 @@ function collectSegmentsFromDom() {
   const updated = normalizeSegments(state.segments);
   updated.forEach((segment) => {
     const textNode = document.querySelector(`[data-text-input="${CSS.escape(String(segment.segment_id))}"]`);
-    const speakerNode = document.querySelector(`[data-speaker-input="${CSS.escape(String(segment.segment_id))}"]`);
     if (textNode) segment.text = String(textNode.value ?? '');
-    if (speakerNode) segment.speaker = String(speakerNode.value ?? '').trim() || 'UNKNOWN';
   });
   return mergeConsecutiveSpeakerBlocks(updated);
 }
@@ -337,18 +371,29 @@ function patchStateFromSession(payload) {
 function bindInteractions() {
   const editor = document.getElementById('cw-editor');
   if (editor) {
-    editor.querySelectorAll('[data-text-input], [data-speaker-input]').forEach((node) => {
+    editor.querySelectorAll('[data-text-input]').forEach((node) => {
       node.addEventListener('input', () => {
         scheduleAutosave();
       });
     });
-    editor.querySelectorAll('[data-select-segment]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        state.selectedSegmentId = String(event.currentTarget.dataset.selectSegment || '');
+    editor.querySelectorAll('.cw-block').forEach((blockNode) => {
+      blockNode.addEventListener('click', () => {
+        state.selectedSegmentId = String(blockNode.dataset.segmentId || '');
+        editor.querySelectorAll('.cw-block.selected').forEach((node) => node.classList.remove('selected'));
+        blockNode.classList.add('selected');
         const targetSelect = document.getElementById('cw-reassign-segment');
         if (targetSelect) targetSelect.value = state.selectedSegmentId;
       });
     });
+  }
+
+  const sidebarToggle = document.getElementById('cw-sidebar-toggle');
+  if (sidebarToggle) {
+    sidebarToggle.onclick = () => {
+      state.sidebarVisible = !state.sidebarVisible;
+      persistSidebarVisibility(state.sidebarVisible);
+      render();
+    };
   }
 
   const autosaveNode = document.getElementById('cw-autosave');
@@ -634,8 +679,18 @@ function bindInteractions() {
   }
 
   const selectedSegmentNode = document.getElementById('cw-reassign-segment');
-  if (selectedSegmentNode && state.selectedSegmentId) {
-    selectedSegmentNode.value = String(state.selectedSegmentId);
+  if (selectedSegmentNode) {
+    if (state.selectedSegmentId) {
+      selectedSegmentNode.value = String(state.selectedSegmentId);
+    }
+    selectedSegmentNode.onchange = () => {
+      state.selectedSegmentId = String(selectedSegmentNode.value || '');
+      if (editor) {
+        editor.querySelectorAll('.cw-block.selected').forEach((node) => node.classList.remove('selected'));
+        const active = editor.querySelector(`[data-segment-id="${CSS.escape(state.selectedSegmentId)}"]`);
+        if (active) active.classList.add('selected');
+      }
+    };
   }
 }
 

@@ -61,11 +61,15 @@ body {
 
 .cw-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   gap: 1rem;
   padding: 1rem;
   min-height: 0;
   overflow: hidden;
+}
+
+.cw-layout--sidebar-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .cw-editor,
@@ -80,13 +84,13 @@ body {
   min-height: 0;
   height: 100%;
   overflow: auto;
-  padding: 1rem;
+  padding: 0.8rem;
 }
 
 .cw-block {
   border: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
   border-radius: 10px;
-  padding: 0.8rem;
+  padding: 0.55rem 0.65rem 0.65rem;
   margin-bottom: 0.8rem;
   background: color-mix(in srgb, var(--cw-surface) 94%, transparent);
 }
@@ -95,11 +99,36 @@ body {
   outline: 2px solid color-mix(in srgb, var(--cw-accent) 65%, transparent);
 }
 
+.cw-block.selected {
+  border-color: color-mix(in srgb, var(--cw-accent) 45%, var(--cw-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cw-accent) 30%, transparent);
+}
+
+.cw-block-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.6rem;
+}
+
+.cw-block-speaker {
+  font-size: 0.95rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.cw-block-time {
+  margin-left: auto;
+  color: var(--cw-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .cw-block textarea {
   width: 100%;
-  min-height: 72px;
+  min-height: 112px;
   resize: vertical;
-  margin-top: 0.5rem;
+  margin-top: 0.35rem;
   border: 1px solid var(--cw-border);
   border-radius: 8px;
   background: transparent;
