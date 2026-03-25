@@ -189,3 +189,32 @@
 
 ### Alert-Rules-Quelle
 - Referenzregeln liegen in `deploy/prometheus/alerts-targetbetrieb.yml` und müssen in die zentrale Alertmanager-Pipeline importiert werden.
+
+## 2026-03-22 - Monitoring-Erweiterung: GPU-First Runtime und dedizierte Pools
+- Neue Pflichtsignale:
+  - Log/Audit-Event `worker.runtime.gpu_fallback` (Zaehler pro Worker-Instanz).
+  - Effektiver Device-Modus aus `worker.runner.started`-Event (`whisperx_device`, `whisperx_compute_type`, `whisperx_device_index`), bevorzugt aus strukturierter Event-Auswertung statt reinem Message-String.
+  - Queue-Lag getrennt nach Klassen `cpu-short`, `gpu-standard`, `gpu-long`.
+- Alarmempfehlungen:
+  - **Alert: worker_gpu_fallback_spike**
+    - Bedingung: > N Fallbacks innerhalb 15 Minuten.
+    - Schweregrad: High (GPU-Instabilitaet oder Runtime-Misconfig).
+  - **Alert: worker_gpu_queue_lag_high**
+    - Bedingung: p95 Queue-Lag fuer `gpu-*` ueber Schwellwert.
+    - Schweregrad: High.
+  - **Alert: worker_gpu_pool_imbalance**
+    - Bedingung: ein GPU-Worker permanent ausgelastet, andere idle.
+    - Schweregrad: Medium (Routing/Batch/Queue-Tuning erforderlich).
+
+## 2026-03-22 - Monitoring-Erweiterung: Frontend `unknown_error` / API-Proxy
+- Neue Pflichtsignale:
+  - Frontend-Proxy-5xx-Rate fuer `/api/*`.
+  - NGINX-Upstream-Connect-Fehler (`connect() failed`, `upstream prematurely closed connection`).
+  - API-Health `GET /docs` (container-internal) und korrelierte Restart-Rate von `frontend`/`api`.
+- Alarmempfehlungen:
+  - **Alert: frontend_api_proxy_5xx_high**
+    - Bedingung: > 5% `5xx` auf `/api/*` fuer > 5 Minuten.
+    - Schweregrad: High (UI zeigt typischerweise `unknown_error`).
+  - **Alert: frontend_upstream_connect_failures**
+    - Bedingung: wiederholte Upstream-Connect-Fehler im Frontend-Log.
+    - Schweregrad: High.

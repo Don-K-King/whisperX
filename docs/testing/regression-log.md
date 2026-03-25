@@ -114,3 +114,105 @@
 - Bewertung: Keine Regression in bestehenden Servicepfaden; neuer Backend-/Governance-/Preflight-Pfad ist testseitig abgedeckt.
 
 
+
+## 2026-03-22 - Regression nach Midpoint-Checkpointing + Cancel-Lifecycle
+- Anlass: Architektur-/Lifecycle-Erweiterung um persistente Job-Checkpoints (`job_checkpoints`), terminalen Cancel-Endpunkt und Worker-Cancel-Prioritaet.
+- Ausgefuehrt (Backend Regression): `docker run --rm -v <repo>:/work -w /work python:3.12-slim python -m unittest discover -s tests -p "test_*.py"`.
+- Ergebnis (Backend Regression): Gruen, 139 Tests, 16 Skips.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 14 Tests.
+- Ausgefuehrt (Smoke mit FastAPI): `docker run --rm -v <repo>:/work -w /work python:3.12-slim sh -lc "pip install -q fastapi pydantic uvicorn httpx && python -m unittest tests.test_local_runtime_smoke"`.
+- Ergebnis (Smoke): Gruen, 3 Tests (`create->complete->worker`, `pause->resume(checkpoint)`, `cancel->canceled`).
+- Bewertung: Keine Regression in bestehender Queue-/Worker-/Frontend-Logik; neue Cancel- und Checkpoint-Pfade sind testseitig abgedeckt.
+
+## 2026-03-22 - Regression Stabiler Job-Lifecycle (Force-Delete + no-auto-restart)
+- Anlass: Delete fuer aktive Status, harte Timeout-Deaktivierung (`WORKER_WHISPERX_TIMEOUT_SECONDS=0`) und Worker-Exception-Handling ohne Retry-Loop.
+- Ausgefuehrt (Backend Vollsuite): `docker run --rm -v C:\\Users\\patrick\\Evidowhisperx:/work -w /work evodox-local:dev sh -lc "python -m pip install --quiet httpx && python -m unittest discover -s tests -p 'test_*.py'"`.
+- Ergebnis (Backend Vollsuite): Gruen, 147 Tests.
+- Ausgefuehrt (Frontend): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend): Gruen, 14 Tests.
+- Ausgefuehrt (gezieltes Red->Green): `docker run --rm -v C:\\Users\\patrick\\Evidowhisperx:/work -w /work evodox-local:dev sh -lc "python -m pip install --quiet httpx && python -m unittest tests.test_worker_pipeline_service tests.test_job_lifecycle_service"`.
+- Ergebnis (gezielt): Erst Red im neuen Resume-Dedupe-Test (6 statt 4 Segmente), danach Green mit Fix.
+- Bewertung: Force-Delete- und Anti-Restart-Semantik sind regressionsseitig abgesichert; Pause/Resume bleibt auch bei nicht offset-faehiger ASR-Engine ohne Segmentduplikate konsistent.
+
+## 2026-03-22 - Regression nach GPU-First Runtime + Multi-GPU Pool-Vorbereitung
+- Anlass: Architektur-/Deployment-Aenderung fuer GPU-Default, CUDA-Fallback, Device-Index-Wiring und queue-basierte Worker-Pool-Vorbereitung.
+- Ausgefuehrt (gezielte TDD-Red/Green):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi uvicorn pydantic boto3 && python -m unittest tests.test_worker_runner tests.test_complete_upload_infrastructure tests.test_target_deployment_artifacts"`
+- Ergebnis (gezielt): zuerst Red (neue GPU-/Queue-Tests), danach Green (25 Tests, OK).
+- Ausgefuehrt (Backend Vollsuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi uvicorn pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'"`
+- Ergebnis (Backend Vollsuite): Gruen, 156 Tests, 0 Failures.
+- Ausgefuehrt (Frontend Regression):
+  - `node --test frontend/tests/*.test.js`
+- Ergebnis (Frontend): Gruen, 14 Tests.
+- Bewertung: Keine Regression in API/Worker/Queue/Frontend-Flows; GPU-Fallback und Multi-Pool-Vorbereitung sind testseitig abgesichert.
+
+## 2026-03-22 - Regression nach Tenant-Admin Decoding Settings + Job-Snapshot
+- Anlass: neue admin-only API fuer Decoding-Defaults, neue Persistenz (`tenant_transcription_settings`, Job-Snapshot), Queue/Resume/Worker-Wiring und Frontend-Admin-Route.
+- Ausgefuehrt (gezielte TDD-Suite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . && python -m unittest tests.test_transcription_settings_service tests.test_complete_upload_service tests.test_job_lifecycle_service tests.test_worker_runner tests.test_job_infra_adapters"`
+- Ergebnis (gezielt): Gruen, 57 Tests.
+- Ausgefuehrt (FastAPI-Integrationssuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi pydantic httpx && python -m unittest tests.test_fastapi_http_adapter_integration"`
+- Ergebnis (FastAPI): Gruen, 16 Tests.
+- Ausgefuehrt (Backend Vollsuite):
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim bash -lc "pip install --no-cache-dir . fastapi pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'"`
+- Ergebnis (Backend Vollsuite): Gruen, 170 Tests.
+- Ausgefuehrt (Frontend Regression):
+  - `node --test frontend/tests/*.test.js`
+- Ergebnis (Frontend): Gruen, 18 Tests.
+- Bewertung: Keine Regression in bestehenden Lifecycle-/Queue-/Worker-Pfaden; neue Admin-Settings und Snapshot-Semantik sind integriert und abgesichert.
+
+## 2026-03-22 - UI Screenshot-Nachweis (Transcription Settings)
+- Anlass: UI-Aenderung an neuer Admin-Route `transcription-settings`.
+- Ausgefuehrt: `node scripts/capture_transcription_settings_screenshots.mjs`.
+- Ergebnis:
+  - `docs/testing/screenshots/transcription-settings-default.png`
+  - `docs/testing/screenshots/transcription-settings-validation-error.png`
+  - `docs/testing/screenshots/transcription-settings-responsive.png`
+- Bewertung: Screenshot-Pflicht fuer Default-, Validierungs-/Fehler- und Responsive-Zustand erfuellt.
+
+## 2026-03-23 - Regression nach WhisperX large-v3 Erzwingung + Sprachwahl + Chunk/VAD
+- Anlass: Runtime-/API-/UI-Aenderung fuer harte Modellwahl (large-v3), Sprachwahl pro Job und neue Decoding-Parameter (chunk_size, vad_onset, vad_offset).
+- Ausgefuehrt (gezielte Frontend-Tests): node --test frontend/tests/upload_flow.test.js frontend/tests/transcription_settings_flow.test.js.
+- Ergebnis (gezielt Frontend): Gruen.
+- Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
+- Ergebnis (Frontend Regression): Gruen, 23 Tests.
+- Ausgefuehrt (gezielte Backend-Tests): docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_job_create_service tests.test_complete_upload_service tests.test_transcription_settings_service tests.test_worker_runner tests.test_fastapi_http_adapter_integration".
+- Ergebnis (gezielt Backend): Gruen, 65 Tests.
+- Ausgefuehrt (Backend Vollsuite): docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic boto3 httpx && python -m unittest discover -s tests -p 'test_*.py'".
+- Ergebnis (Backend Vollsuite): Gruen, 187 Tests.
+- Bewertung: Keine Regression in bestehenden Lifecycle-/Queue-/Worker-Pfaden; neue Spracheinstellungen und Chunk/VAD-Wiring sind testseitig abgesichert.
+## 2026-03-23 - UI Screenshot-Nachweis (New Job Sprache + Transcription Settings)
+- Anlass: UI-Aenderungen in New-Job-View (Sprach-Dropdown) und Admin-Transcription-Settings (chunk_size, vad_onset, vad_offset).
+- Ausgefuehrt: node scripts/capture_new_job_language_screenshots.mjs.
+- Ausgefuehrt: node scripts/capture_transcription_settings_screenshots.mjs.
+- Ergebnis:
+  - docs/testing/screenshots/new-job-language-default.png
+  - docs/testing/screenshots/new-job-language-responsive.png
+  - docs/testing/screenshots/transcription-settings-default.png
+  - docs/testing/screenshots/transcription-settings-validation-error.png
+  - docs/testing/screenshots/transcription-settings-responsive.png
+- Bewertung: Screenshot-Pflicht fuer betroffene Hauptscreens und relevante Zustaende ist erfuellt.
+
+## 2026-03-24 - Korrekturmodus
+- Frontend-Unit-Suite (`node --test frontend/tests/*.test.js`) erfolgreich ausgefuehrt: 28/28 gruen.
+- Backend-Korrekturtests via Docker ausgefuehrt:
+  - `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_store tests.test_transcript_correction_http_adapter tests.test_transcript_correction_fastapi_integration"`
+  - Ergebnis: gruen, 17 Tests.
+- Screenshot-Automation fuer Korrekturmodus ausgefuehrt: `node scripts/capture_correction_mode_screenshots.mjs`.
+- Screenshot-Artefakte:
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+
+## 2026-03-25 - Regression Korrekturmodus Stabilisierung + UX/Audio
+- Anlass: Start-Handover auf tabuebergreifenden TTL-Store, neue Media-Source-API, UI-Layout-/Close-Flow-/Audio-Scroll-Anpassungen.
+- Ausgefuehrt (Frontend Unit): `cmd /c npm test` in `frontend/`.
+- Ergebnis (Frontend Unit): Gruen, 32 Tests.
+- Ausgefuehrt (Backend Correction-Suite): `docker run --rm -v C:\Users\patrick\Evidowhisperx:/workspace -w /workspace evodox-local:dev sh -lc "pip install --quiet httpx && python -m unittest tests.test_transcript_correction_fastapi_integration tests.test_transcript_correction_http_adapter tests.test_transcript_correction_service tests.test_transcript_correction_store"`.
+- Ergebnis (Backend Correction-Suite): Gruen, 20 Tests.
+- Ausgefuehrt (UI-Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots): aktualisiert (`correction-shell-default`, `correction-editor-validation-error`, `correction-shell-responsive`).
+- Docker Smoke: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .` und `docker compose -f deploy/docker-compose.target.yml --env-file .env up -d api worker retention-runner frontend`; alle Services healthy.

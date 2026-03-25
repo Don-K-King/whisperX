@@ -85,7 +85,7 @@ class JobLifecycleE2ETests(unittest.TestCase):
 
             status = get_job_status(job_id=created.job_id, tenant_id="tenant-a", job_store=repository)
             self.assertEqual(status.status, "queued")
-            self.assertEqual(status.progress, 0)
+            self.assertEqual(status.progress, 5)
 
 
 if __name__ == "__main__":

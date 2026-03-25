@@ -47,7 +47,21 @@ class JobStatusServiceTests(unittest.TestCase):
         )
 
         result = get_job_status(job_id="job_2", tenant_id="tenant-a", job_store=self.store)
-        self.assertEqual(result.progress, 0)
+        self.assertEqual(result.progress, 5)
+
+    def test_cancel_requested_uses_milestone_progress_when_missing(self):
+        self.store.add(
+            {
+                "job_id": "job_3",
+                "tenant_id": "tenant-a",
+                "status": "cancel_requested",
+                "retention_months": 6,
+                "created_at": "2026-02-01T00:00:00+00:00",
+            }
+        )
+
+        result = get_job_status(job_id="job_3", tenant_id="tenant-a", job_store=self.store)
+        self.assertEqual(result.progress, 20)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ ALLOWED_UPLOAD_CONTENT_TYPES = frozenset({
 MAX_UPLOAD_SIZE_BYTES = 21_474_836_480
 MIN_RETENTION_MONTHS = 1
 MAX_RETENTION_MONTHS = 36
+ALLOWED_TRANSCRIPTION_LANGUAGES = frozenset({"auto", "de", "en", "fr", "es", "it"})
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class CreateJobInput:
     size_bytes: int
     retention_months: int
     idempotency_key: str
+    language: str = "de"
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,11 @@ class JobRecord:
     content_type: str
     size_bytes: int
     retention_months: int
+    upload_session_id: str | None = None
+    object_key: str | None = None
+    checksum_sha256: str | None = None
+    transcription_options_json: dict[str, str] | None = None
+    progress: int | None = None
     status: str = "upload_pending"
 
 
@@ -129,6 +136,7 @@ def create_job(
     idempotency_store: InMemoryIdempotencyStore,
 ) -> CreateJobResponse:
     _validate_create_job_request(request)
+    normalized_language = _normalize_language(request.language, default="de")
 
     payload_hash = _payload_hash(request)
     existing = idempotency_store.get(actor_context.tenant_id, request.idempotency_key)
@@ -138,6 +146,11 @@ def create_job(
         return existing.response
 
     job_id = f"job_{uuid4().hex[:12]}"
+    upload_session = upload_session_factory.create_session(
+        tenant_id=actor_context.tenant_id,
+        job_id=job_id,
+        filename=request.filename,
+    )
     job = JobRecord(
         job_id=job_id,
         tenant_id=actor_context.tenant_id,
@@ -146,11 +159,9 @@ def create_job(
         content_type=request.content_type,
         size_bytes=request.size_bytes,
         retention_months=request.retention_months,
-    )
-    upload_session = upload_session_factory.create_session(
-        tenant_id=actor_context.tenant_id,
-        job_id=job_id,
-        filename=request.filename,
+        transcription_options_json={"language": normalized_language},
+        upload_session_id=upload_session.session_id,
+        object_key=upload_session.object_key,
     )
 
     response = CreateJobResponse(
@@ -210,10 +221,25 @@ def _validate_create_job_request(request: CreateJobInput) -> None:
     if not isinstance(request.idempotency_key, str) or len(request.idempotency_key.strip()) < 8:
         raise ValidationError("job.validation.idempotency_key", "Idempotency-Key is required and must be >= 8 chars.")
 
+    language = _normalize_language(getattr(request, "language", "de"), default="de")
+    if language not in ALLOWED_TRANSCRIPTION_LANGUAGES:
+        raise ValidationError(
+            "job.validation.language",
+            "Language must be one of: auto,de,en,fr,es,it.",
+        )
+
 
 def _payload_hash(request: CreateJobInput) -> str:
+    language = _normalize_language(getattr(request, "language", "de"), default="de")
     payload = (
         f"{request.filename}|{request.content_type}|{request.size_bytes}|"
-        f"{request.retention_months}|{request.idempotency_key}"
+        f"{request.retention_months}|{request.idempotency_key}|{language}"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _normalize_language(raw: str | None, *, default: str) -> str:
+    value = str(raw or "").strip().lower()
+    if not value:
+        return default
+    return value

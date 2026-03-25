@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from typing import Any
+
+from .transcription_settings_service import (
+    DEFAULT_DECODING_OPTIONS,
+    InMemoryTenantTranscriptionSettingsStore,
+    TranscriptionSettingsValidationError,
+    normalize_decoding_options,
+    safe_worker_decoding_options,
+)
 
 ALLOWED_SOURCE_STATUSES = frozenset({"upload_pending", "uploaded", "queued"})
 CHECKSUM_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -40,7 +49,7 @@ class CompleteUploadValidationError(Exception):
 
 class QueueSelectionPolicy:
     def select_queue(self, *, content_type: str, size_bytes: int) -> str:
-        if content_type.startswith("video/") or size_bytes >= 250_000_000:
+        if content_type.startswith("video/") or content_type.startswith("audio/") or size_bytes >= 250_000_000:
             return "gpu-standard"
         return "cpu-short"
 
@@ -61,6 +70,27 @@ class InMemoryJobStore:
         if key not in self._jobs:
             raise KeyError("job not found")
         self._jobs[key]["status"] = status
+
+    def mark_queued(
+        self,
+        tenant_id: str,
+        job_id: str,
+        *,
+        object_key: str,
+        checksum_sha256: str,
+        upload_session_id: str,
+        transcription_options: dict[str, Any] | None = None,
+    ) -> None:
+        key = (tenant_id, job_id)
+        if key not in self._jobs:
+            raise KeyError("job not found")
+        self._jobs[key]["status"] = "queued"
+        self._jobs[key]["progress"] = 5
+        self._jobs[key]["object_key"] = object_key
+        self._jobs[key]["checksum_sha256"] = checksum_sha256
+        self._jobs[key]["upload_session_id"] = upload_session_id
+        if transcription_options is not None:
+            self._jobs[key]["transcription_options"] = dict(transcription_options)
 
 
 class InMemoryObjectStorage:
@@ -103,6 +133,7 @@ def complete_upload(
     outbox: Any,
     idempotency_store: Any,
     queue_policy: QueueSelectionPolicy,
+    transcription_settings_store: Any | None = None,
 ) -> CompleteUploadResponse:
     _validate_request(request, tenant_id)
 
@@ -133,8 +164,33 @@ def complete_upload(
         content_type=str(job.get("content_type", "")),
         size_bytes=int(job.get("size_bytes", 0)),
     )
+    transcription_options = _resolve_transcription_options(
+        tenant_id=tenant_id,
+        transcription_settings_store=transcription_settings_store,
+        job=job,
+    )
 
-    job_store.set_status(tenant_id, request.job_id, "queued")
+    mark_queued = getattr(job_store, "mark_queued", None)
+    if callable(mark_queued):
+        try:
+            mark_queued(
+                tenant_id,
+                request.job_id,
+                object_key=request.object_key,
+                checksum_sha256=request.checksum_sha256,
+                upload_session_id=request.upload_session_id,
+                transcription_options=transcription_options,
+            )
+        except TypeError:
+            mark_queued(
+                tenant_id,
+                request.job_id,
+                object_key=request.object_key,
+                checksum_sha256=request.checksum_sha256,
+                upload_session_id=request.upload_session_id,
+            )
+    else:
+        job_store.set_status(tenant_id, request.job_id, "queued")
     outbox.append(
         {
             "event_type": "job.queued",
@@ -145,6 +201,7 @@ def complete_upload(
             "upload_session_id": request.upload_session_id,
             "object_key": request.object_key,
             "checksum_sha256": request.checksum_sha256,
+            "transcription_options": transcription_options,
         }
     )
 
@@ -184,3 +241,60 @@ def _payload_hash(request: CompleteUploadInput) -> str:
         f"{request.checksum_sha256}|{request.idempotency_key}"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _resolve_transcription_options(
+    *,
+    tenant_id: str,
+    transcription_settings_store: Any | None,
+    job: dict[str, Any] | None,
+) -> dict[str, Any]:
+    options = safe_worker_decoding_options(None)
+    store = transcription_settings_store
+    if store is not None:
+        getter = getattr(store, "get", None)
+        if callable(getter):
+            row = getter(tenant_id)
+            if isinstance(row, dict):
+                options = safe_worker_decoding_options(row.get("decoding_options"))
+    overrides = _extract_job_transcription_overrides(job)
+    if overrides:
+        options = {**options, **overrides}
+    return safe_worker_decoding_options(options)
+
+
+def _extract_job_transcription_overrides(job: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(job, dict):
+        return {}
+
+    if isinstance(job.get("transcription_options"), dict):
+        raw = dict(job.get("transcription_options") or {})
+    else:
+        raw_json = job.get("transcription_options_json")
+        raw = _parse_json_dict(raw_json)
+
+    if not raw:
+        return {}
+
+    candidate = {key: raw[key] for key in raw.keys() if key in DEFAULT_DECODING_OPTIONS}
+    if not candidate:
+        return {}
+    try:
+        normalized = normalize_decoding_options(candidate)
+    except TranscriptionSettingsValidationError:
+        return {}
+    return {key: normalized[key] for key in candidate.keys()}
+
+
+def _parse_json_dict(raw_json: Any) -> dict[str, Any]:
+    if isinstance(raw_json, dict):
+        return dict(raw_json)
+    if not isinstance(raw_json, str):
+        return {}
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return parsed

@@ -262,7 +262,7 @@ Erwartung: keine Treffer für produktive Werte; `latest` ist unzulässig.
 **Variante B:** Source-Build aus GitHub-Checkout und anschließend lokal/tagged bereitstellen.
 
 **Architekturkonflikt-Hinweis:**
-Im Repository ist `deploy/docker-compose.target.yml` vorhanden, aber kein Dockerfile im Baum. Für Variante B ist ein reproduzierbares Build-Recipe (inkl. Digest/SBOM/Signatur) in der Infrastruktur zwingend; sonst Build-/Runtime-Drift.
+Für Variante B muss ein reproduzierbares Build-Recipe inkl. Digest/SBOM/Signatur genutzt werden, sonst droht Build-/Runtime-Drift. Für den lokalen Runtime-Slice steht dafuer `deploy/Dockerfile.runtime` bereit.
 
 ### Schritt 4) Preflight zwingend ausführen (harte Deployment-Sperre)
 ```bash
@@ -302,21 +302,21 @@ docker compose -f deploy/docker-compose.target.yml logs --tail=200 api worker re
 ### Schritt 7) End-to-End-Basisprüfung + tenant-sichere Negativtests
 #### 7.1 API-Erreichbarkeit
 ```bash
-curl -fsS http://localhost:8000/docs >/dev/null
+curl -fsS http://localhost:18081/api/docs >/dev/null
 ```
 
 #### 7.2 Auth/tenant-Grundprüfung (mit gültigem Bearer-Token)
 ```bash
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token>"
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token>"
 ```
 
 #### 7.3 Negativtests (Security by Default)
 ```bash
 # fehlendes Token -> 401
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>
 
 # tenant-fremder Zugriff -> 403/404 gemäß Endpoint-Regel
-curl -sS -i http://localhost:8000/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token-aus-anderem-tenant>"
+curl -sS -i http://localhost:18081/api/v1/jobs/<job_id>   -H "Authorization: Bearer <token-aus-anderem-tenant>"
 ```
 
 ### Pflicht-Checks nach jeder Änderung am Deployment-Setup
@@ -332,3 +332,166 @@ python -m unittest discover -s tests -p "test_*.py"
 docker compose -f deploy/docker-compose.target.yml down
 ```
 Anschließend `EVODOX_IMAGE=<last-known-good>` pinnen und kontrolliert mit Schritt 4–7 erneut ausrollen.
+
+## 2026-03-22 - Local Docker Runtime Slice
+- API Entrypoint: uvicorn evodox.runtime.api_app:create_app --factory.
+- Worker Entrypoint: python -m evodox.runtime.worker_runner.
+- Lokaler Startmodus nutzt standardmaessig API_AUTH_MODE=dev und API_OBJECT_STORAGE_MODE=stub fuer den ersten End-to-End-Durchlauf.
+- Produktionsnahe Konfiguration bleibt API_AUTH_MODE=oidc und API_OBJECT_STORAGE_MODE=strict.
+- Gemeinsame Laufzeitdaten (SQLite + Audit-Logs) liegen im Compose-Volume runtime-data unter /runtime.
+- Lokaler Image-Build fuer Docker-Tests: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .`
+
+## 2026-03-22 - Naechster TDD-Schritt: Transcript Vertical Slice bis Frontend
+### Ziel
+- Uploader kann nach `complete-upload` das erzeugte Transcript samt Speaker-Diarization im Frontend sehen.
+
+### Red-Green-Reihenfolge
+1. Red: API-Contract-Test fuer `GET /api/v1/jobs/{job_id}/transcript` mit tenant-scoped Zugriff und klaren Fehlerfaellen.
+2. Red: Frontend-Test fuer Job-Detail-Ansicht mit Transcript- und Speaker-Segment-Anzeige.
+3. Green: Transcript-Repository im Runtime-Wiring aktivieren und Worker-Output dort persistieren.
+4. Green: Frontend von der reinen Jobliste auf Upload-Fluss mit Transcript-Ansicht erweitern.
+
+### Abnahme-Gates
+1. `python -m unittest discover -s tests -p "test_*.py"`
+2. `node --test frontend/tests/*.test.js`
+3. Docker-Smoke mit `docker compose --env-file .env -f deploy/docker-compose.target.yml run --rm retention-preflight`
+4. Lokaler E2E-Check: Job anlegen, Upload finalisieren, Transcript abrufen, Speaker-Segmente im UI sichtbar.
+
+## 2026-03-22 - Naechster TDD-Schritt danach: Presigned Upload Orchestrator
+### Ziel
+- Frontend orchestriert den Upload als `create job -> presigned PUT -> complete-upload` mit echter SHA-256-Pruefsumme.
+
+### Pflicht-Gates
+1. Frontend-Unit-Tests fuer Upload-Orchestrierung und SHA-256.
+2. Python-Regression fuer `complete-upload` und Transcript-Persistenz bleibt gruen.
+3. Docker-E2E-Check mit lokalem Runtime-Image und Compose-Stack bleibt gruen.
+
+### Danach
+- WhisperX-Worker ersetzen den Stub-Worker fuer echte Live-Transkription und Speaker-Diarization.
+
+## 2026-03-22 - Frontend-Zugriff im lokalen Docker-Setup
+- Compose-Service `frontend` stellt das UI unter `http://localhost:18081` bereit.
+- API-Aufrufe laufen same-origin ueber den NGINX-Proxy (`/api/*` -> `api:18000`).
+
+## 2026-03-22 - Erstes lokales Video End-to-End transkribieren (Docker)
+### Voraussetzungen
+- `.env` enthaelt `API_AUTH_MODE=dev`, `WORKER_MODE=whisperx`, `HF_TOKEN=<dein-token>` und `WORKER_WHISPERX_DIARIZATION_MODEL=pyannote/speaker-diarization-community-1`.
+- Runtime-Image gebaut: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .`
+
+### Start
+1. `docker compose --env-file .env -f deploy/docker-compose.target.yml up -d object-storage object-storage-init retention-preflight api worker frontend`
+2. Health pruefen: `docker compose --env-file .env -f deploy/docker-compose.target.yml ps`
+3. Frontend oeffnen: `http://localhost:18081`
+
+### Login (lokaler Dev-Token)
+- Token-Feld im Frontend: `dev:tenant-a:user:u-1`
+- Fuer Audit-Ansicht: `dev:tenant-a:admin:u-admin`
+
+### Upload/Transkription pruefen
+1. `New Job` waehlen, Audio/Video hochladen.
+2. Der Upload nutzt lokal MinIO ueber `http://localhost:19000` (Presigned PUT).
+3. Job-Status sollte von `queued` ueber `processing` nach `completed` laufen.
+4. Transcript erscheint in der Detailansicht.
+
+### Hinweis zu Diarization
+- Wenn das konfigurierte HuggingFace-Diarization-Modell nicht freigeschaltet ist, faellt der Worker automatisch auf reine Transkription zurueck (Job bleibt `completed`, Speaker meist `UNKNOWN`).
+
+## 2026-03-22 - Stuck-Job Handling (Force-Delete / Pause / Cancel)
+### Symptome
+- Job bleibt lange auf `queued`, `processing`, `pause_requested` oder `cancel_requested`.
+- Worker startet denselben Job mehrfach oder faellt in Retry-Schleifen.
+
+### Sofortmassnahmen
+1. Jobstatus und Outbox pruefen (`jobs.status`, `outbox_events.status/retry_count/dlq_reason`).
+2. Bei laufender Verarbeitung zuerst `POST /api/v1/jobs/{id}/pause` oder `POST /api/v1/jobs/{id}/cancel` ausfuehren.
+3. Falls Job entfernt werden soll: `DELETE /api/v1/jobs/{id}` ausfuehren (nun fuer alle nicht-geloeschten Status erlaubt).
+
+### Erwartetes Verhalten nach Delete
+- Job geht auf `deleted` (`progress=100`, `deleted_at` gesetzt).
+- Pending Outbox-Events fuer den Job werden gepruned (kein erneutes `job.worker.start` fuer denselben Job).
+- Interne Job-Reste (Checkpoint, Worker-Artefakte, Transcript-Versionen) werden entfernt.
+- Job erscheint nicht mehr in `GET /api/v1/jobs` Listen.
+
+### Timeout-/Retry-Policy
+- `WORKER_WHISPERX_TIMEOUT_SECONDS=0` deaktiviert harte Subprocess-Timeouts fuer lange ASR-Runs.
+- Generische Worker-Exceptions sind terminal (DLQ + `failed_terminal`) und werden nicht blind erneut gestartet.
+- Retries bleiben nur fuer explizit retryable Fehlerpfade aktiv.
+
+## 2026-03-22 - Runbook: GPU-First Worker (lokal) und Multi-GPU Profile (Server)
+### Lokaler GPU-First Start
+1. Sicherstellen, dass Docker NVIDIA Runtime aktiv ist (`docker info` enthaelt Runtime `nvidia`).
+2. Worker standardmaessig mit GPU starten (kein manueller Device-Switch notwendig):
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml up -d worker
+   ```
+3. Effektiven Device-Modus robust pruefen:
+   - ENV-Defaults im laufenden Container:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker env | grep WORKER_WHISPERX_
+     ```
+   - CUDA-Verfuegbarkeit in Runtime:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+     ```
+   - Audit-Fallback-Check:
+     ```bash
+     docker compose --env-file .env -f deploy/docker-compose.target.yml exec -T worker sh -lc "test -f /runtime/audit/worker-audit.jsonl && tail -n 200 /runtime/audit/worker-audit.jsonl | grep -n worker.runtime.gpu_fallback || true"
+     ```
+   - Hinweis: `worker.runner.started` enthaelt Device-Felder strukturiert im Event; je nach Log-Formatter sind diese Felder nicht als Klartext im Message-String sichtbar.
+4. Falls zuvor `--profile multi-gpu` genutzt wurde: lokale Zusatz-Worker stoppen, damit nur der lokale GPU-First-Worker laeuft:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml stop worker-cpu worker-gpu-0 worker-gpu-1
+   ```
+5. Queue-Routing lokal: Audio und Video werden auf `gpu-standard` geroutet (GPU-First), CPU-Pool bleibt fuer dedizierte Server-Szenarien reserviert.
+
+### Multi-GPU Compose-Profile (vorbereitet)
+1. Dedizierte Worker-Pools starten:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml --profile multi-gpu up -d worker-cpu worker-gpu-0 worker-gpu-1
+   ```
+2. Queue-Rollen pruefen:
+   - `worker-cpu` verarbeitet `cpu-short`.
+   - `worker-gpu-*` verarbeiten `gpu-standard,gpu-long`.
+3. Bei GPU-Ausfall in einem Pool:
+   - betroffenen `worker-gpu-*` neu starten,
+   - Fallback-/OOM-Events im Worker-Audit und Logs auswerten,
+   - Queue-Lag fuer `gpu-*` beobachten und ggf. Last auf weitere GPU-Worker verteilen.
+
+### Betriebsrisiko / Governance
+- `WORKER_ALLOWED_QUEUES` muss je Worker-Rolle explizit gesetzt sein, um Pool-Kollisionen zu vermeiden.
+- Pro GPU initial nur ein Worker-Prozess betreiben; Batch-Groesse schrittweise erhoehen.
+
+## 2026-03-22 - Incident: Dashboard zeigt `unknown_error`
+### Symptome
+- Frontend laedt Task-Cards nicht oder `New Task` endet mit `unknown_error`.
+- API-Requests im Browser laufen auf `/api/...` und liefern `5xx`/`502`.
+
+### Wahrscheinliche Ursache im lokalen Compose-Betrieb
+- Frontend-Proxy (`frontend`/NGINX) kann `api:18000` nicht erreichen (Upstream-Connect-Fehler), obwohl API-Container ggf. laeuft.
+
+### Diagnose
+1. Frontend-Logs auf Proxy-Upstream-Fehler pruefen:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml logs --tail=200 frontend
+   ```
+2. API intern pruefen:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml ps api
+   docker compose --env-file .env -f deploy/docker-compose.target.yml logs --tail=200 api
+   ```
+3. Endpunkt ueber Frontend-Proxy pruefen:
+   ```bash
+   curl -i http://localhost:18081/api/v1/jobs -H "Authorization: Bearer dev:tenant-a:user:u-1"
+   ```
+
+### Behebung
+1. Frontend-Proxy neu starten:
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.target.yml restart frontend
+   ```
+2. Falls API nicht healthy: API neu starten und Logs validieren.
+3. Danach API-Proxy-Call erneut testen (siehe Diagnose Schritt 3).
+
+### Security-Hinweis
+- `unknown_error` kann wie ein UI-Fehler wirken, ist aber oft ein Infrastruktur-/Proxy-Fehler.
+- Keine Secrets in Frontend-/API-Logs mitschreiben; Bearer-Tokens nur maskiert protokollieren.

@@ -15,13 +15,18 @@ from evodox.jobs.infrastructure import (
     RabbitMQQueuePublisher,
     RetryablePublishError,
     SQLiteIdempotencyStore,
+    SQLiteJobCheckpointStore,
     SQLiteJobRepository,
     SQLiteOutbox,
     SQLiteRetentionCandidateRepository,
     SQLiteRetentionExecutionRepository,
     SQLiteRetentionRetryStore,
     SQLiteSchedulerLeaseStore,
+    SQLiteTenantTranscriptionSettingsStore,
+    SQLiteTranscriptRepository,
+    SQLiteWorkerArtifactStore,
 )
+from evodox.jobs.transcript_service import TranscriptConflictError
 from evodox.jobs.retention_scheduler import RetentionFailureRecord
 
 
@@ -73,6 +78,49 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(saved.payload_hash, "abc")
             self.assertEqual(saved.response.job_id, "job_22")
 
+    def test_sqlite_job_checkpoint_store_upserts_stage_and_segment_offset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteJobCheckpointStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_1",
+                stage="asr_started",
+                stage_offset=3,
+                payload={"segments_done": 3, "note": "partial"},
+            )
+            first = store.get("tenant-a", "job_cp_1")
+            assert first is not None
+            self.assertEqual(first["stage"], "asr_started")
+            self.assertEqual(first["stage_offset"], 3)
+            self.assertEqual(first["payload"]["segments_done"], 3)
+
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_1",
+                stage="diarization_done",
+                stage_offset=0,
+                payload={"complete": True},
+            )
+            second = store.get("tenant-a", "job_cp_1")
+            assert second is not None
+            self.assertEqual(second["stage"], "diarization_done")
+            self.assertEqual(second["payload"]["complete"], True)
+
+    def test_sqlite_job_checkpoint_store_delete_removes_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteJobCheckpointStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                job_id="job_cp_2",
+                stage="asr_started",
+                stage_offset=1,
+                payload={"segments_done": 1},
+            )
+            store.delete("tenant-a", "job_cp_2")
+            self.assertIsNone(store.get("tenant-a", "job_cp_2"))
+
     def test_local_presign_factory_generates_tenant_scoped_key(self):
         factory = LocalPresignUploadSessionFactory(
             base_url="https://minio.local",
@@ -92,6 +140,8 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             payload = json.loads(lines[0])
             self.assertEqual(payload["action"], "job.create")
+            self.assertEqual(len(audit.list_for_tenant(tenant_id="tenant-a")), 1)
+            self.assertEqual(len(audit.list_for_tenant(tenant_id="tenant-b")), 0)
 
     def test_rabbitmq_publisher_maps_broker_failure_to_retryable_error(self):
         publisher = RabbitMQQueuePublisher(amqp_url="amqp://guest:guest@localhost:5672/%2F")
@@ -156,6 +206,169 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(len(due), 1)
             self.assertEqual(due[0].tenant_id, "tenant-a")
             self.assertEqual(due[0].job_id, "job_1")
+
+    def test_job_repo_mark_queued_persists_worker_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            repo = SQLiteJobRepository(db_path)
+            repo.create(
+                {
+                    "job_id": "job_q1",
+                    "tenant_id": "tenant-a",
+                    "actor_id": "u-1",
+                    "filename": "audio.mp3",
+                    "content_type": "audio/mpeg",
+                    "size_bytes": 12,
+                    "retention_months": 6,
+                    "status": "upload_pending",
+                }
+            )
+
+            repo.mark_queued(
+                "tenant-a",
+                "job_q1",
+                object_key="tenant/tenant-a/job_q1/audio.mp3",
+                checksum_sha256="a" * 64,
+                upload_session_id="up_123",
+                transcription_options={"beam_size": 4, "temperature": 0.2},
+            )
+            row = repo.get("tenant-a", "job_q1")
+            self.assertEqual(row["status"], "queued")
+            self.assertEqual(row["object_key"], "tenant/tenant-a/job_q1/audio.mp3")
+            self.assertEqual(row["upload_session_id"], "up_123")
+            self.assertEqual(row["checksum_sha256"], "a" * 64)
+            self.assertEqual(json.loads(row["transcription_options_json"])["beam_size"], 4)
+
+    def test_tenant_transcription_settings_store_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            store = SQLiteTenantTranscriptionSettingsStore(db_path)
+            store.upsert(
+                tenant_id="tenant-a",
+                updated_by="admin-1",
+                decoding_options={"beam_size": 4, "temperature": 0.3},
+            )
+            row = store.get("tenant-a")
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row["tenant_id"], "tenant-a")
+            self.assertEqual(row["updated_by"], "admin-1")
+            self.assertEqual(row["decoding_options"]["beam_size"], 4)
+
+    def test_transcript_repository_reads_worker_artifact_as_version_1(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_1",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+
+            repo = SQLiteTranscriptRepository(db_path)
+            current = repo.get_current("tenant-a", "job_1")
+
+            self.assertIsNotNone(current)
+            assert current is not None
+            self.assertEqual(current.version, 1)
+            self.assertEqual(current.segments[0]["speaker"], "SPEAKER_00")
+            self.assertEqual(current.segments[0]["text"], "Hallo")
+            self.assertEqual(current.speaker_labels, {})
+
+    def test_transcript_repository_save_new_version_enforces_optimistic_locking(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_2",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Orig"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+
+            v2 = repo.save_new_version(
+                tenant_id="tenant-a",
+                job_id="job_2",
+                expected_base_version=1,
+                segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Edited"}],
+            )
+            self.assertEqual(v2, 2)
+            latest = repo.get_current("tenant-a", "job_2")
+            assert latest is not None
+            self.assertEqual(latest.version, 2)
+            self.assertEqual(latest.segments[0]["text"], "Edited")
+            self.assertEqual(latest.speaker_labels, {})
+
+            with self.assertRaises(TranscriptConflictError):
+                repo.save_new_version(
+                    tenant_id="tenant-a",
+                    job_id="job_2",
+                    expected_base_version=1,
+                    segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Stale"}],
+                )
+
+    def test_transcript_repository_persists_speaker_label_snapshots_per_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_alias_1",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Hallo"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+
+            version_2 = repo.save_new_version(
+                tenant_id="tenant-a",
+                job_id="job_alias_1",
+                expected_base_version=1,
+                segments=[{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_01", "text": "Hallo"}],
+                speaker_labels={"SPEAKER_01": "Patrick"},
+            )
+            self.assertEqual(version_2, 2)
+
+            current = repo.get_current("tenant-a", "job_alias_1")
+            assert current is not None
+            self.assertEqual(current.speaker_labels, {"SPEAKER_01": "Patrick"})
+
+            version_1 = repo.get_version("tenant-a", "job_alias_1", 1)
+            assert version_1 is not None
+            self.assertEqual(version_1["speaker_labels"], {})
+            version_2_payload = repo.get_version("tenant-a", "job_alias_1", 2)
+            assert version_2_payload is not None
+            self.assertEqual(version_2_payload["speaker_labels"], {"SPEAKER_01": "Patrick"})
+
+    def test_delete_helpers_remove_worker_artifacts_and_transcript_versions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_3",
+                artifact={
+                    "transcript": {"segments": [{"start": 0.0, "end": 1.0, "text": "Orig"}]},
+                    "diarization": {"segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]},
+                },
+            )
+            repo = SQLiteTranscriptRepository(db_path)
+            current = repo.get_current("tenant-a", "job_3")
+            assert current is not None
+            self.assertEqual(current.version, 1)
+
+            artifacts.delete("tenant-a", "job_3")
+            repo.delete("tenant-a", "job_3")
+
+            self.assertIsNone(artifacts.get("tenant-a", "job_3"))
+            self.assertIsNone(repo.get_current("tenant-a", "job_3"))
 
     def test_retention_execution_repo_marks_deleted_and_prunes_outbox_for_tenant(self):
         with tempfile.TemporaryDirectory() as tmpdir:

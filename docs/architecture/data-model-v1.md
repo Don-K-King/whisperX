@@ -50,6 +50,7 @@
 - `transcript_id` (FK)
 - `version_number`
 - `segments_json`
+- `speaker_labels_json`
 - `created_by_user_id`
 - `edit_reason`
 - `created_at`
@@ -119,3 +120,25 @@ Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
 - `transcript.current_version` ist monotonic steigend und Grundlage für Optimistic Locking.
 - `transcript_version.version_number` wird je erfolgreichem Edit um genau `+1` erhöht; Konflikte erzeugen keinen Schreibvorgang.
 - `export_artifact.format` bleibt strikt `txt|json|srt|vtt`; nicht erlaubte Formate sind fachlich ungültig.
+
+## 2026-03-22 - Addendum: Checkpoint-Datenmodell v1
+
+### job_checkpoints (neu)
+- `tenant_id` (PK-Anteil)
+- `job_id` (PK-Anteil)
+- `stage` (`downloaded|asr_started|asr_done|diarization_done`)
+- `stage_offset` (Segmentoffset fuer laufende Stage, v1 granular in ASR)
+- `payload_json` (interne Teilresultate fuer Resume)
+- `updated_at`
+
+### Job-Status Ergaenzung
+- zusaetzliche Statuswerte: `pause_requested`, `paused`, `cancel_requested`, `canceled`.
+- erlaubte Kontrollpfade:
+  - `processing -> pause_requested -> paused`
+  - `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
+- `canceled` ist terminal, kein Rueckweg nach `queued`.
+
+## 2026-03-22 - Addendum: Transcript-Aliase als Versions-Snapshot
+- `speaker_labels_json` speichert das Mapping `Roh-Speaker -> Anzeigename` zusammen mit jeder Transcript-Version.
+- Alias-Aenderungen erzeugen eine neue `transcript_version`, damit vergangene Versionen und Exporte reproduzierbar bleiben.
+- Das Alias-Mapping ist tenant- und job-gebunden und darf nicht zwischen Jobs oder Tenants wiederverwendet werden.

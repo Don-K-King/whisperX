@@ -147,3 +147,86 @@
 - Begründung: reduziert Kollisionsrisiko bei späteren Betriebsmodi (`ports:`-Freigaben, Host-Networking, Debug-Publishes) auf bereits belegten Zielinstanz-Ports.
 - Security-Bewertung: keine zusätzliche Exposition, da weiterhin keine externen Port-Bindings gesetzt werden; Änderung betrifft nur interne Service-Kommunikation/Healthchecks.
 - Nachweis/Analyse: `docs/operations/port-conflict-report-2026-03-09.md`.
+
+## 2026-03-22 - Status-Tracking: Local Docker Runtime Slice abgeschlossen, Transcript Vertical Slice als naechster Schritt
+- Aktueller Stand: lokaler Docker-Vertical-Slice ist funktional und per E2E geprueft (`create -> complete-upload -> queued -> processing -> completed`).
+- Fertig: API-Factory aus ENV, Hybrid-Auth `oidc|dev`, tenant-scoped Jobs/Audit-Endpoints, Stub-Worker-Runner, lokale Compose- und Runtime-Entrypoints.
+- Offen: Transcript-API-Pfad, Persistenz des Worker-Outputs als abrufbares Transcript, Frontend-Upload per Presigned-Flow und Anzeige von Transcript/Speaker-Diarization.
+- Naechster TDD-Schritt: Transcript Vertical Slice bis Frontend, zuerst Red-Tests fuer API-Contract und Frontend-Detailansicht, dann Runtime-Wiring und UI-Integration.
+
+## 2026-03-22 - Status-Tracking: Presigned Upload Orchestrator als naechster Frontend-Schritt
+- Aktueller Stand: Frontend-Upload wird als testbarer Orchestrator vorbereitet (`create job -> presigned PUT -> complete-upload`).
+- Grune Gates: Frontend-Utilities/Tests fuer SHA-256 und Presigned-Upload, Python-Regression, Docker-Smoke im lokalen Runtime-Setup.
+- Danach: WhisperX-Worker fuer echte Live-Transkription und Speaker-Diarization als naechster funktionaler Schritt im selben Docker-Vertical-Slice.
+
+## 2026-03-22 - ADR-0014 Local WhisperX Runtime fuer erstes Docker-E2E
+- Entscheidung: Worker-Mode `whisperx` als naechster Vertical Slice fuer lokale End-to-End-Transkription eingefuehrt, `stub` bleibt fuer deterministische Tests erhalten.
+- Entscheidung: Browser-tauglicher Uploadpfad lokal ueber MinIO Host-Port (`19000`) statt internem Container-Hostnamen, damit Presigned PUT aus dem Frontend funktioniert.
+- Entscheidung: MinIO-Bucket `uploads` wird im Compose-Init-Schritt automatisiert erstellt und fuer lokalen Dev-Betrieb auf `public` gesetzt.
+- Entscheidung: Diarization wird als best-effort ausgefuehrt; bei gated/inkompatiblen Modellfehlern erfolgt automatischer Fallback auf reine Transkription, damit der Job nicht terminal scheitert.
+
+## 2026-03-22 - ADR-0015 Job Lifecycle Controls + Milestone Progress
+- Entscheidung: Job-Lifecycle fuer lokalen/prod-nahen Betrieb um `pause`, `resume` und `delete` erweitert.
+- API-Form festgelegt: `POST /pause`, `POST /resume`, `DELETE /jobs/{id}`.
+- Pause-Strategie bewusst als kooperatives Stop+Resume eingefuehrt (kein Midpoint-Checkpointing in diesem Schritt).
+- Retry-Strategie im Worker konkretisiert: begrenzte Auto-Retries fuer retryable Fehler, danach deterministischer Uebergang nach `failed_terminal`.
+- Progress-Strategie fuer UI/API festgelegt: deterministische Milestones (`5/20/60/90/100`) statt ETA-Schaetzung.
+- Konsequenz: Frontend zeigt Actions statusabhaengig und pollt mit 429-Backoff; Backend liefert konsistente Progress-Werte auch bei fehlendem Raw-Progress.
+
+## 2026-03-22 - ADR-0016 Midpoint-Checkpointing + terminaler Cancel
+- Entscheidung: Pause/Resume wird auf persistentes Stage+Segment-Checkpointing erweitert (`job_checkpoints`), ASR setzt per `stage_offset` ab letztem Segment fort.
+- Entscheidung: neuer Endpunkt `POST /api/v1/jobs/{id}/cancel` mit terminaler Semantik (`canceled` ist final, `resume` liefert `409 job.resume.invalid_state`).
+- Entscheidung: Cancel-Pfad nutzt Zwischenzustand `cancel_requested`, Worker priorisiert Cancel gegenueber Retry-Fortsetzung.
+- Entscheidung: interne Teilresultate bleiben bewusst pipeline-intern und werden nicht ueber Frontend/API exponiert.
+- Referenz: ADR-0016 (`/docs/adr/ADR-0016-midpoint-checkpointing-und-terminal-cancel.md`).
+
+## 2026-03-22 - Stabiler Lifecycle: Force-Delete + no-auto-restart
+- Entscheidung: `DELETE /api/v1/jobs/{id}` wird als Force-Soft-Delete aus allen nicht-`deleted` Status erlaubt; `job.delete.active_conflict` entfällt.
+- Entscheidung: Delete pruned pending Outbox-Events (`status=pending -> published/skipped`) und loescht interne Job-Reste (Checkpoint/Worker-Artefakt/Transcript-Versionen), um Re-Queue aus Altzustand zu verhindern.
+- Entscheidung: WhisperX-Timeout-Default wird auf `0` gesetzt (`timeout=None`), damit lange Jobs nicht kuenstlich abgebrochen werden.
+- Entscheidung: generische Worker-Exceptions sind nicht retrybar per default; sie gehen auf terminal (`failed_terminal` + DLQ), ausser explizit retryable Pfaden (`failed_retryable` bis `worker_max_retries`).
+- Entscheidung: laufende ASR-Subprozesse werden kooperativ ueber Polling beendet (`pause_requested|cancel_requested|deleted`), damit Pause/Resume/Cancel/Delete verlässlich auch waehrend langer Runs funktionieren.
+
+## 2026-03-22 - ADR-0017 GPU-First Local + Multi-GPU Compose-Worker-Pools
+- Worker-Runtime Defaults auf GPU-first umgestellt (`WORKER_WHISPERX_DEVICE=cuda`, `WORKER_WHISPERX_COMPUTE_TYPE=float16`).
+- Runtime-Haertung eingefuehrt: kontrollierter GPU-Preflight mit CPU-Fallback (`cpu/int8`) und auditierbarem Event `worker.runtime.gpu_fallback`.
+- WhisperX CLI-Wiring erweitert: `WORKER_WHISPERX_DEVICE_INDEX` wird ueber `--device_index` durchgereicht.
+- Queue-Pool-Vorbereitung umgesetzt: `WORKER_ALLOWED_QUEUES` + Outbox-Filter fuer dedizierte Worker-Rollen.
+- Compose-Zielbetrieb erweitert: Standard-`worker` ist GPU-first; zusaetzliche Profile-Services `worker-gpu-0`, `worker-gpu-1`, `worker-cpu` fuer dedizierte Server-Pools.
+- Referenz: ADR-0017 (`/docs/adr/ADR-0017-gpu-first-local-und-multi-gpu-compose-worker-pools.md`).
+
+## 2026-03-22 - ADR-0018 Tenant-Admin Decoding Settings + Job-Snapshot
+- Neue admin-only Endpunkte fuer tenant-scoped Decoding-Defaults eingefuehrt (`GET/PUT /api/v1/admin/transcription-settings`).
+- Persistenzmodell erweitert: `tenant_transcription_settings` (Tenant-Defaults) und `jobs.transcription_options_json` (Queueing-Snapshot pro Job).
+- Queue/Worker-Wiring erweitert: `job.queued` und `resume` fuehren `transcription_options` mit; Worker mappt Whitelist-Felder auf WhisperX-CLI-Flags.
+- Security-Haertung: strikte Feld-Whitelist und Wertevalidierung, Audit ohne Klartext-Prompt (nur Hash/Laenge fuer `initial_prompt`).
+- Referenz: ADR-0018 (`/docs/adr/ADR-0018-tenant-admin-decoding-settings-und-job-snapshot.md`).
+
+## 2026-03-22 - ADR-0019 Speaker-Aliase + Blockbildung
+- Speaker-Aliase werden versioniert pro Transcript-Snapshot gespeichert, um Reproduzierbarkeit und Mehrgeraet-Use-Cases zu erhalten.
+- Task-View-Rendering gruppiert aufeinanderfolgende Segmente mit gleichem Roh-Speaker zu lesbaren Blocken.
+- Neue API fuer Speaker-Alias-Updates wird tenant-scoped und optimistic-locking-basiert umgesetzt.
+- Referenz: ADR-0019 (`/docs/adr/ADR-0019-transcript-speaker-alias-und-blockbildung.md`).
+
+## 2026-03-23 - ADR-0020 WhisperX large-v3 Erzwingung + Sprachwahl + Chunk/VAD Exposition
+- Entscheidung: WhisperX-Worker erzwingt large-v3 im Runtime-Pfad, um inkonsistente Modellqualitaet durch ENV-Drift zu verhindern.
+- Entscheidung: Sprache wird pro Job bei create erfasst (de Default, auto optional), im Snapshot persistiert und bei Queueing/Worker priorisiert.
+- Entscheidung: Tenant-Admin Decoding-Settings werden um chunk_size, vad_onset, vad_offset erweitert und strikt validiert.
+- Sicherheitsentscheidung: Eingaben bleiben whitelist-/range-basiert, Snapshot-Verarbeitung bleibt fail-safe ueber safe_worker_decoding_options.
+- Referenz: ADR-0020 (/docs/adr/ADR-0020-whisperx-large-v3-erzwingung-sprache-und-chunk-vad.md).
+
+## 2026-03-24 - ADR-0021 Korrekturmodus Sessions + Statusfuehrung
+- Neue Transcript-Korrekturlogik eingefuehrt: Session-basierter Draft mit `apply/undo/redo/discard/commit` statt sofortiger Versionspersistenz.
+- Autosave semantisch als Draft-Sicherung umgesetzt (keine automatische Versionserzeugung).
+- Transcript-Status erweitert um `review_status` und `is_final` inkl. eigener API und Audit-Events.
+- Timeline-Guards fuer Korrektur-Operationen verankert (keine Overlaps/Luecken, konsistente Segment-IDs).
+- Frontend um dedizierten Korrektur-Workspace erweitert (`window.open` ohne In-Tab-Fallback, Suche/Ersetzen, Sprecherumteilung, Audio-Mitfuehrung, Status/Final).
+- Handover-Strategie fuer den Korrekturstart auf kurzlebigen tabuebergreifenden Store umgestellt (single-use, TTL, Cleanup), um `Korrektur-Startdaten fehlen` im neuen Tab zu vermeiden.
+- Neue tenant-scoped Media-Quelle fuer den Workspace eingefuehrt (`GET /api/v1/jobs/{id}/media-source`) fuer automatisches Laden der Ursprungsdatei.
+- Security-Hardening nach Implementierungsreview: Session-Reads sind actor-gebunden, `forbidden` wird als `403` gemappt, Status-Updates validieren Transcript-Existenz.
+- Referenz: ADR-0021 (`/docs/adr/ADR-0021-korrekturmodus-sessions-und-status.md`).
+
+## 2026-03-25 - Korrekturmodus Legacy-Schema-Migration (Hotfix)
+- Entscheidung: Session-Insert im Correction-Store wird schema-adaptiv ausgefuehrt; existiert Legacy-Spalte `expires_at`, wird sie beim `create_session` explizit befuellt.
+- Grund: Laufende Runtime-Volumes enthielten ein aelteres Schema mit `expires_at NOT NULL`, wodurch Korrektur-Session-Start mit `IntegrityError` scheiterte.
+- Ergebnis: Korrekturmodus-Start bleibt ohne DB-Reset kompatibel zu Bestandsdaten.

@@ -1,0 +1,404 @@
+:root {
+  --cw-bg: #f4f4f0;
+  --cw-surface: #ffffff;
+  --cw-border: #d2d0c8;
+  --cw-text: #1f1f1b;
+  --cw-muted: #626057;
+  --cw-accent: #1360bf;
+  --cw-danger: #9e2f2f;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body[data-theme='dark'] {
+  --cw-bg: #1a1b1d;
+  --cw-surface: #25272a;
+  --cw-border: #393c41;
+  --cw-text: #f0f2f4;
+  --cw-muted: #b6bcc5;
+  --cw-accent: #63a4ff;
+  --cw-danger: #ff8e8e;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 10% 10%, rgba(19, 96, 191, 0.15), transparent 35%), var(--cw-bg);
+  color: var(--cw-text);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.cw-root {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.cw-topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: stretch;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--cw-border);
+  background: color-mix(in srgb, var(--cw-surface) 90%, transparent);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.cw-topbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.cw-topbar-group--meta strong {
+  margin-right: 0.35rem;
+}
+
+.cw-topbar-group--actions {
+  padding: 0.35rem 0;
+  border-top: 1px dashed color-mix(in srgb, var(--cw-border) 70%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--cw-border) 70%, transparent);
+}
+
+.cw-topbar-group--preferences {
+  justify-content: flex-start;
+}
+
+.cw-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
+  border-radius: 999px;
+  font-size: 0.83rem;
+  color: var(--cw-muted);
+}
+
+.cw-topbar .badge {
+  border: 1px solid var(--cw-border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  color: var(--cw-muted);
+}
+
+.cw-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.cw-layout--sidebar-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cw-editor,
+.cw-sidebar,
+.cw-audio {
+  background: var(--cw-surface);
+  border: 1px solid var(--cw-border);
+  border-radius: 12px;
+}
+
+.cw-editor {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 0.8rem;
+}
+
+.cw-block {
+  border: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem 0.65rem;
+  margin-bottom: 0.8rem;
+  background: color-mix(in srgb, var(--cw-surface) 94%, transparent);
+}
+
+.cw-block.active {
+  outline: 2px solid color-mix(in srgb, var(--cw-accent) 65%, transparent);
+}
+
+.cw-block.selected {
+  border-color: color-mix(in srgb, var(--cw-accent) 45%, var(--cw-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cw-accent) 30%, transparent);
+}
+
+.cw-block-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.6rem;
+}
+
+.cw-block-speaker {
+  font-size: 0.95rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.cw-block-time {
+  margin-left: 0.35rem;
+  color: var(--cw-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.cw-block-jump {
+  margin-left: auto;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+}
+
+.cw-block textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: none;
+  overflow: hidden;
+  margin-top: 0.35rem;
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.cw-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cw-sidebar {
+  padding: 0.8rem;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.cw-sidebar-tree {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-right: 0.2rem;
+}
+
+.cw-tree-node {
+  border: 1px solid color-mix(in srgb, var(--cw-border) 85%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cw-surface) 96%, transparent);
+}
+
+.cw-tree-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  padding: 0.5rem 0.6rem;
+}
+
+.cw-tree-summary::-webkit-details-marker {
+  display: none;
+}
+
+.cw-tree-caret {
+  color: var(--cw-muted);
+  font-size: 0.74rem;
+  transition: transform 140ms ease;
+}
+
+.cw-tree-node[open] > .cw-tree-summary .cw-tree-caret {
+  transform: rotate(90deg);
+}
+
+.cw-tree-content {
+  border-top: 1px solid color-mix(in srgb, var(--cw-border) 80%, transparent);
+  padding: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.cw-tree-content p {
+  margin: 0;
+}
+
+.cw-sidebar-status {
+  margin: 0;
+}
+
+.cw-sidebar input,
+.cw-sidebar select,
+.cw-sidebar textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 0.45rem;
+}
+
+.cw-sidebar button,
+.cw-topbar button,
+.cw-editor button {
+  border: 1px solid var(--cw-border);
+  background: color-mix(in srgb, var(--cw-surface) 90%, transparent);
+  color: inherit;
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.cw-sidebar button:hover,
+.cw-topbar button:hover,
+.cw-editor button:hover {
+  border-color: color-mix(in srgb, var(--cw-accent) 35%, var(--cw-border));
+  background: color-mix(in srgb, var(--cw-surface) 82%, var(--cw-accent) 18%);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--cw-accent) 22%, transparent);
+}
+
+.cw-sidebar button:active,
+.cw-topbar button:active,
+.cw-editor button:active {
+  transform: translateY(1px);
+}
+
+.cw-sidebar button.primary,
+.cw-topbar button.primary {
+  background: var(--cw-accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.cw-topbar button.cw-action {
+  border-color: color-mix(in srgb, var(--cw-accent) 35%, var(--cw-border));
+  background: color-mix(in srgb, var(--cw-accent) 14%, var(--cw-surface));
+}
+
+.cw-sidebar button.primary:hover,
+.cw-topbar button.primary:hover {
+  background: color-mix(in srgb, var(--cw-accent) 88%, #ffffff 12%);
+}
+
+.cw-sidebar button.danger,
+.cw-topbar button.danger {
+  color: #fff;
+  background: var(--cw-danger);
+  border-color: transparent;
+}
+
+.cw-sidebar button.danger:hover,
+.cw-topbar button.danger:hover {
+  background: color-mix(in srgb, var(--cw-danger) 88%, #ffffff 12%);
+}
+
+.cw-log {
+  border: 1px solid var(--cw-border);
+  border-radius: 8px;
+  padding: 0.45rem;
+  font-size: 0.82rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.cw-audio {
+  position: sticky;
+  bottom: 0;
+  padding: 0.7rem 1rem;
+  border-radius: 12px 12px 0 0;
+  margin: 0 1rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  align-items: center;
+  z-index: 2;
+}
+
+.cw-audio audio,
+.cw-audio video {
+  width: min(640px, 100%);
+  max-height: 180px;
+  border-radius: 8px;
+  background: #000;
+}
+
+.cw-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 10;
+}
+
+.cw-modal {
+  width: min(90vw, 420px);
+  background: var(--cw-surface);
+  border: 1px solid var(--cw-border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.cw-status {
+  color: var(--cw-muted);
+  font-size: 0.86rem;
+}
+
+@media (max-width: 980px) {
+  body {
+    overflow: auto;
+  }
+
+  .cw-root {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .cw-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .cw-sidebar {
+    height: auto;
+    grid-template-rows: auto auto;
+  }
+
+  .cw-sidebar-tree {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .cw-audio {
+    position: static;
+    margin: 1rem;
+    border-radius: 12px;
+  }
+}

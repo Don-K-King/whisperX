@@ -136,3 +136,9 @@ Pflichtfelder:
 Semantik:
 - Event wird initial in Outbox persistiert und danach in Broker publiziert.
 - Wiederholte `complete-upload`-Requests mit identischem Idempotency-Key erzeugen kein Duplikat-Event.
+
+## 2026-03-22 - Addendum: Resume/Cancel Event-Governance
+- `job.queued` bleibt das einzige Queue-Event fuer Upload- und Resume-Pfad.
+- Resume muss idempotent bleiben: pro wirksamem Resume-Aufruf genau ein Outbox-Event mit `event_type=job.queued`.
+- Bei `cancel_requested|canceled` darf kein neuer Workload gestartet werden; pending Outbox-Events fuer den Job werden als verarbeitet markiert.
+- Consumer muessen `canceled` als terminal behandeln und duerfen keine Folgeverarbeitung starten.

@@ -64,7 +64,10 @@ def queue_export(
         raise ExportValidationError("export.transcript_not_found", "Transcript-Version wurde nicht gefunden.")
 
     segments = list(transcript.get("segments", []))
-    content = _render_export(fmt=request.format, segments=segments)
+    speaker_labels = transcript.get("speaker_labels", {})
+    segments_with_labels = _apply_speaker_labels(segments=segments, speaker_labels=speaker_labels)
+    render_segments = segments_with_labels if request.format == "json" else segments
+    content = _render_export(fmt=request.format, segments=render_segments)
     export_id = f"exp_{tenant_id}_{request.job_id}_{request.transcript_version}_{request.format}"
     export_store.put(
         tenant_id=tenant_id,
@@ -128,6 +131,21 @@ def _render_export(*, fmt: str, segments: list[dict[str, Any]]) -> str:
         lines.append(_safe_text(seg.get("text", "")))
         lines.append("")
     return "\n".join(lines)
+
+
+def _apply_speaker_labels(*, segments: list[dict[str, Any]], speaker_labels: Any) -> list[dict[str, Any]]:
+    labels = speaker_labels if isinstance(speaker_labels, dict) else {}
+    applied: list[dict[str, Any]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        speaker_key = str(segment.get("speaker", "UNKNOWN"))
+        alias = labels.get(speaker_key)
+        speaker_name = str(alias).strip() if alias is not None else speaker_key
+        normalized = dict(segment)
+        normalized["speaker"] = speaker_name if speaker_name else speaker_key
+        applied.append(normalized)
+    return applied
 
 
 def _safe_text(value: Any) -> str:

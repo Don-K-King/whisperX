@@ -21,3 +21,6 @@ Verpflichtend gilt ein **Contract-Check Frontend ↔ API** gegen (`api-spec-v1`,
 - `docs/security/keycloak-integration-inputs-v1.md`
 - `docs/development/step3-dor-checklist.md`
 - `docs/testing/frontend-api-contract-check-v1.md`
+
+## Aktueller Umsetzungsschritt
+- Lifecycle/Progress TDD-Schritt: `docs/development/step-next-pause-resume-delete-tdd.md`

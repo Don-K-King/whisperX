@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends curl ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY evodox /app/evodox
+COPY whisperx /app/whisperx
+COPY pyproject.toml /app/pyproject.toml
+COPY README.md /app/README.md
+
+RUN pip install --no-cache-dir . fastapi uvicorn pydantic boto3

@@ -14,6 +14,14 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Query-Guards und Service-Layer-Prüfungen
 - Export nur innerhalb Tenant Scope
 - Tenant-scoped Object Keys in MinIO
+- Speaker-Aliase werden als Daten behandelt und nur tenant-/job-scoped gespeichert; kein globales Alias-Reuse.
+
+## Transcript-Aliase und UI-Rendering
+- Speaker-Label-Updates validieren Roh-Labels und Anzeigenamen streng: keine Steuerzeichen, keine leeren Werte, Trim auf beiden Seiten.
+- Alias-Updates sind optimistic-locking-basiert und erzeugen auditierbare Versionsspruenge statt stiller Ueberschreibung.
+- Task-View-Rendering escaped Alias-Namen und Transcript-Text, damit Speaker-Namen nicht als HTML oder Anweisungen interpretiert werden.
+- Gruppierung der Transcript-Bloecke basiert auf Roh-Speaker-Wechseln; Alias-Gleichheit darf nicht zu stiller Segmentfusion fuehren.
+- Audit-Events muessen Alias-Reads und Alias-Updates nachvollziehbar machen, mindestens mit `tenant_id`, `job_id`, `transcript_version` und `actor_id`.
 
 ## Upload- und Verarbeitungs-Sicherheit
 - Dateityp-/Signaturprüfung (MIME + Magic Bytes)
@@ -105,6 +113,7 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Optimistic Locking erzwingt konsistente Parallel-Edits (`base_version`), Konflikte werden ohne stilles Überschreiben abgewiesen.
 - Segmenttexte werden auf unzulässige Steuerzeichen geprüft; missbräuchliche Inhalte werden abgelehnt.
 - Export-Format ist strikt allowlisted (`txt|json|srt|vtt`); unbekannte Formate werden geblockt.
+- Speaker-Alias-Updates folgen denselben Tenant- und Conflict-Guards wie Transcript-Edits.
 - Textbasierte Exportformate behandeln Transcript-Inhalte als Daten (Escaping), um XSS-/Markup-Injection zu erschweren.
 - Tenant-scoped Transcript-Lookup vor Export verhindert Cross-Tenant-Datenabfluss.
 
@@ -156,10 +165,45 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Preflight als Deployment-Guard.** `RETENTION_VALIDATE_ENV_ONLY=true` muss vor Start in Pipeline/Init-Checks ausgeführt werden.
 
 ## 2026-03-08 – Frontend Security Controls (Phase-1 UI)
-- Bearer-Token wird ausschließlich im Laufzeitspeicher gehalten (kein LocalStorage/SessionStorage Persistenzpfad).
+- Bearer-Token wird im Haupt-Frontend im Laufzeitspeicher gehalten; fuer den Korrektur-Workspace wird ein kurzlebiger, single-use Handover im browserweiten Storage mit TTL und sofortigem Consume verwendet.
 - Upload-Flow führt clientseitige Vorvalidierung (Dateigröße, Typfilter) aus; serverseitige Validierung bleibt maßgeblich.
 - Fehlerdarstellung ist sanitisiert (`error_code`, `correlation_id`) und unterdrückt intern-sensible Details.
 
 ## 2026-03-08 – Ergänzende UI-Sicherheitskontrollen (Visual Refresh)
 - Branding/Styling-Update ohne Erweiterung der Datenrechte: Audit-Navigation bleibt strikt rollenbasiert (`admin`-only visibility).
 - Fehlerdarstellung im Login bleibt kontrolliert auf Codes (kein internes Debug/Stacktrace-Leak) auch im neuen UI-Layout.
+
+## 2026-03-22 - Controls fuer Midpoint-Checkpointing und terminalen Cancel
+- **Control: Terminal-Cancel erzwingen.** `canceled` ist final; Resume auf `canceled` wird mit `409 job.resume.invalid_state` blockiert.
+- **Control: Cancel-Prioritaet im Worker.** `cancel_requested` wird vor Retry/Weiterverarbeitung ausgewertet; laufende Jobs gehen kontrolliert nach `canceled`.
+- **Control: Tenant-scoped Checkpoint-Speicherung.** Checkpoints werden ausschliesslich mit verpflichtendem `(tenant_id, job_id)` Kontext persistiert.
+- **Control: Teilresultate bleiben intern.** Checkpoint- und Zwischenartefakte werden nicht ueber API/Frontend exponiert.
+- **Control: Kooperative Unterbrechungspunkte.** Pause/Cancel werden zwischen Segmenten und Stage-Grenzen geprueft, um unkontrollierte Teilzustandsverluste zu vermeiden.
+
+## 2026-03-22 - Controls fuer GPU-First Runtime und Fallback-Governance
+- **Control: Transparenter Runtime-Fallback.** Bei nicht verfuegbarer CUDA darf Fallback nur kontrolliert erfolgen (`cuda -> cpu/int8`) und muss als `worker.runtime.gpu_fallback` auditierbar sein.
+- **Control: No-Secret Logging.** GPU-Preflight/Fallback-Logs enthalten keine Tokens/Secrets; nur nicht-sensitive Device-/Reason-Metadaten.
+- **Control: Queue-Rollenisolation.** Dedizierte Worker-Pools verwenden explizite `WORKER_ALLOWED_QUEUES`, um ungewollte Cross-Pool-Verarbeitung zu vermeiden.
+- **Control: Tenant-Isolation bleibt unveraendert.** GPU-/Pool-Optimierungen duerfen tenant-scoped Objektpfad- und Statuskontrollen nicht umgehen.
+
+## 2026-03-22 - Controls fuer Tenant-Admin Decoding Settings
+- **Control: Admin-only Zugriff.** Read/Write auf `transcription-settings` ist strikt an Rolle `admin` gebunden; Non-Admin wird mit `403 authz.deny` abgewiesen.
+- **Control: Tenant-Scoping.** Einstellungen werden pro `tenant_id` isoliert gespeichert und abgerufen; kein Cross-Tenant-Zugriff.
+- **Control: Strict Input Validation.** Decoding-Optionen folgen einer Feld-Whitelist und harten Wertebereichen; unbekannte oder invalide Felder werden mit `422 transcription_settings.invalid_payload` abgewiesen.
+- **Control: Queueing Snapshot Integrity.** Beim `complete-upload` wird ein validierter Snapshot pro Job persistiert und in Outbox/Resume konsistent weitergegeben.
+- **Control: Defensive Worker Consumption.** Worker uebernimmt nur validierte Whitelist-Felder in WhisperX-CLI-Flags; invalide Payloads fallen auf sichere Defaults zurueck.
+- **Control: Prompt Confidentiality in Audit.** `initial_prompt` wird nicht im Klartext auditiert; nur Hash/Laenge werden protokolliert.
+
+## 2026-03-23 - Controls fuer language + chunk/vad + model forcing
+- **Control: Harte Modell-Governance.** WhisperX-Worker akzeptiert kein freies Modell-Override; effektives Modell ist immer large-v3 und Override-Versuche werden als worker.runtime.model_forced auditiert.
+- **Control: Strikte Sprach-Whitelist.** Job-Input language ist auf auto|de|en|fr|es|it begrenzt; unbekannte Werte werden mit 422 abgewiesen.
+- **Control: Parameter-Range-Validation.** chunk_size (5..60), vad_onset (0.0..1.0), vad_offset (0.0..1.0) werden serverseitig validiert, bevor sie in Queue/Worker gelangen.
+- **Control: Data-not-code Behandlung.** Neue Transcription-Optionen werden ausschliesslich als Daten im Snapshot verarbeitet; keine dynamische Ausfuehrung von Input-Inhalten.
+- **Control: Defensive Worker Consumption.** Ungueltige Snapshot-/Settings-Payloads fallen weiterhin auf sichere Defaults zurueck (safe_worker_decoding_options).
+
+## 2026-03-24 - Controls fuer Korrekturmodus Sessions
+- **Control: Session Tenant+Actor Scope.** Correction-Sessions sind an `(tenant_id, session_id)` und `actor_id` gebunden; fremde Bearbeiter duerfen Session weder lesen noch mutieren.
+- **Control: Timeline Invariants.** Korrektur-Operationen validieren `start/end` strikt auf monotone, lueckenlose Timeline ohne Overlap.
+- **Control: Draft-vs-Version Trennung.** Autosave aktualisiert nur Session-Draft; persistente Transcript-Versionen entstehen ausschliesslich ueber explizites Commit.
+- **Control: Status Governance.** `review_status` und `is_final` werden separat gepflegt und auditierbar protokolliert.
+- **Control: Input Safety.** Sprecher-/Text-/Replace-Inputs werden als Daten behandelt, inklusive Control-Character-Checks und XSS-sicherem Rendering im Workspace.
