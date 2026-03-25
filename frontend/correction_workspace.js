@@ -21,6 +21,13 @@ import {
   serializeSidebarSectionState,
   SIDEBAR_SECTION_IDS,
 } from './correction_workspace_viewmodel.js';
+import {
+  buildCorrectionExportBaseName,
+  buildCorrectionMarkdownExport,
+  buildCorrectionPlainTextExport,
+  buildCorrectionWordDocument,
+  buildSimplePdfFromPlainText,
+} from './correction_workspace_export.js';
 
 const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
@@ -220,6 +227,73 @@ function maybeAutoSeekToSegment({ previousSegmentId = '', nextSegmentId = '', so
   seekMediaToSegmentStart(nextSegmentId);
 }
 
+function triggerDownload({ filename, mimeType, payload }) {
+  const blob = payload instanceof Blob
+    ? payload
+    : new Blob([payload], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportCurrentTranscript(format) {
+  try {
+    const segments = collectSegmentsFromDom();
+    const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt: new Date() });
+    if (format === 'md') {
+      const markdown = buildCorrectionMarkdownExport({
+        jobId: state.jobId,
+        segments,
+        speakerLabels: state.speakerLabels,
+        createdAt: new Date(),
+      });
+      triggerDownload({
+        filename: `${baseName}.md`,
+        mimeType: 'text/markdown;charset=utf-8',
+        payload: markdown,
+      });
+      setStatus('Markdown-Export erstellt');
+      return;
+    }
+
+    const text = buildCorrectionPlainTextExport({
+      segments,
+      speakerLabels: state.speakerLabels,
+    });
+
+    if (format === 'pdf') {
+      const pdfBytes = buildSimplePdfFromPlainText(text);
+      triggerDownload({
+        filename: `${baseName}.pdf`,
+        mimeType: 'application/pdf',
+        payload: pdfBytes,
+      });
+      setStatus('PDF-Export erstellt');
+      return;
+    }
+
+    if (format === 'word') {
+      const word = buildCorrectionWordDocument({
+        title: `Korrektur-Export Job ${state.jobId}`,
+        text,
+      });
+      triggerDownload({
+        filename: `${baseName}.doc`,
+        mimeType: 'application/msword',
+        payload: word,
+      });
+      setStatus('Word-Export erstellt');
+    }
+  } catch (error) {
+    setStatus(`Export fehlgeschlagen: ${error.message}`);
+  }
+}
+
 function syncSpeakerReassignMeta() {
   const blockInfoNode = document.getElementById('cw-selected-block-info');
   if (blockInfoNode) {
@@ -255,6 +329,12 @@ function syncSelectedBlockHighlight(editor) {
   if (!state.selectedSegmentId) return;
   const active = editor.querySelector(`[data-segment-id="${CSS.escape(String(state.selectedSegmentId))}"]`);
   if (active) active.classList.add('selected');
+}
+
+function autoResizeTextarea(node) {
+  if (!node) return;
+  node.style.height = 'auto';
+  node.style.height = `${Math.max(72, node.scrollHeight)}px`;
 }
 
 function syncActiveBlockHighlight(editor) {
@@ -430,6 +510,9 @@ function render() {
         <section class="cw-topbar-group cw-topbar-group--actions">
           <button id="cw-save" class="primary">Manuell speichern</button>
           <button id="cw-commit" class="primary">Version committen</button>
+          <button id="cw-export-md" class="cw-action">Download MD</button>
+          <button id="cw-export-pdf" class="cw-action">Download PDF</button>
+          <button id="cw-export-word" class="cw-action">Download Word</button>
           <button id="cw-discard" class="danger">Verwerfen</button>
           <button id="cw-undo">Undo</button>
           <button id="cw-redo">Redo</button>
@@ -580,6 +663,7 @@ function bindInteractions() {
   const editor = document.getElementById('cw-editor');
   if (editor) {
     editor.querySelectorAll('[data-text-input]').forEach((node) => {
+      autoResizeTextarea(node);
       const syncNodeSelection = () => {
         const segmentId = String(node.getAttribute('data-text-input') || '');
         if (!segmentId) return;
@@ -589,6 +673,7 @@ function bindInteractions() {
         syncSpeakerReassignMeta();
       };
       node.addEventListener('input', () => {
+        autoResizeTextarea(node);
         scheduleAutosave();
         syncNodeSelection();
       });
@@ -691,6 +776,27 @@ function bindInteractions() {
       } catch (error) {
         setStatus(`Speichern fehlgeschlagen: ${error.message}`);
       }
+    };
+  }
+
+  const exportMarkdownButton = document.getElementById('cw-export-md');
+  if (exportMarkdownButton) {
+    exportMarkdownButton.onclick = () => {
+      exportCurrentTranscript('md');
+    };
+  }
+
+  const exportPdfButton = document.getElementById('cw-export-pdf');
+  if (exportPdfButton) {
+    exportPdfButton.onclick = () => {
+      exportCurrentTranscript('pdf');
+    };
+  }
+
+  const exportWordButton = document.getElementById('cw-export-word');
+  if (exportWordButton) {
+    exportWordButton.onclick = () => {
+      exportCurrentTranscript('word');
     };
   }
 

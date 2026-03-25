@@ -166,8 +166,9 @@ body {
 
 .cw-block textarea {
   width: 100%;
-  min-height: 112px;
-  resize: vertical;
+  min-height: 72px;
+  resize: none;
+  overflow: hidden;
   margin-top: 0.35rem;
   border: 1px solid var(--cw-border);
   border-radius: 8px;
@@ -293,6 +294,11 @@ body {
   background: var(--cw-accent);
   color: #fff;
   border-color: transparent;
+}
+
+.cw-topbar button.cw-action {
+  border-color: color-mix(in srgb, var(--cw-accent) 35%, var(--cw-border));
+  background: color-mix(in srgb, var(--cw-accent) 14%, var(--cw-surface));
 }
 
 .cw-sidebar button.primary:hover,

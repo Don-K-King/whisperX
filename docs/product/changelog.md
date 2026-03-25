@@ -225,3 +225,8 @@
 - Bedienbarkeit im Korrekturmodus verbessert: Nach Sprecherzuweisung bleibt der Editor im bearbeiteten Bereich; Scrollposition und Segmentkontext werden nach Rendern wiederhergestellt.
 - Neue Header-Option Auto-Sprung Media eingefuehrt (persistiert): automatischer Sprung auf Blockstart kann aktiviert/deaktiviert werden.
 - Header-Layout neu gegliedert (Meta, Aktionen, Optionen) sowie konsistentes Button-Styling mit dezentem Hover-/Active-Effekt umgesetzt.
+
+## 2026-03-25
+- Korrekturmodus-Editor passt Textblockhoehen jetzt automatisch an den Inhalt an; interne Scrollbalken in den Bloecken entfallen.
+- Neue Exportfunktion direkt im Korrekturmodus: Download als Markdown (.md), PDF (.pdf) und Word-kompatibel (.doc/RTF).
+- Header-Layout weiter gegliedert und Export-Aktionen integriert, inklusive konsistenter dezent hervorgehobener Action-Buttons.
