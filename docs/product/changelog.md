@@ -210,3 +210,18 @@
 ## 2026-03-25
 - Markierte Textpassagen im Korrekturmodus bleiben bei Sidebar-Interaktionen (z.B. Sprecherauswahl/Statusklicks) erhalten; Aufhebung nur durch neue gueltige Markierung im Transkript oder Segmentwechsel nach Datenaenderung.
 - Beim Auswaehlen/Fokussieren eines Transcript-Blocks springt Audio/Video automatisch auf den Block-Startzeitpunkt (ohne Autoplay), sodass direkt mit Play gestartet werden kann.
+
+## 2026-03-25
+- Korrekturmodus Audio-Text-Sync gehaertet: Beim manuellen Seeken (Slider/seeked/metadata) wird der aktive Transcript-Block jetzt sofort aktualisiert, auch im Pause-Zustand.
+- Klick/Fokus auf einen Transcript-Block setzt die aktive Blockmarkierung deterministisch und springt Medien auf Segmentstart, ohne doppelte Markierung auf vorherigem Block.
+- Segmentgrenzen explizit abgesichert: Boundary-Mapping bleibt konsistent in beide Richtungen (Text->Media, Media->Text).
+
+## 2026-03-25
+- Hybrid-Seek im Korrekturmodus umgesetzt: automatischer Sprung auf Blockstart nur noch bei echtem Blockwechsel, kein Ruecksprung mehr bei Refokus/Edit im selben Block.
+- Pro Transcript-Block wurde ein expliziter Jump-Button (keyboard-accessible) ergaenzt, um gezielt auf den Blockstart im Media zu springen.
+- Media->Text-Sync bei Slider/Seek gestaerkt: beim Seeken wird der passende Block weiterhin automatisch aktiv und zusaetzlich als Auswahl uebernommen.
+
+## 2026-03-25
+- Bedienbarkeit im Korrekturmodus verbessert: Nach Sprecherzuweisung bleibt der Editor im bearbeiteten Bereich; Scrollposition und Segmentkontext werden nach Rendern wiederhergestellt.
+- Neue Header-Option Auto-Sprung Media eingefuehrt (persistiert): automatischer Sprung auf Blockstart kann aktiviert/deaktiviert werden.
+- Header-Layout neu gegliedert (Meta, Aktionen, Optionen) sowie konsistentes Button-Styling mit dezentem Hover-/Active-Effekt umgesetzt.

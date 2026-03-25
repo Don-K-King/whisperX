@@ -28,7 +28,10 @@ export function findActiveSegmentIndex({ segments = [], currentTime = 0 }) {
   if (!Array.isArray(segments) || segments.length === 0) return -1;
   const time = Number(currentTime);
   if (!Number.isFinite(time)) return -1;
-  for (let index = 0; index < segments.length; index += 1) {
+  // Reverse iteration makes boundary matches deterministic:
+  // if time equals the end/start boundary of two consecutive segments,
+  // we select the later (next) segment.
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
     const segment = segments[index];
     const start = Number(segment.start ?? 0);
     const end = Number(segment.end ?? start);

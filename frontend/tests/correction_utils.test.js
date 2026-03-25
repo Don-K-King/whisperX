@@ -19,9 +19,12 @@ test('findActiveSegmentIndex returns segment for current time and fallback', () 
   const segments = normalizeSegments([
     { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
     { segment_id: 'seg_2', start: 1, end: 2, speaker: 'S2', text: 'B' },
+    { segment_id: 'seg_3', start: 2, end: 3, speaker: 'S3', text: 'C' },
   ]);
   assert.equal(findActiveSegmentIndex({ segments, currentTime: 0.5 }), 0);
-  assert.equal(findActiveSegmentIndex({ segments, currentTime: 2.5 }), 1);
+  assert.equal(findActiveSegmentIndex({ segments, currentTime: 1.0 }), 1);
+  assert.equal(findActiveSegmentIndex({ segments, currentTime: 2.0 }), 2);
+  assert.equal(findActiveSegmentIndex({ segments, currentTime: 3.5 }), 2);
 });
 
 test('applyReplaceLiteral replaces one or many matches', () => {

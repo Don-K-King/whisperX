@@ -33,6 +33,11 @@ export function parseSidebarVisibility(value) {
   return true;
 }
 
+export function parseAutoSeekSelectionEnabled(value) {
+  if (value === '0') return false;
+  return true;
+}
+
 export function parseSidebarSectionState(value, sectionIds = SIDEBAR_SECTION_IDS) {
   const defaults = Object.fromEntries(sectionIds.map((id) => [id, true]));
   if (typeof value !== 'string' || value.trim() === '') {
@@ -88,4 +93,24 @@ export function resolveMediaSeekTime(startRaw) {
   const start = Number(startRaw);
   if (!Number.isFinite(start)) return null;
   return Math.max(0, start);
+}
+
+export function shouldAutoSeek({ previousSegmentId = '', nextSegmentId = '', source = '' }) {
+  const previous = String(previousSegmentId ?? '').trim();
+  const next = String(nextSegmentId ?? '').trim();
+  const trigger = String(source ?? '').trim();
+  if (!previous || !next || previous === next) return false;
+  return trigger === 'block_click' || trigger === 'text_focus';
+}
+
+export function resolveSelectedSegmentId({ previousSegmentId = '', segments = [] }) {
+  if (!Array.isArray(segments) || segments.length === 0) return null;
+  const previous = String(previousSegmentId ?? '').trim();
+  const segmentIds = segments.map((segment) => String(segment?.segment_id ?? '').trim()).filter(Boolean);
+  if (!previous) return segmentIds[0] || null;
+  if (segmentIds.includes(previous)) return previous;
+  const splitPrefix = `${previous}_`;
+  const splitCandidate = segmentIds.find((segmentId) => segmentId.startsWith(splitPrefix));
+  if (splitCandidate) return splitCandidate;
+  return segmentIds[0] || null;
 }

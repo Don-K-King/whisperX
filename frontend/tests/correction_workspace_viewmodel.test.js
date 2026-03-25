@@ -5,10 +5,13 @@ import {
   buildSpeakerDisplayLabel,
   buildSpeakerOptionEntries,
   deriveMarkedTextRange,
+  parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveSelectedSegmentId,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
+  shouldAutoSeek,
   SIDEBAR_SECTION_IDS,
   serializeSidebarSectionState,
 } from '../correction_workspace_viewmodel.js';
@@ -160,4 +163,76 @@ test('resolveMediaSeekTime normalizes invalid values', () => {
   assert.equal(resolveMediaSeekTime(3.25), 3.25);
   assert.equal(resolveMediaSeekTime(-2), 0);
   assert.equal(resolveMediaSeekTime('abc'), null);
+});
+
+test('shouldAutoSeek returns true only for segment change and supported source', () => {
+  assert.equal(shouldAutoSeek({
+    previousSegmentId: 'seg_1',
+    nextSegmentId: 'seg_2',
+    source: 'block_click',
+  }), true);
+  assert.equal(shouldAutoSeek({
+    previousSegmentId: 'seg_1',
+    nextSegmentId: 'seg_2',
+    source: 'text_focus',
+  }), true);
+});
+
+test('shouldAutoSeek returns false for same segment, missing ids, and unsupported source', () => {
+  assert.equal(shouldAutoSeek({
+    previousSegmentId: 'seg_1',
+    nextSegmentId: 'seg_1',
+    source: 'block_click',
+  }), false);
+  assert.equal(shouldAutoSeek({
+    previousSegmentId: '',
+    nextSegmentId: 'seg_2',
+    source: 'block_click',
+  }), false);
+  assert.equal(shouldAutoSeek({
+    previousSegmentId: 'seg_1',
+    nextSegmentId: 'seg_2',
+    source: 'jump_button',
+  }), false);
+});
+
+test('parseAutoSeekSelectionEnabled supports persisted toggle values', () => {
+  assert.equal(parseAutoSeekSelectionEnabled('1'), true);
+  assert.equal(parseAutoSeekSelectionEnabled('0'), false);
+  assert.equal(parseAutoSeekSelectionEnabled(null), true);
+});
+
+test('resolveSelectedSegmentId keeps previous id when still available', () => {
+  const selected = resolveSelectedSegmentId({
+    previousSegmentId: 'seg_2',
+    segments: [
+      { segment_id: 'seg_1' },
+      { segment_id: 'seg_2' },
+    ],
+  });
+  assert.equal(selected, 'seg_2');
+});
+
+test('resolveSelectedSegmentId maps to split successor when previous segment was split', () => {
+  const selected = resolveSelectedSegmentId({
+    previousSegmentId: 'seg_20',
+    segments: [
+      { segment_id: 'seg_19' },
+      { segment_id: 'seg_20_a' },
+      { segment_id: 'seg_20_b' },
+    ],
+  });
+  assert.equal(selected, 'seg_20_a');
+});
+
+test('resolveSelectedSegmentId falls back to first segment when previous is missing', () => {
+  const selected = resolveSelectedSegmentId({
+    previousSegmentId: 'seg_99',
+    segments: [
+      { segment_id: 'seg_1' },
+      { segment_id: 'seg_2' },
+    ],
+  });
+  assert.equal(selected, 'seg_1');
+  assert.equal(resolveSelectedSegmentId({ previousSegmentId: 'seg_99', segments: [] }), null);
 });

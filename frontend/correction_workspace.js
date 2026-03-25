@@ -11,10 +11,13 @@ import {
   buildSpeakerDisplayLabel,
   deriveMarkedTextRange,
   buildSpeakerOptionEntries,
+  parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
   parseSidebarVisibility,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
+  resolveSelectedSegmentId,
+  shouldAutoSeek,
   serializeSidebarSectionState,
   SIDEBAR_SECTION_IDS,
 } from './correction_workspace_viewmodel.js';
@@ -22,6 +25,7 @@ import {
 const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
+const AUTO_SEEK_SELECTION_STORAGE_KEY = 'evodox-correction-auto-seek-selection';
 
 const state = {
   token: '',
@@ -51,6 +55,7 @@ const state = {
   mediaLoadError: '',
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
+  autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
   selectedTextRange: null,
 };
 
@@ -139,6 +144,22 @@ function persistSidebarSectionState() {
   }
 }
 
+function loadPersistedAutoSeekSelectionEnabled() {
+  try {
+    return parseAutoSeekSelectionEnabled(localStorage.getItem(AUTO_SEEK_SELECTION_STORAGE_KEY));
+  } catch {
+    return true;
+  }
+}
+
+function persistAutoSeekSelectionEnabled(enabled) {
+  try {
+    localStorage.setItem(AUTO_SEEK_SELECTION_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // ignore persistence errors
+  }
+}
+
 function renderSidebarTreeSection({ id, title, body }) {
   const isOpen = state.sidebarSectionsOpen?.[id] !== false;
   return `
@@ -193,6 +214,12 @@ function seekMediaToSegmentStart(segmentId) {
   }
 }
 
+function maybeAutoSeekToSegment({ previousSegmentId = '', nextSegmentId = '', source = '' }) {
+  if (!state.autoSeekSelectionEnabled) return;
+  if (!shouldAutoSeek({ previousSegmentId, nextSegmentId, source })) return;
+  seekMediaToSegmentStart(nextSegmentId);
+}
+
 function syncSpeakerReassignMeta() {
   const blockInfoNode = document.getElementById('cw-selected-block-info');
   if (blockInfoNode) {
@@ -228,6 +255,57 @@ function syncSelectedBlockHighlight(editor) {
   if (!state.selectedSegmentId) return;
   const active = editor.querySelector(`[data-segment-id="${CSS.escape(String(state.selectedSegmentId))}"]`);
   if (active) active.classList.add('selected');
+}
+
+function syncActiveBlockHighlight(editor) {
+  if (!editor) return;
+  editor.querySelectorAll('.cw-block.active').forEach((node) => node.classList.remove('active'));
+  if (state.activeSegmentIndex < 0) return;
+  const segment = state.segments[state.activeSegmentIndex];
+  if (!segment) return;
+  const active = editor.querySelector(`[data-segment-id="${CSS.escape(String(segment.segment_id))}"]`);
+  if (active) active.classList.add('active');
+}
+
+function activateSegmentForUi(segmentId, editor) {
+  const nextIndex = state.segments.findIndex((segment) => String(segment.segment_id) === String(segmentId));
+  if (nextIndex < 0) return;
+  state.activeSegmentIndex = nextIndex;
+  syncActiveBlockHighlight(editor);
+}
+
+function captureEditorContext(editor) {
+  if (!editor) return null;
+  return {
+    scrollTop: editor.scrollTop,
+    selectedSegmentId: String(state.selectedSegmentId || ''),
+  };
+}
+
+function resolveContextSegmentId(preferredSegmentId) {
+  return resolveSelectedSegmentId({
+    previousSegmentId: preferredSegmentId,
+    segments: state.segments,
+  });
+}
+
+function restoreEditorContext(editor, context) {
+  if (!editor || !context) return;
+  if (Number.isFinite(context.scrollTop)) {
+    editor.scrollTop = Math.max(0, Number(context.scrollTop));
+  }
+  const resolvedSegmentId = resolveContextSegmentId(context.selectedSegmentId);
+  if (!resolvedSegmentId) return;
+  state.selectedSegmentId = resolvedSegmentId;
+  syncSelectedBlockHighlight(editor);
+  syncSpeakerReassignMeta();
+  const node = editor.querySelector(`[data-segment-id="${CSS.escape(String(resolvedSegmentId))}"]`);
+  if (!node) return;
+  const editorRect = editor.getBoundingClientRect();
+  const nodeRect = node.getBoundingClientRect();
+  if (nodeRect.top < editorRect.top || nodeRect.bottom > editorRect.bottom) {
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
 
 function markUnsavedChanges() {
@@ -278,6 +356,13 @@ function renderEditorBlocks() {
       <article class="cw-block ${activeClass} ${selectedClass}" data-segment-id="${escapeHtml(segment.segment_id)}">
         <header class="cw-block-header">
           <strong class="cw-block-speaker">${escapeHtml(speakerLabel)}</strong>
+          <button
+            type="button"
+            class="cw-block-jump"
+            data-segment-jump="${escapeHtml(segment.segment_id)}"
+            aria-label="Zum Start dieses Blocks springen"
+            title="Zum Start dieses Blocks springen"
+          >Jump</button>
           <small class="cw-block-time">${escapeHtml(formatTimestamp(segment.start))} - ${escapeHtml(formatTimestamp(segment.end))}</small>
         </header>
         <textarea data-text-input="${escapeHtml(segment.segment_id)}">${escapeHtml(segment.text)}</textarea>
@@ -334,23 +419,32 @@ function render() {
   app.innerHTML = `
     <section class="cw-root">
       <header class="cw-topbar">
-        <strong>Korrekturmodus</strong>
-        <span class="badge">Job: ${escapeHtml(state.jobId)}</span>
-        <span class="badge">Base v${state.baseVersion}</span>
-        <span class="badge">Working v${state.workingVersion}</span>
-        <span class="badge">Review: ${escapeHtml(state.reviewStatus)}</span>
-        <span class="badge">Final: ${state.isFinal ? 'Ja' : 'Nein'}</span>
-        <button id="cw-save" class="primary">Manuell speichern</button>
-        <button id="cw-commit" class="primary">Version committen</button>
-        <button id="cw-discard" class="danger">Verwerfen</button>
-        <button id="cw-undo">Undo</button>
-        <button id="cw-redo">Redo</button>
-        <button id="cw-sidebar-toggle">${sidebarToggleLabel}</button>
-        <button id="cw-theme-toggle">Theme: ${theme === 'dark' ? 'Dark' : 'Light'}</button>
-        <button id="cw-close">Fenster schliessen</button>
-        <label>
-          <input id="cw-autosave" type="checkbox" ${state.autosaveEnabled ? 'checked' : ''} /> Autosave Draft
-        </label>
+        <section class="cw-topbar-group cw-topbar-group--meta">
+          <strong>Korrekturmodus</strong>
+          <span class="badge">Job: ${escapeHtml(state.jobId)}</span>
+          <span class="badge">Base v${state.baseVersion}</span>
+          <span class="badge">Working v${state.workingVersion}</span>
+          <span class="badge">Review: ${escapeHtml(state.reviewStatus)}</span>
+          <span class="badge">Final: ${state.isFinal ? 'Ja' : 'Nein'}</span>
+        </section>
+        <section class="cw-topbar-group cw-topbar-group--actions">
+          <button id="cw-save" class="primary">Manuell speichern</button>
+          <button id="cw-commit" class="primary">Version committen</button>
+          <button id="cw-discard" class="danger">Verwerfen</button>
+          <button id="cw-undo">Undo</button>
+          <button id="cw-redo">Redo</button>
+        </section>
+        <section class="cw-topbar-group cw-topbar-group--preferences">
+          <label class="cw-toggle">
+            <input id="cw-autosave" type="checkbox" ${state.autosaveEnabled ? 'checked' : ''} /> Autosave Draft
+          </label>
+          <label class="cw-toggle">
+            <input id="cw-auto-seek-selection" type="checkbox" ${state.autoSeekSelectionEnabled ? 'checked' : ''} /> Auto-Sprung Media
+          </label>
+          <button id="cw-sidebar-toggle">${sidebarToggleLabel}</button>
+          <button id="cw-theme-toggle">Theme: ${theme === 'dark' ? 'Dark' : 'Light'}</button>
+          <button id="cw-close">Fenster schliessen</button>
+        </section>
       </header>
       <section class="${layoutClass}">
         <section class="cw-editor" id="cw-editor">${renderEditorBlocks()}</section>
@@ -423,7 +517,10 @@ function collectSegmentsFromDom() {
   return mergeConsecutiveSpeakerBlocks(updated);
 }
 
-async function applySegments(segments, message = 'Aenderungen gespeichert') {
+async function applySegments(segments, message = 'Aenderungen gespeichert', options = {}) {
+  const editor = document.getElementById('cw-editor');
+  const fallbackContext = captureEditorContext(editor);
+  const context = options?.editorContext || fallbackContext;
   const payload = {
     operations: [
       {
@@ -441,6 +538,8 @@ async function applySegments(segments, message = 'Aenderungen gespeichert') {
   clearUnsavedChanges();
   setStatus(message);
   render();
+  const renderedEditor = document.getElementById('cw-editor');
+  restoreEditorContext(renderedEditor, context);
 }
 
 function scheduleAutosave() {
@@ -471,9 +570,7 @@ function patchStateFromSession(payload) {
   state.operationLog = Array.isArray(payload.operation_log) ? payload.operation_log : [];
   state.reviewStatus = String(payload.review_status ?? state.reviewStatus);
   state.isFinal = Boolean(payload.is_final ?? state.isFinal);
-  if (!state.segments.some((segment) => String(segment.segment_id) === String(state.selectedSegmentId))) {
-    state.selectedSegmentId = state.segments[0]?.segment_id || null;
-  }
+  state.selectedSegmentId = resolveContextSegmentId(state.selectedSegmentId);
   if (state.selectedTextRange && !state.segments.some((segment) => String(segment.segment_id) === String(state.selectedTextRange.segmentId))) {
     clearMarkedTextSelection();
   }
@@ -501,17 +598,35 @@ function bindInteractions() {
       node.addEventListener('focus', () => {
         const segmentId = String(node.getAttribute('data-text-input') || '');
         if (!segmentId) return;
+        const previousSegmentId = String(state.selectedSegmentId || '');
         state.selectedSegmentId = segmentId;
         syncSelectedBlockHighlight(editor);
-        seekMediaToSegmentStart(segmentId);
+        activateSegmentForUi(segmentId, editor);
+        maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId: segmentId, source: 'text_focus' });
         syncSpeakerReassignMeta();
       });
     });
     editor.querySelectorAll('.cw-block').forEach((blockNode) => {
       blockNode.addEventListener('click', () => {
-        state.selectedSegmentId = String(blockNode.dataset.segmentId || '');
+        const nextSegmentId = String(blockNode.dataset.segmentId || '');
+        const previousSegmentId = String(state.selectedSegmentId || '');
+        state.selectedSegmentId = nextSegmentId;
         syncSelectedBlockHighlight(editor);
-        seekMediaToSegmentStart(state.selectedSegmentId);
+        activateSegmentForUi(nextSegmentId, editor);
+        maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId, source: 'block_click' });
+        syncSpeakerReassignMeta();
+      });
+    });
+    editor.querySelectorAll('[data-segment-jump]').forEach((jumpNode) => {
+      jumpNode.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const segmentId = String(jumpNode.getAttribute('data-segment-jump') || '');
+        if (!segmentId) return;
+        state.selectedSegmentId = segmentId;
+        syncSelectedBlockHighlight(editor);
+        activateSegmentForUi(segmentId, editor);
+        seekMediaToSegmentStart(segmentId);
         syncSpeakerReassignMeta();
       });
     });
@@ -553,6 +668,17 @@ function bindInteractions() {
       } catch (error) {
         setStatus(`Autosave konnte nicht gespeichert werden: ${error.message}`);
       }
+    };
+  }
+
+  const autoSeekSelectionNode = document.getElementById('cw-auto-seek-selection');
+  if (autoSeekSelectionNode) {
+    autoSeekSelectionNode.onchange = () => {
+      state.autoSeekSelectionEnabled = Boolean(autoSeekSelectionNode.checked);
+      persistAutoSeekSelectionEnabled(state.autoSeekSelectionEnabled);
+      setStatus(state.autoSeekSelectionEnabled
+        ? 'Auto-Sprung Media aktiviert'
+        : 'Auto-Sprung Media deaktiviert');
     };
   }
 
@@ -741,21 +867,33 @@ function bindInteractions() {
   };
 
   if (mediaNode) {
-    mediaNode.ontimeupdate = () => {
+    const syncActiveFromMedia = (selectSegment) => {
       const nextIndex = findActiveSegmentIndex({ segments: state.segments, currentTime: mediaNode.currentTime });
-      if (nextIndex === state.activeSegmentIndex) return;
-      state.activeSegmentIndex = nextIndex;
-      const currentElement = document.querySelector('.cw-block.active');
-      if (currentElement) currentElement.classList.remove('active');
+      const segmentChanged = nextIndex !== state.activeSegmentIndex;
+      if (segmentChanged) {
+        state.activeSegmentIndex = nextIndex;
+        syncActiveBlockHighlight(editor);
+      }
       if (nextIndex >= 0) {
         const segment = state.segments[nextIndex];
-        const node = document.querySelector(`[data-segment-id="${CSS.escape(String(segment.segment_id))}"]`);
-        if (node) {
-          node.classList.add('active');
+        if (selectSegment) {
+          const segmentId = String(segment.segment_id);
+          if (String(state.selectedSegmentId || '') !== segmentId) {
+            state.selectedSegmentId = segmentId;
+            syncSelectedBlockHighlight(editor);
+            syncSpeakerReassignMeta();
+          }
+        }
+        const node = editor?.querySelector(`[data-segment-id="${CSS.escape(String(segment.segment_id))}"]`);
+        if (segmentChanged && node) {
           centerBlockInEditor(node);
         }
       }
     };
+    mediaNode.ontimeupdate = () => syncActiveFromMedia(false);
+    mediaNode.onseeking = () => syncActiveFromMedia(true);
+    mediaNode.onseeked = () => syncActiveFromMedia(true);
+    mediaNode.onloadedmetadata = () => syncActiveFromMedia(true);
   }
 
   const commitButton = document.getElementById('cw-commit');
