@@ -9,9 +9,12 @@ import {
 import { consumeCorrectionHandoff } from './correction_handoff.js';
 import {
   buildSpeakerDisplayLabel,
+  deriveMarkedTextRange,
   buildSpeakerOptionEntries,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveMarkedTextRange,
+  resolveMediaSeekTime,
   serializeSidebarSectionState,
   SIDEBAR_SECTION_IDS,
 } from './correction_workspace_viewmodel.js';
@@ -48,6 +51,7 @@ const state = {
   mediaLoadError: '',
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
+  selectedTextRange: null,
 };
 
 function getBootstrap() {
@@ -150,6 +154,82 @@ function renderSidebarTreeSection({ id, title, body }) {
   `;
 }
 
+function getSelectedSegment() {
+  if (!state.selectedSegmentId) return null;
+  return state.segments.find((segment) => String(segment.segment_id) === String(state.selectedSegmentId)) || null;
+}
+
+function clearMarkedTextSelection() {
+  state.selectedTextRange = null;
+}
+
+function updateMarkedTextSelectionFromNode(textNode, segmentId) {
+  if (!textNode) return null;
+  const latestRange = deriveMarkedTextRange({
+    segmentId,
+    selectionStart: textNode.selectionStart,
+    selectionEnd: textNode.selectionEnd,
+    textLength: String(textNode.value ?? '').length,
+  });
+  const resolvedRange = resolveMarkedTextRange({
+    previousRange: state.selectedTextRange,
+    latestRange,
+  });
+  state.selectedTextRange = resolvedRange;
+  return resolvedRange;
+}
+
+function seekMediaToSegmentStart(segmentId) {
+  const mediaNode = getMediaElement();
+  if (!mediaNode || !segmentId) return;
+  const segment = state.segments.find((item) => String(item.segment_id) === String(segmentId));
+  if (!segment) return;
+  const seekTime = resolveMediaSeekTime(segment.start);
+  if (seekTime == null) return;
+  try {
+    mediaNode.currentTime = seekTime;
+  } catch {
+    // Ignore browser seek restrictions
+  }
+}
+
+function syncSpeakerReassignMeta() {
+  const blockInfoNode = document.getElementById('cw-selected-block-info');
+  if (blockInfoNode) {
+    const selected = getSelectedSegment();
+    if (!selected) {
+      blockInfoNode.textContent = 'Kein Block ausgewaehlt.';
+    } else {
+      const speakerLabel = buildSpeakerDisplayLabel({
+        speakerKey: selected.speaker,
+        speakerLabels: state.speakerLabels,
+      });
+      blockInfoNode.textContent = `${speakerLabel} | ${formatTimestamp(selected.start)} - ${formatTimestamp(selected.end)}`;
+    }
+  }
+
+  const markInfoNode = document.getElementById('cw-selected-text-info');
+  if (markInfoNode) {
+    const range = state.selectedTextRange;
+    const hasRange = range && range.length > 0;
+    if (!hasRange) {
+      markInfoNode.textContent = 'Bitte Text im ausgewaehlten Block markieren.';
+    } else if (String(range.segmentId) !== String(state.selectedSegmentId)) {
+      markInfoNode.textContent = `Markierung aktiv in anderem Block (${range.length} Zeichen).`;
+    } else {
+      markInfoNode.textContent = `Markiert: Zeichen ${range.startChar + 1}-${range.endChar} (${range.length} Zeichen)`;
+    }
+  }
+}
+
+function syncSelectedBlockHighlight(editor) {
+  if (!editor) return;
+  editor.querySelectorAll('.cw-block.selected').forEach((node) => node.classList.remove('selected'));
+  if (!state.selectedSegmentId) return;
+  const active = editor.querySelector(`[data-segment-id="${CSS.escape(String(state.selectedSegmentId))}"]`);
+  if (active) active.classList.add('selected');
+}
+
 function markUnsavedChanges() {
   state.hasUnsavedChanges = true;
 }
@@ -242,22 +322,12 @@ function render() {
     </div>
   `;
   const sidebarReassignBody = `
-    <select id="cw-reassign-segment">
-      ${state.segments.map((segment) => {
-    const speakerLabel = buildSpeakerDisplayLabel({
-      speakerKey: segment.speaker,
-      speakerLabels: state.speakerLabels,
-    });
-    const timeRange = `${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`;
-    return `<option value="${escapeHtml(segment.segment_id)}">${escapeHtml(`${speakerLabel} | ${timeRange}`)}</option>`;
-  }).join('')}
-    </select>
+    <p id="cw-selected-block-info" class="cw-status">Kein Block ausgewaehlt.</p>
     <select id="cw-reassign-speaker">
       ${speakerOptions}
     </select>
-    <input id="cw-reassign-start" type="number" min="0" placeholder="Start-Char (optional)" />
-    <input id="cw-reassign-end" type="number" min="0" placeholder="End-Char (optional)" />
-    <button id="cw-reassign-apply">Sprecher anwenden</button>
+    <p id="cw-selected-text-info" class="cw-status">Bitte Text im ausgewaehlten Block markieren.</p>
+    <button id="cw-reassign-apply">Markierten Text Sprecher zuweisen</button>
   `;
   const sidebarChangeLogBody = renderOperationLog();
 
@@ -329,6 +399,7 @@ function render() {
   if (speakerFilterNode) speakerFilterNode.value = state.searchSpeaker;
 
   bindInteractions();
+  syncSpeakerReassignMeta();
 }
 
 function renderMediaNode() {
@@ -403,23 +474,45 @@ function patchStateFromSession(payload) {
   if (!state.segments.some((segment) => String(segment.segment_id) === String(state.selectedSegmentId))) {
     state.selectedSegmentId = state.segments[0]?.segment_id || null;
   }
+  if (state.selectedTextRange && !state.segments.some((segment) => String(segment.segment_id) === String(state.selectedTextRange.segmentId))) {
+    clearMarkedTextSelection();
+  }
 }
 
 function bindInteractions() {
   const editor = document.getElementById('cw-editor');
   if (editor) {
     editor.querySelectorAll('[data-text-input]').forEach((node) => {
+      const syncNodeSelection = () => {
+        const segmentId = String(node.getAttribute('data-text-input') || '');
+        if (!segmentId) return;
+        state.selectedSegmentId = segmentId;
+        syncSelectedBlockHighlight(editor);
+        updateMarkedTextSelectionFromNode(node, segmentId);
+        syncSpeakerReassignMeta();
+      };
       node.addEventListener('input', () => {
         scheduleAutosave();
+        syncNodeSelection();
+      });
+      node.addEventListener('select', syncNodeSelection);
+      node.addEventListener('mouseup', syncNodeSelection);
+      node.addEventListener('keyup', syncNodeSelection);
+      node.addEventListener('focus', () => {
+        const segmentId = String(node.getAttribute('data-text-input') || '');
+        if (!segmentId) return;
+        state.selectedSegmentId = segmentId;
+        syncSelectedBlockHighlight(editor);
+        seekMediaToSegmentStart(segmentId);
+        syncSpeakerReassignMeta();
       });
     });
     editor.querySelectorAll('.cw-block').forEach((blockNode) => {
       blockNode.addEventListener('click', () => {
         state.selectedSegmentId = String(blockNode.dataset.segmentId || '');
-        editor.querySelectorAll('.cw-block.selected').forEach((node) => node.classList.remove('selected'));
-        blockNode.classList.add('selected');
-        const targetSelect = document.getElementById('cw-reassign-segment');
-        if (targetSelect) targetSelect.value = state.selectedSegmentId;
+        syncSelectedBlockHighlight(editor);
+        seekMediaToSegmentStart(state.selectedSegmentId);
+        syncSpeakerReassignMeta();
       });
     });
   }
@@ -585,21 +678,32 @@ function bindInteractions() {
   const reassignButton = document.getElementById('cw-reassign-apply');
   if (reassignButton) {
     reassignButton.onclick = async () => {
-      const segmentNode = document.getElementById('cw-reassign-segment');
       const speakerSelectNode = document.getElementById('cw-reassign-speaker');
-      const startNode = document.getElementById('cw-reassign-start');
-      const endNode = document.getElementById('cw-reassign-end');
-      const segmentId = String(segmentNode?.value ?? '');
+      const segmentId = String(state.selectedSegmentId || '');
       const speaker = String(speakerSelectNode?.value ?? '');
-      const startChar = startNode?.value === '' ? null : Number(startNode?.value);
-      const endChar = endNode?.value === '' ? null : Number(endNode?.value);
+      if (!segmentId) {
+        setStatus('Bitte zuerst einen Block auswaehlen');
+        return;
+      }
+      if (!speaker) {
+        setStatus('Bitte zuerst einen Zielsprecher auswaehlen');
+        return;
+      }
+      const selectedNode = document.querySelector(`[data-text-input="${CSS.escape(segmentId)}"]`);
+      const liveRange = updateMarkedTextSelectionFromNode(selectedNode, segmentId);
+      const effectiveRange = liveRange && String(liveRange.segmentId) === segmentId ? liveRange : null;
+      syncSpeakerReassignMeta();
+      if (!effectiveRange || effectiveRange.length < 1) {
+        setStatus('Bitte markiere zuerst Text im ausgewaehlten Block');
+        return;
+      }
 
       const next = applySpeakerReassign({
         segments: collectSegmentsFromDom(),
         segmentId,
         speaker,
-        startChar,
-        endChar,
+        startChar: effectiveRange.startChar,
+        endChar: effectiveRange.endChar,
       });
       if (!next.changed) {
         setStatus('Sprecherumteilung konnte nicht angewendet werden');
@@ -607,6 +711,7 @@ function bindInteractions() {
       }
       try {
         await applySegments(next.segments, 'Sprecherumteilung gespeichert');
+        clearMarkedTextSelection();
       } catch (error) {
         setStatus(`Sprecherumteilung fehlgeschlagen: ${error.message}`);
       }
@@ -727,20 +832,6 @@ function bindInteractions() {
     };
   }
 
-  const selectedSegmentNode = document.getElementById('cw-reassign-segment');
-  if (selectedSegmentNode) {
-    if (state.selectedSegmentId) {
-      selectedSegmentNode.value = String(state.selectedSegmentId);
-    }
-    selectedSegmentNode.onchange = () => {
-      state.selectedSegmentId = String(selectedSegmentNode.value || '');
-      if (editor) {
-        editor.querySelectorAll('.cw-block.selected').forEach((node) => node.classList.remove('selected'));
-        const active = editor.querySelector(`[data-segment-id="${CSS.escape(state.selectedSegmentId)}"]`);
-        if (active) active.classList.add('selected');
-      }
-    };
-  }
 }
 
 function attemptWindowClose() {

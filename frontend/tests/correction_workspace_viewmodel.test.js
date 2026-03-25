@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import {
   buildSpeakerDisplayLabel,
   buildSpeakerOptionEntries,
+  deriveMarkedTextRange,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveMarkedTextRange,
+  resolveMediaSeekTime,
   SIDEBAR_SECTION_IDS,
   serializeSidebarSectionState,
 } from '../correction_workspace_viewmodel.js';
@@ -96,4 +99,65 @@ test('parse and serialize sidebar section state round-trip', () => {
   const parsed = parseSidebarSectionState(serialized);
   assert.deepEqual(parsed, openState);
   assert.deepEqual(SIDEBAR_SECTION_IDS, ['status', 'searchReplace', 'speakerReassign', 'changeLog']);
+});
+
+test('deriveMarkedTextRange returns sanitized range for valid text selection', () => {
+  const range = deriveMarkedTextRange({
+    segmentId: 'seg_7',
+    selectionStart: 2,
+    selectionEnd: 6,
+    textLength: 10,
+  });
+  assert.deepEqual(range, {
+    segmentId: 'seg_7',
+    startChar: 2,
+    endChar: 6,
+    length: 4,
+  });
+});
+
+test('deriveMarkedTextRange rejects invalid or empty selection', () => {
+  assert.equal(deriveMarkedTextRange({
+    segmentId: 'seg_7',
+    selectionStart: 4,
+    selectionEnd: 4,
+    textLength: 10,
+  }), null);
+  assert.equal(deriveMarkedTextRange({
+    segmentId: 'seg_7',
+    selectionStart: -1,
+    selectionEnd: 3,
+    textLength: 10,
+  }), null);
+  assert.equal(deriveMarkedTextRange({
+    segmentId: '',
+    selectionStart: 1,
+    selectionEnd: 2,
+    textLength: 10,
+  }), null);
+  assert.equal(deriveMarkedTextRange({
+    segmentId: 'seg_7',
+    selectionStart: 1,
+    selectionEnd: 20,
+    textLength: 10,
+  }), null);
+});
+
+test('resolveMarkedTextRange keeps previous range when latest is empty', () => {
+  const previous = { segmentId: 'seg_1', startChar: 2, endChar: 5, length: 3 };
+  const resolved = resolveMarkedTextRange({ previousRange: previous, latestRange: null });
+  assert.deepEqual(resolved, previous);
+});
+
+test('resolveMarkedTextRange prefers latest valid range', () => {
+  const previous = { segmentId: 'seg_1', startChar: 2, endChar: 5, length: 3 };
+  const latest = { segmentId: 'seg_2', startChar: 1, endChar: 4, length: 3 };
+  const resolved = resolveMarkedTextRange({ previousRange: previous, latestRange: latest });
+  assert.deepEqual(resolved, latest);
+});
+
+test('resolveMediaSeekTime normalizes invalid values', () => {
+  assert.equal(resolveMediaSeekTime(3.25), 3.25);
+  assert.equal(resolveMediaSeekTime(-2), 0);
+  assert.equal(resolveMediaSeekTime('abc'), null);
 });

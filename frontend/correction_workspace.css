@@ -203,6 +203,10 @@ body {
   gap: 0.45rem;
 }
 
+.cw-tree-content p {
+  margin: 0;
+}
+
 .cw-sidebar-status {
   margin: 0;
 }

@@ -201,3 +201,12 @@
 - Sidebar-Layout entkoppelt: eigener Scrollbereich verhindert Ueberdeckung mit Audio-Footer bei langen Menues.
 - Frontend-Viewmodel-Tests fuer Sidebar-Baumzustand/Persistenz erweitert.
 - Pflicht-Screenshots fuer Korrekturmodus nach UI-Aenderung aktualisiert (Default, Validierung, Responsive).
+
+## 2026-03-25
+- Korrekturmodus Sprecherumteilung erweitert: Block auswaehlen, Text im Block markieren und direkt als anderen Sprecher anwenden.
+- Segment-Split bei Sprecherumteilung validiert: Zeitstempel werden proportional zu den Textteilen aufgeteilt (links/mittel/rechts).
+- Sprecherumteilungs-UI vereinfacht (ohne manuelle Start/End-Char-Eingabe), inklusive Markierungs-Feedback im Sidebar-Panel.
+
+## 2026-03-25
+- Markierte Textpassagen im Korrekturmodus bleiben bei Sidebar-Interaktionen (z.B. Sprecherauswahl/Statusklicks) erhalten; Aufhebung nur durch neue gueltige Markierung im Transkript oder Segmentwechsel nach Datenaenderung.
+- Beim Auswaehlen/Fokussieren eines Transcript-Blocks springt Audio/Video automatisch auf den Block-Startzeitpunkt (ohne Autoplay), sodass direkt mit Play gestartet werden kann.

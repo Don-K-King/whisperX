@@ -57,3 +57,35 @@ export function serializeSidebarSectionState(state, sectionIds = SIDEBAR_SECTION
   const openSections = sectionIds.filter((id) => state?.[id] !== false);
   return JSON.stringify(openSections);
 }
+
+export function deriveMarkedTextRange({ segmentId = '', selectionStart = null, selectionEnd = null, textLength = 0 }) {
+  const normalizedSegmentId = String(segmentId ?? '').trim();
+  const startChar = Number(selectionStart);
+  const endChar = Number(selectionEnd);
+  const length = Number(textLength);
+  if (!normalizedSegmentId) return null;
+  if (!Number.isInteger(startChar) || !Number.isInteger(endChar) || !Number.isFinite(length)) return null;
+  if (startChar < 0 || endChar <= startChar || endChar > Math.max(0, length)) return null;
+  return {
+    segmentId: normalizedSegmentId,
+    startChar,
+    endChar,
+    length: endChar - startChar,
+  };
+}
+
+export function resolveMarkedTextRange({ previousRange = null, latestRange = null }) {
+  if (latestRange && Number(latestRange.length) > 0) {
+    return latestRange;
+  }
+  if (previousRange && Number(previousRange.length) > 0) {
+    return previousRange;
+  }
+  return null;
+}
+
+export function resolveMediaSeekTime(startRaw) {
+  const start = Number(startRaw);
+  if (!Number.isFinite(start)) return null;
+  return Math.max(0, start);
+}
