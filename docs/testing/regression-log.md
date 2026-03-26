@@ -216,3 +216,38 @@
 - Ausgefuehrt (UI-Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
 - Ergebnis (Screenshots): aktualisiert (`correction-shell-default`, `correction-editor-validation-error`, `correction-shell-responsive`).
 - Docker Smoke: `docker build -f deploy/Dockerfile.runtime -t evodox-local:dev .` und `docker compose -f deploy/docker-compose.target.yml --env-file .env up -d api worker retention-runner frontend`; alle Services healthy.
+
+## 2026-03-26 - Regression Korrekturmodus Absolute Timeline (ADR-0022)
+- Anlass: Entfernung der Seed-Kompaktierung, Zulassen von Timeline-Luecken, finite Timeline-Validation und Frontend-Sync fuer interne Pausen.
+- Ausgefuehrt (Backend Red/Green): `python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_fastapi_integration`.
+- Ergebnis (Backend Red/Green): zuerst Red (Gap-Reject, Seed-Kompaktierung, fehlende NaN/inf-Pruefung), danach Green.
+- Ausgefuehrt (Backend Green-Recheck): `python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_fastapi_integration`.
+- Ergebnis (Backend Green-Recheck): Gruen, 18 Tests, 7 Skips.
+- Hinweis (Store-Suite auf Windows): `tests.test_transcript_correction_store` zeigt in dieser Umgebung intermittierende Temp-File-Locks (`WinError 32`) beim Cleanup; nicht durch ADR-0022 verursacht.
+- Frontend-Unit-/Screenshot-Checks in dieser Umgebung nicht ausfuehrbar, da `node`/`npm` nicht installiert sind.
+- Reproduktion fuer Zielumgebung:
+  - Frontend Tests: `node --test frontend/tests/*.test.js`
+  - Screenshot-Nachweis: `node scripts/capture_correction_mode_screenshots.mjs`
+
+## 2026-03-26 - Regression Legacy-Reseed + End-Pause-Active-Block
+- Anlass: Additive Timeline-Drift in Legacy-Resumes und aktiver Block nach letztem Segmentende.
+- Ausgefuehrt (Backend Red/Green): `python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_fastapi_integration tests.test_transcript_correction_http_adapter`.
+- Ergebnis (Backend Red/Green): zuerst Red (fehlendes `force_reseed_from_transcript`), danach Green (24 Tests, 9 Skips).
+- Frontend-Tests in dieser Umgebung nicht ausfuehrbar (`node` nicht installiert).
+- Erwartete Reproduktion im Zielsystem: `node --test frontend/tests/correction_utils.test.js`.
+
+## 2026-03-26 - Regression nach Korrektur-Export-Umstellung (raw/compact)
+- Anlass: Frontend-Exportlogik erweitert (kompaktierter Lesemodus + Rohdatenmodus + Export-Metadatenheader).
+- Ausgefuehrt:
+  - `docker run --rm -v C:\Users\Patrick\EvidoX:/work -w /work node:22-alpine node --test frontend/tests/correction_workspace_export.test.js`
+  - `docker run --rm -v C:\Users\Patrick\EvidoX:/work -w /work node:22-alpine node --test frontend/tests/*.test.js`
+  - `python -m unittest tests.test_transcript_correction_service tests.test_transcript_correction_fastapi_integration`
+- Ergebnis: Gruen (Frontend 63/63, Export-spezifisch 9/9, Python 22 Tests OK / 9 Skips).
+- Bewertung: Keine Regression im Timeline-Sync; Aenderung wirkt nur im Korrektur-Exportpfad.
+
+
+## 2026-03-26 - Regression Korrekturmodus Seed-Overlap Hotfix
+- Anlass: `POST /transcript/correction-sessions` konnte bei bestehenden Transcripts mit minimalen Rundungs-Overlaps mit `422 transcript.timeline_overlap` fehlschlagen.
+- Ausgefuehrt: `docker run --rm -v C:\Users\Patrick\EvidoX:/work -w /work python:3.11-slim python -m unittest tests.test_transcript_correction_service tests.test_job_infra_adapters`.
+- Ergebnis: Gruen, 33 Tests.
+- Bewertung: Korrekturmodus startet wieder fuer betroffene Jobs; grosse Overlaps bleiben weiterhin geblockt.

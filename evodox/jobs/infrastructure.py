@@ -17,6 +17,8 @@ from .retention_scheduler import RetentionFailureRecord
 from .retention_service import RetentionCandidate
 from .transcript_service import TranscriptConflictError, TranscriptResponse, TranscriptValidationError
 
+WORKER_SEGMENT_OVERLAP_SNAP_SECONDS = 0.05
+
 
 class SQLiteJobRepository:
     def __init__(self, db_path: Path) -> None:
@@ -1672,12 +1674,34 @@ def _segments_from_worker_artifact(artifact: dict[str, Any]) -> list[dict[str, A
             )
 
     if segments:
-        return segments
+        return _sanitize_worker_segment_timeline(segments)
 
     text = ""
     if isinstance(transcript, dict):
         text = str(transcript.get("text", ""))
     return [{"segment_id": "seg_000001", "start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+
+
+def _sanitize_worker_segment_timeline(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(segments) == 0:
+        return []
+    normalized: list[dict[str, Any]] = []
+    previous_end: float | None = None
+    for raw in segments:
+        segment = dict(raw)
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", 0.0))
+        if previous_end is not None and start < previous_end:
+            overlap = previous_end - start
+            if overlap <= WORKER_SEGMENT_OVERLAP_SNAP_SECONDS:
+                start = previous_end
+                if end < start:
+                    end = start
+        segment["start"] = float(start)
+        segment["end"] = float(end)
+        normalized.append(segment)
+        previous_end = end
+    return normalized
 
 
 def _safe_json_segments(raw: Any) -> list[dict[str, Any]]:

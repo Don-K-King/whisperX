@@ -152,7 +152,7 @@ Verbindliche Freeze-Referenz: `docs/testing/test-spec-v1.md`.
 
 ## 2026-03-24 - Erweiterung Korrekturmodus
 - Neue Pflichttests fuer Session-Lifecycle (`create/get/patch/apply/undo/redo/discard/commit`) inkl. tenant-scoping und actor-binding.
-- Neue Pflichttests fuer Timeline-Invarianten im Korrekturpfad (keine Overlaps, keine Luecken, `start <= end`, Minimalpassagen erlaubt).
+- Neue Pflichttests fuer Timeline-Invarianten im Korrekturpfad (keine Overlaps, monotone Chronologie, finite Zeitwerte, `start <= end`; Timeline-Luecken sind erlaubt).
 - Neue Pflichttests fuer Suche/Ersetzen und Sprecher-Teilumteilung inklusive Abuse-Faelle (invalid char ranges, no-match replace, control-char payloads).
 - Neue Pflichttests fuer Statusfuehrung (`review_status`, `is_final`) inklusive Rollenpruefung (`reviewer|admin`) und Audit-Nachweis.
 - Frontend-Pflicht fuer UI-Aenderungen: Screenshot-Nachweise (`default`, `validation/error`, `responsive`) ueber `scripts/capture_correction_mode_screenshots.mjs`.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from evodox.jobs.transcript_service import (
 )
 
 EPSILON = 1e-6
+SEED_OVERLAP_SNAP_SECONDS = 0.05
 DEFAULT_REVIEW_STATUS = "in_review"
 
 
@@ -31,6 +33,7 @@ class CorrectionSessionCreateInput:
     job_id: str
     base_version: int | None = None
     autosave_enabled: bool = False
+    force_reseed_from_transcript: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,12 +157,7 @@ def create_correction_session(
     if base_version != transcript.version:
         raise TranscriptConflictError()
     status = _get_status(correction_store, tenant_id=tenant_id, job_id=request.job_id)
-    try:
-        seed_segments = _normalize_segments(transcript.segments)
-    except TranscriptValidationError as exc:
-        if exc.error_code not in {"transcript.timeline_gap", "transcript.timeline_overlap"}:
-            raise
-        seed_segments = _compact_seed_segments(transcript.segments)
+    seed_segments = _normalize_segments(transcript.segments, snap_small_overlaps=True)
     now = datetime.now(tz=timezone.utc).isoformat()
     payload = {
         "session_id": f"cs_{uuid4().hex[:16]}",
@@ -176,6 +174,33 @@ def create_correction_session(
         "created_at": now,
     }
     created = correction_store.create_session(tenant_id=tenant_id, payload=payload)
+    if bool(request.force_reseed_from_transcript) and str(created.get("session_id", "")) != str(payload["session_id"]):
+        now = datetime.now(tz=timezone.utc).isoformat()
+        reseeded = _reseed_session_payload(
+            session=created,
+            actor_id=actor_id,
+            base_version=base_version,
+            autosave_enabled=bool(request.autosave_enabled),
+            speaker_labels=dict(transcript.speaker_labels),
+            review_status=status["review_status"],
+            is_final=bool(status["is_final"]),
+            seed_segments=seed_segments,
+            now_iso=now,
+        )
+        created = correction_store.update_session(tenant_id=tenant_id, session_id=str(created["session_id"]), payload=reseeded)
+        _audit_append(
+            audit_log,
+            {
+                "action": "transcript.correction_session.reseeded_from_transcript",
+                "tenant_id": tenant_id,
+                "actor_id": actor_id,
+                "job_id": request.job_id,
+                "session_id": created["session_id"],
+                "base_version": base_version,
+                "autosave_enabled": bool(request.autosave_enabled),
+                "ts": now,
+            },
+        )
     _audit_append(
         audit_log,
         {
@@ -562,7 +587,11 @@ def _session_operation_log(session: dict[str, Any]) -> list[dict[str, Any]]:
     return log
 
 
-def _normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _normalize_segments(
+    raw_segments: list[dict[str, Any]],
+    *,
+    snap_small_overlaps: bool = False,
+) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     previous_end = 0.0
     for idx, raw in enumerate(raw_segments):
@@ -593,44 +622,32 @@ def _normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, An
             }
         )
         previous_end = end
+    if snap_small_overlaps:
+        normalized = _snap_small_overlaps(normalized, tolerance=SEED_OVERLAP_SNAP_SECONDS)
     _validate_segments(normalized)
     return normalized
 
 
-def _compact_seed_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    compacted: list[dict[str, Any]] = []
-    previous_end = 0.0
-    for idx, raw in enumerate(raw_segments):
-        if not isinstance(raw, dict):
-            raise TranscriptValidationError("transcript.invalid_segments", "segments enthaelt ungueltige Eintraege.")
-        segment_id = str(raw.get("segment_id", "")).strip() or f"seg_{idx + 1:06d}"
-        speaker = str(raw.get("speaker", "UNKNOWN")).strip() or "UNKNOWN"
-        text = str(raw.get("text", ""))
-        if _has_disallowed_control_chars(text) or _has_disallowed_control_chars(speaker):
-            raise TranscriptValidationError("transcript.invalid_segments", "segments enthaelt ungueltige Zeichen.")
-        try:
-            raw_start = float(raw.get("start", previous_end))
-            raw_end = float(raw.get("end", raw_start))
-        except (TypeError, ValueError):
-            raise TranscriptValidationError("transcript.invalid_segments", "start/end sind ungueltig.")
-        duration = max(0.0, raw_end - raw_start)
-        if idx == 0:
-            start = max(0.0, raw_start)
-        else:
-            start = previous_end
-        end = start + duration
-        compacted.append(
-            {
-                "segment_id": segment_id,
-                "speaker": speaker,
-                "text": text,
-                "start": start,
-                "end": end,
-            }
-        )
-        previous_end = end
-    _validate_segments(compacted)
-    return compacted
+def _snap_small_overlaps(segments: list[dict[str, Any]], *, tolerance: float) -> list[dict[str, Any]]:
+    if len(segments) == 0:
+        return []
+    snapped: list[dict[str, Any]] = []
+    previous_end: float | None = None
+    for segment in segments:
+        current = dict(segment)
+        start = float(current.get("start", 0.0))
+        end = float(current.get("end", 0.0))
+        if previous_end is not None and start < previous_end:
+            overlap = previous_end - start
+            if overlap <= tolerance + EPSILON:
+                start = previous_end
+                if end < start:
+                    end = start
+                current["start"] = float(start)
+                current["end"] = float(end)
+        snapped.append(current)
+        previous_end = float(current.get("end", end))
+    return snapped
 
 
 def _validate_segments(segments: list[dict[str, Any]]) -> None:
@@ -648,13 +665,13 @@ def _validate_segments(segments: list[dict[str, Any]]) -> None:
             raise TranscriptValidationError("transcript.invalid_segment_text", "segment text darf nicht leer sein.")
         start = float(segment.get("start", 0.0))
         end = float(segment.get("end", 0.0))
+        if not math.isfinite(start) or not math.isfinite(end):
+            raise TranscriptValidationError("transcript.invalid_timeline", "Timeline ist ungueltig.")
         if start < 0.0 or end < 0.0 or start > end:
             raise TranscriptValidationError("transcript.invalid_timeline", "Timeline ist ungueltig.")
         if previous_end is not None:
             if start < previous_end - EPSILON:
                 raise TranscriptValidationError("transcript.timeline_overlap", "Timeline enthaelt Ueberschneidungen.")
-            if start > previous_end + EPSILON:
-                raise TranscriptValidationError("transcript.timeline_gap", "Timeline enthaelt Luecken.")
         previous_end = end
 
 
@@ -830,6 +847,31 @@ def _clone_session(session: dict[str, Any]) -> dict[str, Any]:
 
 def _has_disallowed_control_chars(value: str) -> bool:
     return any(ord(char) < 32 and char not in {"\n", "\r", "\t"} for char in value)
+
+
+def _reseed_session_payload(
+    *,
+    session: dict[str, Any],
+    actor_id: str,
+    base_version: int,
+    autosave_enabled: bool,
+    speaker_labels: dict[str, str],
+    review_status: str,
+    is_final: bool,
+    seed_segments: list[dict[str, Any]],
+    now_iso: str,
+) -> dict[str, Any]:
+    updated = _clone_session(session)
+    updated["actor_id"] = actor_id
+    updated["base_version"] = int(base_version)
+    updated["autosave_enabled"] = bool(autosave_enabled)
+    updated["speaker_labels"] = dict(speaker_labels)
+    updated["review_status"] = str(review_status)
+    updated["is_final"] = bool(is_final)
+    updated["history_index"] = 0
+    updated["history"] = [{"segments": _clone_segments(seed_segments), "summary": None, "ts": now_iso}]
+    updated["updated_at"] = now_iso
+    return updated
 
 
 def _audit_append(audit_log: Any, payload: dict[str, Any]) -> None:

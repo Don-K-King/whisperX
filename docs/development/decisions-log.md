@@ -230,3 +230,15 @@
 - Entscheidung: Session-Insert im Correction-Store wird schema-adaptiv ausgefuehrt; existiert Legacy-Spalte `expires_at`, wird sie beim `create_session` explizit befuellt.
 - Grund: Laufende Runtime-Volumes enthielten ein aelteres Schema mit `expires_at NOT NULL`, wodurch Korrektur-Session-Start mit `IntegrityError` scheiterte.
 - Ergebnis: Korrekturmodus-Start bleibt ohne DB-Reset kompatibel zu Bestandsdaten.
+
+## 2026-03-26 - ADR-0022 Korrekturmodus Absolute Timeline
+- Entscheidung: Seed-Kompaktierung im Korrekturmodus wurde entfernt; `start/end` bleiben beim Session-Start 1:1 auf der persistierten Transcript-Timeline.
+- Entscheidung: Timeline-Invariante im Korrekturpfad wurde von "keine Luecken" auf "keine Overlaps + monotone, finite Timeline" umgestellt.
+- Entscheidung: `set_segments` akzeptiert Luecken, lehnt Overlaps sowie `NaN`/`inf`/negative Zeiten weiterhin strikt ab.
+- Entscheidung: Frontend merged Speaker-Bloecke nur noch bei kontiguierlichen Segmenten; in internen Luecken gibt es bewusst keinen aktiven Block.
+- Referenz: ADR-0022 (`/docs/adr/ADR-0022-korrekturmodus-absolute-timeline-ohne-seed-kompaktierung.md`).
+
+## 2026-03-26 - Legacy-Session-Reseed im Korrekturmodus
+- Entscheidung: Beim Start einer Correction-Session kann per `force_reseed_from_transcript` ein Legacy-Resume-Fall fix-forward auf die aktuelle Transcript-Timeline reseeded werden.
+- Entscheidung: Reseed ersetzt den aktiven Draft auf `history[0]` mit absoluten Segmentzeiten der aktuellen Transcript-Version und setzt `history_index=0`.
+- Entscheidung: Active-Highlighting nach Segmentende wird als "kein aktiver Block" behandelt, um End-Pausen nicht als Drift des letzten Blocks darzustellen.
