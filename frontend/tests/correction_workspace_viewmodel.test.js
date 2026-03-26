@@ -8,6 +8,8 @@ import {
   parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveExportMenuState,
+  resolveSpeakerTint,
   resolveSelectedSegmentId,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
@@ -54,19 +56,49 @@ test('buildSpeakerOptionEntries keeps unique speaker keys and uses display label
   ]);
 });
 
+test('resolveSpeakerTint is deterministic per speaker key and uses neutral unknown fallback', () => {
+  const first = resolveSpeakerTint({ speakerKey: 'SPEAKER_12' });
+  const second = resolveSpeakerTint({ speakerKey: 'SPEAKER_12' });
+  const unknown = resolveSpeakerTint({ speakerKey: 'UNKNOWN' });
+
+  assert.deepEqual(first, second);
+  assert.notEqual(first.background, unknown.background);
+  assert.match(first.background, /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/);
+  assert.match(first.border, /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/);
+  assert.match(first.active, /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/);
+  assert.match(first.focus, /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/);
+});
+
+test('resolveExportMenuState supports toggle, close, outside and select transitions', () => {
+  const opened = resolveExportMenuState({ isOpen: false }, { type: 'toggle' });
+  assert.deepEqual(opened, { isOpen: true, lastAction: '' });
+
+  const selected = resolveExportMenuState(opened, { type: 'select', action: 'pdf' });
+  assert.deepEqual(selected, { isOpen: false, lastAction: 'pdf' });
+
+  const reopened = resolveExportMenuState(selected, { type: 'open' });
+  assert.deepEqual(reopened, { isOpen: true, lastAction: 'pdf' });
+
+  const outsideClosed = resolveExportMenuState(reopened, { type: 'outside' });
+  assert.deepEqual(outsideClosed, { isOpen: false, lastAction: 'pdf' });
+
+  const escaped = resolveExportMenuState({ isOpen: true, lastAction: 'pdf' }, { type: 'escape' });
+  assert.deepEqual(escaped, { isOpen: false, lastAction: 'pdf' });
+});
+
 test('parseSidebarVisibility supports persisted toggle values', () => {
   assert.equal(parseSidebarVisibility('1'), true);
   assert.equal(parseSidebarVisibility('0'), false);
   assert.equal(parseSidebarVisibility(null), true);
 });
 
-test('parseSidebarSectionState defaults all sections to open', () => {
+test('parseSidebarSectionState defaults all sections to collapsed', () => {
   const parsed = parseSidebarSectionState(null);
   assert.deepEqual(parsed, {
-    status: true,
-    searchReplace: true,
-    speakerReassign: true,
-    changeLog: true,
+    status: false,
+    searchReplace: false,
+    speakerReassign: false,
+    changeLog: false,
   });
 });
 
@@ -77,6 +109,16 @@ test('parseSidebarSectionState applies persisted open sections only for known id
     searchReplace: false,
     speakerReassign: false,
     changeLog: true,
+  });
+});
+
+test('parseSidebarSectionState object input requires explicit true', () => {
+  const parsed = parseSidebarSectionState('{"status":true,"searchReplace":false}');
+  assert.deepEqual(parsed, {
+    status: true,
+    searchReplace: false,
+    speakerReassign: false,
+    changeLog: false,
   });
 });
 

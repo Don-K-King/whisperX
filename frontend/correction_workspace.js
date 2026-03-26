@@ -13,8 +13,10 @@ import {
   parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveExportMenuState,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
+  resolveSpeakerTint,
   resolveSelectedSegmentId,
   shouldAutoSeek,
   serializeSidebarSectionState,
@@ -64,8 +66,66 @@ const state = {
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
   autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
   exportMode: loadPersistedExportMode(),
+  exportMenuOpen: false,
+  lastExportAction: '',
   selectedTextRange: null,
 };
+
+let exportMenuDismissHandler = null;
+let exportMenuEscapeHandler = null;
+let exportMenuFocusHandler = null;
+
+function applyExportMenuEvent(event) {
+  const nextState = resolveExportMenuState(
+    {
+      isOpen: state.exportMenuOpen,
+      lastAction: state.lastExportAction,
+    },
+    event,
+  );
+  state.exportMenuOpen = Boolean(nextState.isOpen);
+  state.lastExportAction = String(nextState.lastAction || '');
+}
+
+function teardownExportMenuListeners() {
+  if (exportMenuDismissHandler) {
+    document.removeEventListener('mousedown', exportMenuDismissHandler, true);
+    exportMenuDismissHandler = null;
+  }
+  if (exportMenuEscapeHandler) {
+    document.removeEventListener('keydown', exportMenuEscapeHandler, true);
+    exportMenuEscapeHandler = null;
+  }
+  if (exportMenuFocusHandler) {
+    document.removeEventListener('focusin', exportMenuFocusHandler, true);
+    exportMenuFocusHandler = null;
+  }
+}
+
+function syncExportMenuListeners() {
+  teardownExportMenuListeners();
+  if (!state.exportMenuOpen) return;
+  exportMenuDismissHandler = (event) => {
+    const menuNode = document.querySelector('[data-export-menu]');
+    if (!menuNode || menuNode.contains(event.target)) return;
+    applyExportMenuEvent({ type: 'outside' });
+    render();
+  };
+  exportMenuEscapeHandler = (event) => {
+    if (event.key !== 'Escape') return;
+    applyExportMenuEvent({ type: 'escape' });
+    render();
+  };
+  exportMenuFocusHandler = (event) => {
+    const menuNode = document.querySelector('[data-export-menu]');
+    if (!menuNode || menuNode.contains(event.target)) return;
+    applyExportMenuEvent({ type: 'close' });
+    render();
+  };
+  document.addEventListener('mousedown', exportMenuDismissHandler, true);
+  document.addEventListener('keydown', exportMenuEscapeHandler, true);
+  document.addEventListener('focusin', exportMenuFocusHandler, true);
+}
 
 function getBootstrap() {
   const params = new URLSearchParams(window.location.search);
@@ -259,6 +319,35 @@ function triggerDownload({ filename, mimeType, payload }) {
   URL.revokeObjectURL(url);
 }
 
+function openPrintPreview({ title, text }) {
+  const popup = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760');
+  if (!popup) {
+    throw new Error('print_popup_blocked');
+  }
+  const safeTitle = escapeHtml(title || 'Korrektur-Export');
+  const safeText = escapeHtml(String(text ?? ''));
+  popup.document.open();
+  popup.document.write(`<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>${safeTitle}</title>
+  <style>
+    body { font-family: "Segoe UI", "Noto Sans", sans-serif; margin: 28px; color: #1f1f1b; line-height: 1.45; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    pre { white-space: pre-wrap; word-break: break-word; font: 13px/1.45 "Consolas", "Courier New", monospace; }
+  </style>
+</head>
+<body>
+  <h1>${safeTitle}</h1>
+  <pre>${safeText}</pre>
+</body>
+</html>`);
+  popup.document.close();
+  popup.focus();
+  popup.print();
+}
+
 function exportCurrentTranscript(format) {
   try {
     const createdAt = new Date();
@@ -307,6 +396,15 @@ function exportCurrentTranscript(format) {
         payload: pdfBytes,
       });
       setStatus(`PDF-Export erstellt (${state.exportMode})`);
+      return;
+    }
+
+    if (format === 'print') {
+      openPrintPreview({
+        title: `Korrektur-Export Job ${state.jobId} (${state.exportMode})`,
+        text,
+      });
+      setStatus(`Druckansicht geoeffnet (${state.exportMode})`);
       return;
     }
 
@@ -433,6 +531,59 @@ function getMediaElement() {
   return document.querySelector('[data-media-player]');
 }
 
+function captureMediaPlaybackState() {
+  const media = getMediaElement();
+  if (!media) return null;
+  const src = String(media.currentSrc || media.getAttribute('src') || '').trim();
+  const currentTime = Number(media.currentTime);
+  const playbackRate = Number(media.playbackRate);
+  const volume = Number(media.volume);
+  return {
+    src,
+    currentTime: Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0,
+    playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+    volume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1,
+    muted: Boolean(media.muted),
+    paused: Boolean(media.paused),
+  };
+}
+
+function restoreMediaPlaybackState(snapshot) {
+  if (!snapshot) return;
+  const media = getMediaElement();
+  if (!media) return;
+  const activeSrc = String(media.currentSrc || media.getAttribute('src') || '').trim();
+  if (snapshot.src && activeSrc && snapshot.src !== activeSrc) return;
+
+  media.playbackRate = snapshot.playbackRate;
+  media.volume = snapshot.volume;
+  media.muted = snapshot.muted;
+
+  const applyTime = () => {
+    const duration = Number(media.duration);
+    const maxTime = Number.isFinite(duration) && duration > 0 ? duration : snapshot.currentTime;
+    const safeTime = Math.min(snapshot.currentTime, maxTime);
+    if (Number.isFinite(safeTime) && safeTime >= 0) {
+      try {
+        media.currentTime = safeTime;
+      } catch {
+        // Ignore browser seek restrictions.
+      }
+    }
+    if (!snapshot.paused) {
+      void media.play().catch(() => {
+        // Autoplay policies can block this; keep UI responsive.
+      });
+    }
+  };
+
+  if (media.readyState >= 1) {
+    applyTime();
+    return;
+  }
+  media.addEventListener('loadedmetadata', applyTime, { once: true });
+}
+
 function getSpeakerOptions() {
   return buildSpeakerOptionEntries({
     segments: state.segments,
@@ -465,8 +616,19 @@ function renderEditorBlocks() {
       speakerKey: segment.speaker,
       speakerLabels: state.speakerLabels,
     });
+    const tint = resolveSpeakerTint({ speakerKey: segment.speaker });
+    const tintStyle = [
+      `--cw-speaker-bg:${tint.background}`,
+      `--cw-speaker-border:${tint.border}`,
+      `--cw-speaker-active:${tint.active}`,
+      `--cw-speaker-focus:${tint.focus}`,
+    ].join(';');
     return `
-      <article class="cw-block ${activeClass} ${selectedClass}" data-segment-id="${escapeHtml(segment.segment_id)}">
+      <article
+        class="cw-block ${activeClass} ${selectedClass}"
+        data-segment-id="${escapeHtml(segment.segment_id)}"
+        style="${escapeHtml(tintStyle)}"
+      >
         <header class="cw-block-header">
           <strong class="cw-block-speaker">${escapeHtml(speakerLabel)}</strong>
           <button
@@ -487,12 +649,14 @@ function renderEditorBlocks() {
 function render() {
   const app = document.getElementById('correction-app');
   if (!app) return;
+  const mediaSnapshot = captureMediaPlaybackState();
   const speakerOptions = getSpeakerOptions()
     .map((entry) => `<option value="${escapeHtml(entry.key)}">${escapeHtml(entry.label)}</option>`)
     .join('');
   const theme = document.body.dataset.theme === 'dark' ? 'dark' : 'light';
   const mediaNode = renderMediaNode();
-  const sidebarToggleLabel = state.sidebarVisible ? 'Statusfenster ausblenden' : 'Statusfenster einblenden';
+  const sidebarToggleLabel = state.sidebarVisible ? 'Sidebar aktiv' : 'Sidebar aus';
+  const themeToggleLabel = theme === 'dark' ? 'Dark aktiv' : 'Light aktiv';
   const layoutClass = state.sidebarVisible ? 'cw-layout' : 'cw-layout cw-layout--sidebar-hidden';
   const sidebarStatusBody = `
     <div class="cw-row">
@@ -532,39 +696,153 @@ function render() {
   app.innerHTML = `
     <section class="cw-root">
       <header class="cw-topbar">
-        <section class="cw-topbar-group cw-topbar-group--meta">
-          <strong>Korrekturmodus</strong>
-          <span class="badge">Job: ${escapeHtml(state.jobId)}</span>
-          <span class="badge">Base v${state.baseVersion}</span>
-          <span class="badge">Working v${state.workingVersion}</span>
-          <span class="badge">Review: ${escapeHtml(state.reviewStatus)}</span>
-          <span class="badge">Final: ${state.isFinal ? 'Ja' : 'Nein'}</span>
+        <section class="cw-topbar-actions" aria-label="Aktionen">
+          <div class="cw-toolbar-main">
+            <button
+              id="cw-save"
+              class="primary cw-icon-only"
+              type="button"
+              aria-label="Speichern"
+              title="Speichern"
+            >
+              <span class="cw-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M5 3h11l3 3v15H5V3Zm2 2v5h8V5H7Zm0 14h10v-7H7v7Z"/>
+                </svg>
+              </span>
+            </button>
+            <button id="cw-commit" class="primary" type="button" title="Version committen">Commit</button>
+            <button
+              id="cw-print"
+              class="cw-icon-only"
+              type="button"
+              aria-label="Drucken"
+              title="Drucken"
+            >
+              <span class="cw-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M6 9V3h12v6h1a3 3 0 0 1 3 3v5h-4v4H6v-4H2v-5a3 3 0 0 1 3-3h1Zm2-4v4h8V5H8Zm8 12H8v2h8v-2Zm2-2h2v-3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v3h2v-2h12v2Z"/>
+                </svg>
+              </span>
+            </button>
+            <button
+              id="cw-undo"
+              class="cw-icon-only"
+              type="button"
+              aria-label="Rueckgaengig"
+              title="Rueckgaengig (Undo)"
+            >
+              <span class="cw-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12.5 8H7.83l1.58-1.59L8 5 4 9l4 4 1.41-1.41L7.83 10h4.67A3.5 3.5 0 1 1 12.5 17H8v2h4.5a5.5 5.5 0 1 0 0-11Z"/>
+                </svg>
+              </span>
+            </button>
+            <button
+              id="cw-redo"
+              class="cw-icon-only"
+              type="button"
+              aria-label="Wiederholen"
+              title="Wiederholen (Redo)"
+            >
+              <span class="cw-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M11.5 8h4.67l-1.58-1.59L16 5l4 4-4 4-1.41-1.41L16.17 10H11.5a3.5 3.5 0 1 0 0 7H16v2h-4.5a5.5 5.5 0 1 1 0-11Z"/>
+                </svg>
+              </span>
+            </button>
+            <button id="cw-discard" class="danger" type="button" title="Ungespeicherte Aenderungen verwerfen">Verwerfen</button>
+            <div class="cw-export-menu ${state.exportMenuOpen ? 'open' : ''}" data-export-menu>
+              <button
+                id="cw-export-menu-toggle"
+                class="cw-icon-only"
+                type="button"
+                aria-expanded="${state.exportMenuOpen ? 'true' : 'false'}"
+                aria-controls="cw-export-menu-list"
+                aria-haspopup="menu"
+                aria-label="Export-Menue"
+                title="Export-Menue"
+              >
+                <span class="cw-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.29 1.4 1.4-4.7 4.7-4.7-4.7 1.4-1.4L11 13.59V4a1 1 0 0 1 1-1ZM5 19h14v2H5v-2Z"/>
+                  </svg>
+                </span>
+              </button>
+              <div id="cw-export-menu-list" class="cw-export-menu-list" role="menu" aria-label="Export und Drucken">
+                <div class="cw-export-mode-group" role="group" aria-label="Exportmodus">
+                  <button
+                    id="cw-export-mode-compact"
+                    type="button"
+                    class="cw-segment ${state.exportMode === 'compact' ? 'active' : ''}"
+                    aria-pressed="${state.exportMode === 'compact' ? 'true' : 'false'}"
+                  >Kompakt</button>
+                  <button
+                    id="cw-export-mode-raw"
+                    type="button"
+                    class="cw-segment ${state.exportMode === 'raw' ? 'active' : ''}"
+                    aria-pressed="${state.exportMode === 'raw' ? 'true' : 'false'}"
+                  >Rohdaten</button>
+                </div>
+                <button id="cw-export-print" role="menuitem" type="button">Drucken</button>
+                <button id="cw-export-md" role="menuitem" type="button">Markdown</button>
+                <button id="cw-export-pdf" role="menuitem" type="button">PDF</button>
+                <button id="cw-export-word" role="menuitem" type="button">Word</button>
+              </div>
+            </div>
+          </div>
+          <div class="cw-toolbar-state">
+            <button
+              id="cw-autosave"
+              class="cw-pill-toggle cw-pill-toggle--binary ${state.autosaveEnabled ? 'is-on' : 'is-off'}"
+              type="button"
+              aria-pressed="${state.autosaveEnabled ? 'true' : 'false'}"
+              title="Autosave ${state.autosaveEnabled ? 'aktiv' : 'inaktiv'}"
+            >Autosave</button>
+            <button
+              id="cw-auto-seek-selection"
+              class="cw-pill-toggle cw-pill-toggle--binary ${state.autoSeekSelectionEnabled ? 'is-on' : 'is-off'}"
+              type="button"
+              aria-pressed="${state.autoSeekSelectionEnabled ? 'true' : 'false'}"
+              title="Auto-Sprung ${state.autoSeekSelectionEnabled ? 'aktiv' : 'inaktiv'}"
+            >Auto-Sprung</button>
+            <button
+              id="cw-sidebar-toggle"
+              class="cw-pill-toggle ${state.sidebarVisible ? 'active' : ''}"
+              type="button"
+              aria-pressed="${state.sidebarVisible ? 'true' : 'false'}"
+              title="${sidebarToggleLabel}"
+            >Sidebar</button>
+            <button
+              id="cw-theme-toggle"
+              class="cw-pill-toggle ${theme === 'dark' ? 'active' : ''}"
+              type="button"
+              aria-pressed="${theme === 'dark' ? 'true' : 'false'}"
+              title="${themeToggleLabel}"
+            >Theme</button>
+            <button
+              id="cw-close"
+              class="cw-icon-only"
+              type="button"
+              aria-label="Fenster schliessen"
+              title="Fenster schliessen"
+            >
+              <span class="cw-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3 1.4 1.4Z"/>
+                </svg>
+              </span>
+            </button>
+          </div>
         </section>
-        <section class="cw-topbar-group cw-topbar-group--actions">
-          <label for="cw-export-mode">Exportmodus</label>
-          <select id="cw-export-mode">
-            <option value="compact" ${state.exportMode === 'compact' ? 'selected' : ''}>Kompakt</option>
-            <option value="raw" ${state.exportMode === 'raw' ? 'selected' : ''}>Rohdaten</option>
-          </select>
-          <button id="cw-save" class="primary">Manuell speichern</button>
-          <button id="cw-commit" class="primary">Version committen</button>
-          <button id="cw-export-md" class="cw-action">Download MD</button>
-          <button id="cw-export-pdf" class="cw-action">Download PDF</button>
-          <button id="cw-export-word" class="cw-action">Download Word</button>
-          <button id="cw-discard" class="danger">Verwerfen</button>
-          <button id="cw-undo">Undo</button>
-          <button id="cw-redo">Redo</button>
-        </section>
-        <section class="cw-topbar-group cw-topbar-group--preferences">
-          <label class="cw-toggle">
-            <input id="cw-autosave" type="checkbox" ${state.autosaveEnabled ? 'checked' : ''} /> Autosave Draft
-          </label>
-          <label class="cw-toggle">
-            <input id="cw-auto-seek-selection" type="checkbox" ${state.autoSeekSelectionEnabled ? 'checked' : ''} /> Auto-Sprung Media
-          </label>
-          <button id="cw-sidebar-toggle">${sidebarToggleLabel}</button>
-          <button id="cw-theme-toggle">Theme: ${theme === 'dark' ? 'Dark' : 'Light'}</button>
-          <button id="cw-close">Fenster schliessen</button>
+        <section class="cw-topbar-status" aria-label="Session-Status">
+          <div class="cw-topbar-meta-badges">
+            <span class="badge">Job ${escapeHtml(state.jobId)}</span>
+            <span class="badge">B${state.baseVersion}</span>
+            <span class="badge">W${state.workingVersion}</span>
+            <span class="badge">${escapeHtml(state.reviewStatus)}</span>
+            <span class="badge">Final ${state.isFinal ? 'Ja' : 'Nein'}</span>
+          </div>
         </section>
       </header>
       <section class="${layoutClass}">
@@ -614,6 +892,8 @@ function render() {
   if (speakerFilterNode) speakerFilterNode.value = state.searchSpeaker;
 
   bindInteractions();
+  restoreMediaPlaybackState(mediaSnapshot);
+  syncExportMenuListeners();
   syncSpeakerReassignMeta();
 }
 
@@ -778,8 +1058,9 @@ function bindInteractions() {
 
   const autosaveNode = document.getElementById('cw-autosave');
   if (autosaveNode) {
-    autosaveNode.onchange = async () => {
-      state.autosaveEnabled = Boolean(autosaveNode.checked);
+    autosaveNode.onclick = async () => {
+      const previousAutosaveEnabled = state.autosaveEnabled;
+      state.autosaveEnabled = !state.autosaveEnabled;
       try {
         const result = await callApi(`/api/v1/jobs/${state.jobId}/transcript/correction-sessions/${state.sessionId}`, {
           method: 'PATCH',
@@ -789,19 +1070,22 @@ function bindInteractions() {
         setStatus('Autosave aktualisiert');
         render();
       } catch (error) {
+        state.autosaveEnabled = previousAutosaveEnabled;
         setStatus(`Autosave konnte nicht gespeichert werden: ${error.message}`);
+        render();
       }
     };
   }
 
   const autoSeekSelectionNode = document.getElementById('cw-auto-seek-selection');
   if (autoSeekSelectionNode) {
-    autoSeekSelectionNode.onchange = () => {
-      state.autoSeekSelectionEnabled = Boolean(autoSeekSelectionNode.checked);
+    autoSeekSelectionNode.onclick = () => {
+      state.autoSeekSelectionEnabled = !state.autoSeekSelectionEnabled;
       persistAutoSeekSelectionEnabled(state.autoSeekSelectionEnabled);
       setStatus(state.autoSeekSelectionEnabled
         ? 'Auto-Sprung Media aktiviert'
         : 'Auto-Sprung Media deaktiviert');
+      render();
     };
   }
 
@@ -817,34 +1101,62 @@ function bindInteractions() {
     };
   }
 
+  const exportMenuToggle = document.getElementById('cw-export-menu-toggle');
+  if (exportMenuToggle) {
+    exportMenuToggle.onclick = () => {
+      applyExportMenuEvent({ type: 'toggle' });
+      render();
+    };
+  }
+
+  const applyExportMode = (mode) => {
+    state.exportMode = mode === 'raw' ? 'raw' : 'compact';
+    persistExportMode(state.exportMode);
+    setStatus(`Exportmodus: ${state.exportMode === 'raw' ? 'Rohdaten' : 'Kompakt'}`);
+    render();
+  };
+
+  const exportModeCompactButton = document.getElementById('cw-export-mode-compact');
+  if (exportModeCompactButton) {
+    exportModeCompactButton.onclick = () => applyExportMode('compact');
+  }
+
+  const exportModeRawButton = document.getElementById('cw-export-mode-raw');
+  if (exportModeRawButton) {
+    exportModeRawButton.onclick = () => applyExportMode('raw');
+  }
+
+  const runExportAction = (action) => {
+    applyExportMenuEvent({ type: 'select', action });
+    exportCurrentTranscript(action);
+    render();
+  };
+
+  const quickPrintButton = document.getElementById('cw-print');
+  if (quickPrintButton) {
+    quickPrintButton.onclick = () => {
+      exportCurrentTranscript('print');
+    };
+  }
+
+  const exportPrintButton = document.getElementById('cw-export-print');
+  if (exportPrintButton) {
+    exportPrintButton.onclick = () => runExportAction('print');
+  }
+
   const exportMarkdownButton = document.getElementById('cw-export-md');
   if (exportMarkdownButton) {
-    exportMarkdownButton.onclick = () => {
-      exportCurrentTranscript('md');
-    };
+    exportMarkdownButton.onclick = () => runExportAction('md');
   }
 
   const exportPdfButton = document.getElementById('cw-export-pdf');
   if (exportPdfButton) {
-    exportPdfButton.onclick = () => {
-      exportCurrentTranscript('pdf');
-    };
+    exportPdfButton.onclick = () => runExportAction('pdf');
   }
 
   const exportWordButton = document.getElementById('cw-export-word');
   if (exportWordButton) {
-    exportWordButton.onclick = () => {
-      exportCurrentTranscript('word');
-    };
-  }
-
-  const exportModeNode = document.getElementById('cw-export-mode');
-  if (exportModeNode) {
-    exportModeNode.onchange = () => {
-      state.exportMode = String(exportModeNode.value || 'compact') === 'raw' ? 'raw' : 'compact';
-      persistExportMode(state.exportMode);
-      setStatus(`Exportmodus: ${state.exportMode === 'raw' ? 'Rohdaten' : 'Kompakt'}`);
-    };
+    exportWordButton.onclick = () => runExportAction('word');
   }
 
   const discardButton = document.getElementById('cw-discard');

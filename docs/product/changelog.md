@@ -259,3 +259,35 @@
 - Fehlerbehebung fuer `transcript.timeline_overlap` beim Start des Korrekturmodus: kleine Rundungs-Ueberlappungen in bestehenden Transcript-Zeitstempeln werden beim Session-Seed automatisch auf den vorherigen Segment-Endpunkt gesnappt (50ms Toleranz).
 - Strikte Safety bleibt erhalten: groessere Overlaps werden weiterhin mit `transcript.timeline_overlap` abgewiesen.
 - Zukuenftige Erstmaterialisierung aus Worker-Artefakten haertet die Timeline ebenfalls gegen kleine Rundungs-Ueberlappungen.
+
+## 2026-03-26 (Korrekturmodus UI-Modernisierung)
+- Korrekturmodus-Header modernisiert: neues 3-Zonen-Layout (Meta, Hauptaktionen, Utility-Toggles) mit klarerer visueller Hierarchie und kompakter Sticky-Darstellung.
+- Export im Header auf Icon + Dropdown-Submenue umgestellt (Drucken, Markdown, PDF, Word) inkl. integrierter Exportmodus-Wahl `Kompakt|Rohdaten`.
+- Header-Toggles auf Aktiv/Inaktiv-Pills umgebaut (Autosave, Auto-Sprung, Sidebar, Theme) mit `aria-pressed` fuer verbesserte Tastatur-/Screenreader-Bedienung.
+- Segmentkarten im Korrekturmodus erhalten eine stabile, sehr dezente Speaker-Farbkodierung (deterministisch pro Speaker-Key, neutraler UNKNOWN-Fallback) fuer bessere visuelle Zuordnung.
+- UI-Feinschliff fuer Lesbarkeit und Orientierung: ruhigeres Spacing, konsistente Button-/Chip-Proportionen, praezisere Hover-/Fokus-Zustaende und verbesserte Responsive-Umbrueche.
+
+## 2026-03-26 (Korrekturmodus UI-Feinschliff: Header + Media-Stabilitaet)
+- Header-Container im Korrekturmodus auf abgerundete Kanten umgestellt und visuell an die uebrigen Grids angeglichen.
+- Header-Buttons vereinheitlicht (konsistente Hoehe/Breitenlogik pro Button-Gruppe) fuer ein ruhigeres, modernes Gesamtbild.
+- Light-Mode-Farbkonzept fuer Buttons geschaerft: alle Buttons heben sich klarer von der Flaeche ab, inklusive konsistenter Hover-Zustaende.
+- Speaker-spezifische Blockeinfaerbung im Transcript dezent verstaerkt (leichter Tint + subtile farbige Akzentkante pro Sprecher).
+- Media-Playback bleibt bei UI-Aktionen erhalten (Zeitposition, Play/Pause, Rate, Lautstaerke), sodass Header-/Status-Aktionen das laufende Medium nicht mehr resetten.
+- Sidebar-Baum startet jetzt standardmaessig eingeklappt; initial sind nur die Menuepunkte sichtbar.
+
+## 2026-03-26 (Korrekturmodus Header-Kompaktlayout + Icon-Toolbar)
+- Header im Korrekturmodus stark verdichtet (ca. halbierte vertikale Flaeche) und von 3-Spalten-Layout auf platzsparende Toolbar-Anordnung umgestellt.
+- Aktionen neu geordnet: kompakte Action-Cluster mit Icon-Buttons fuer Speichern, Drucken, Undo und Redo; Tooltip-Texte liefern die Bezeichnung im Hover.
+- Export-Menue als platzsparender Icon-Trigger umgesetzt; Utility-Toggles auf kurze Labels in kompakter Reihe reduziert.
+- Header-Buttons in Groesse/Abstand vereinheitlicht, damit ein konsistentes und modernes Bedienbild entsteht.
+
+## 2026-03-26 (Header-Reflow + Statuszeile + Toggle-Farbsemantik)
+- Korrekturmodus-Header auf 2 Bereiche umgebaut: oben vollbreite Aktionsleiste, unten kompakte Statuszeile (`Job`, `B`, `W`, `Review`, `Final`).
+- Beschriftung `Korrekturmodus` im Header entfernt; Statusinfos in eigene Footer-Zeile des Headers verschoben.
+- Aktionsleiste nutzt jetzt die volle Breite mit kompakter Toolbar-Anordnung (Main- und State-Controls).
+- `Autosave` und `Auto-Sprung` haben explizite Aktiv/Inaktiv-Farbsemantik: aktiv gruen, inaktiv leicht rot.
+- Sprecher-Blockfarben deutlich verstaerkt (kraeftigere Palette + staerkerer Rahmen-/Akzentkontrast) fuer klarere visuelle Unterscheidung.
+
+## 2026-03-26 (Block-Fokus Hervorhebung)
+- Fokusdarstellung der Transcript-Bloecke deutlich verstaerkt: aktive/selektierte Bloecke erhalten klarere Akzentfarbe, staerkere Outline und sichtbareren Left-Accent.
+- Kombinierter Zustand `active + selected` wurde explizit gehaertet, damit der aktuelle Media-Block waehrend Playback eindeutig erkennbar bleibt.

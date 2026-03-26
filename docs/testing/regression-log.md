@@ -251,3 +251,58 @@
 - Ausgefuehrt: `docker run --rm -v C:\Users\Patrick\EvidoX:/work -w /work python:3.11-slim python -m unittest tests.test_transcript_correction_service tests.test_job_infra_adapters`.
 - Ergebnis: Gruen, 33 Tests.
 - Bewertung: Korrekturmodus startet wieder fuer betroffene Jobs; grosse Overlaps bleiben weiterhin geblockt.
+
+## 2026-03-26 - Regression nach Korrekturmodus UI-Modernisierung
+- Anlass: Header-Redesign (3 Zonen), neues Export-Submenue, Toggle-Umstellung und dezente Speaker-Farbkodierung im Korrekturmodus.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 66 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots):
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+- Bewertung: Keine Regression in Export-/Toggle-/Workspace-Logik; Screenshot-Pflicht fuer Default-, Validierungs- und Responsive-Zustand erfuellt.
+
+## 2026-03-26 - Regression nach Korrekturmodus UI-Feinschliff (Header/Buttons/Media/Sidebar)
+- Anlass: Header-Rounding und einheitliche Button-Groessen, Light-Mode-Button-Kontrast, dezent verstaerkte Speaker-Tints, Media-State-Persistenz ueber UI-Render sowie eingeklappter Sidebar-Default.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 67 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots aktualisiert):
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+- Bewertung: Keine Regression in Korrektur-Export-/Toggle-/Media-Sync-Pfaden; UI-Anforderungen umgesetzt.
+
+## 2026-03-26 - Regression nach Header-Kompaktlayout + Icon-Toolbar
+- Anlass: Header um 3-Spalten-Grid reduziert, neue kompakte Toolbar-Anordnung mit Icon-Buttons (Save/Print/Undo/Redo), angepasste Button-/Toggle-Proportionen.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 67 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots aktualisiert):
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+- Bewertung: Keine Regression in Korrekturmodus-Funktionen; Header-Verhalten und Bedienflaeche bleiben stabil.
+
+## 2026-03-26 - Regression nach Header-Reflow + staerkere Speaker-Rahmen
+- Anlass: Header auf 2-Zonen-Layout umgestellt (vollbreite Buttonzeile + Statuszeile), neue Rot/Gruen-Semantik fuer `Autosave`/`Auto-Sprung`, kraeftigere Sprecherfarben bei Transcript-Bloecken.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 67 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots aktualisiert):
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+- Bewertung: Keine Regression in Export-/Toggle-/Media-/Korrektur-Logik; neue Header- und Farbsemantik stabil.
+
+## 2026-03-26 - Regression nach Fokus-Hervorhebung (Active/Selected Block)
+- Anlass: aktive und selektierte Transcript-Bloecke waren visuell zu schwach; Hervorhebung fuer Klick- und Media-Fokus wurde verstaerkt.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 67 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
+- Ergebnis (Screenshots aktualisiert):
+  - `docs/testing/screenshots/correction-shell-default.png`
+  - `docs/testing/screenshots/correction-editor-validation-error.png`
+  - `docs/testing/screenshots/correction-shell-responsive.png`
+- Bewertung: Keine Regression in Playback-/Selection-Logik; Fokuszustand ist visuell klarer erkennbar.

@@ -181,6 +181,7 @@ await attachRoutes(page);
 await openCorrection(page);
 await page.screenshot({ path: path.join(outDir, 'correction-shell-default.png'), fullPage: true });
 
+await page.click('summary:has-text("Suche & Ersetzen")');
 await page.fill('#cw-replace-query', 'NichtVorhanden');
 await page.fill('#cw-replace-value', 'X');
 await page.click('#cw-replace-one');
