@@ -1,6 +1,11 @@
 # Changelog
 
 ## 2026-03-26
+- Frontend-Proxy gehaertet: Nginx nutzt jetzt Docker-DNS-Resolver (127.0.0.11) mit dynamischem API-Upstream, damit /api nach API-Container-Recreate automatisch wieder auf die neue Ziel-IP zeigt.
+- Fehlerbild 502 Bad Gateway nach API-Neustart behoben (kein persistentes Stale-Upstream-Mapping mehr im Frontend-Proxy).
+- Korrekturmodus zeigt und speichert Draft-Segmente wieder als Rohbloecke (keine implizite Zusammenfuehrung gleicher Speaker beim Laden/Speichern).
+- Manuelle Speaker-Zuweisungen im Korrekturmodus behalten Rohblock-Grenzen bei; Segmentgrenzen werden nicht automatisch zusammengezogen.
+- Export bleibt davon entkoppelt: fuer bessere Lesbarkeit kann weiterhin die kompakte Ausgabe verwendet werden.
 - Korrekturmodus Timeline-Fix umgesetzt: Session-Start uebernimmt Segment-Zeitstempel (start/end) jetzt unveraendert aus der Transcript-Version.
 - Seed-Kompaktierung fuer Timeline-Luecken entfernt; Drift gegenueber der Original-Videotimeline wird dadurch nicht mehr kumulativ vergroessert.
 - Korrektur-Validierung angepasst: Luecken sind im Korrekturpfad zulaessig, Overlaps bleiben verboten; ungueltige Zeitwerte (NaN/inf/negativ) werden abgewiesen.

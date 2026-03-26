@@ -71,6 +71,23 @@ test('applySpeakerReassign supports partial segment reassignment', () => {
   assert.equal(result.segments[1].speaker, 'S2');
 });
 
+test('applySpeakerReassign keeps raw block boundaries on full speaker reassignment', () => {
+  const original = [
+    { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
+    { segment_id: 'seg_2', start: 1, end: 2, speaker: 'S2', text: 'B' },
+  ];
+  const result = applySpeakerReassign({
+    segments: original,
+    segmentId: 'seg_2',
+    speaker: 'S1',
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.segments.length, 2);
+  assert.deepEqual(result.segments.map((segment) => segment.segment_id), ['seg_1', 'seg_2']);
+  assert.deepEqual(result.segments.map((segment) => segment.speaker), ['S1', 'S1']);
+});
+
 test('applySpeakerReassign splits one block into left-middle-right with proportional timestamps', () => {
   const original = [
     { segment_id: 'seg_1', start: 0, end: 12, speaker: 'S1', text: 'abcdefghijkl' },

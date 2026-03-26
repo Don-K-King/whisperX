@@ -157,7 +157,7 @@ export function applySpeakerReassign({ segments = [], segmentId = '', speaker = 
   if (startChar == null || endChar == null) {
     target.speaker = String(speaker);
     normalized[targetIndex] = target;
-    return { segments: mergeConsecutiveSpeakerBlocks(normalized), changed: true };
+    return { segments: normalized, changed: true };
   }
 
   const startIndex = Number(startChar);
@@ -169,7 +169,7 @@ export function applySpeakerReassign({ segments = [], segmentId = '', speaker = 
 
   const split = splitSegment(target, startIndex, endIndex, speaker);
   const replaced = [...normalized.slice(0, targetIndex), ...split, ...normalized.slice(targetIndex + 1)];
-  return { segments: mergeConsecutiveSpeakerBlocks(replaced), changed: true };
+  return { segments: replaced, changed: true };
 }
 
 export function formatTimestamp(secondsRaw) {

@@ -3,7 +3,6 @@ import {
   applySpeakerReassign,
   findActiveSegmentIndex,
   formatTimestamp,
-  mergeAdjacentSegments,
   normalizeSegments,
 } from './correction_utils.js';
 import { consumeCorrectionHandoff } from './correction_handoff.js';
@@ -636,7 +635,7 @@ function collectSegmentsFromDom() {
     const textNode = document.querySelector(`[data-text-input="${CSS.escape(String(segment.segment_id))}"]`);
     if (textNode) segment.text = String(textNode.value ?? '');
   });
-  return mergeAdjacentSegments(updated);
+  return updated;
 }
 
 async function applySegments(segments, message = 'Aenderungen gespeichert', options = {}) {
@@ -688,7 +687,7 @@ function patchStateFromSession(payload) {
   state.workingVersion = Number(payload.working_version ?? state.workingVersion);
   state.autosaveEnabled = Boolean(payload.autosave_enabled);
   state.speakerLabels = payload.speaker_labels ?? {};
-  state.segments = mergeAdjacentSegments(normalizeSegments(payload.segments ?? []));
+  state.segments = normalizeSegments(payload.segments ?? []);
   state.operationLog = Array.isArray(payload.operation_log) ? payload.operation_log : [];
   state.reviewStatus = String(payload.review_status ?? state.reviewStatus);
   state.isFinal = Boolean(payload.is_final ?? state.isFinal);

@@ -11,6 +11,7 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
     def test_compose_defines_required_services_and_preflight_gate(self) -> None:
         compose = self._read("deploy/docker-compose.target.yml")
         dockerfile = self._read("deploy/Dockerfile.runtime")
+        nginx_frontend = self._read("deploy/nginx.frontend.conf")
 
         for service in (
             "frontend:",
@@ -42,6 +43,9 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         self.assertIn("WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}", compose)
         self.assertIn("mc mb --ignore-existing local/uploads", compose)
         self.assertIn("PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128", dockerfile)
+        self.assertIn("resolver 127.0.0.11", nginx_frontend)
+        self.assertIn("set $api_upstream http://api:18000;", nginx_frontend)
+        self.assertIn("proxy_pass $api_upstream;", nginx_frontend)
 
     def test_env_profiles_document_required_and_optional_variables_per_service(self) -> None:
         env_example = self._read(".env.example")
