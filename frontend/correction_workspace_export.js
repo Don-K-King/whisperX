@@ -1,5 +1,8 @@
 import { formatTimestamp } from './correction_utils.js';
 
+const EXPORT_MODE_RAW = 'raw';
+const EXPORT_MODE_COMPACT = 'compact';
+
 function resolveSpeakerLabel({ speaker = 'UNKNOWN', speakerLabels = {} }) {
   const key = String(speaker ?? 'UNKNOWN').trim() || 'UNKNOWN';
   const alias = String(speakerLabels?.[key] ?? '').trim();
@@ -7,8 +10,83 @@ function resolveSpeakerLabel({ speaker = 'UNKNOWN', speakerLabels = {} }) {
   return `${alias} (${key})`;
 }
 
+function normalizeMode(mode) {
+  return String(mode ?? EXPORT_MODE_COMPACT).toLowerCase() === EXPORT_MODE_RAW
+    ? EXPORT_MODE_RAW
+    : EXPORT_MODE_COMPACT;
+}
+
+function normalizeExportSegments(segments = []) {
+  if (!Array.isArray(segments)) return [];
+  const normalized = [];
+  for (const raw of segments) {
+    if (!raw || typeof raw !== 'object') continue;
+    normalized.push({
+      segment_id: String(raw.segment_id ?? '').trim(),
+      speaker: String(raw.speaker ?? 'UNKNOWN').trim() || 'UNKNOWN',
+      text: String(raw.text ?? ''),
+      start: Number(raw.start ?? 0),
+      end: Number(raw.end ?? 0),
+    });
+  }
+  return normalized;
+}
+
 function pad(value) {
   return String(value).padStart(2, '0');
+}
+
+function yesNo(value) {
+  return value ? 'Ja' : 'Nein';
+}
+
+function toIsoUtc(createdAt) {
+  return (createdAt instanceof Date ? createdAt : new Date(createdAt)).toISOString();
+}
+
+function buildMetadata({
+  jobId = '',
+  sessionId = '',
+  baseVersion = null,
+  workingVersion = null,
+  reviewStatus = '',
+  isFinal = false,
+  mode = EXPORT_MODE_COMPACT,
+  createdAt = new Date(),
+}) {
+  const exportMode = normalizeMode(mode);
+  return {
+    jobId: String(jobId || '-'),
+    sessionId: String(sessionId || '-'),
+    baseVersion: Number.isFinite(Number(baseVersion)) ? String(Number(baseVersion)) : '-',
+    workingVersion: Number.isFinite(Number(workingVersion)) ? String(Number(workingVersion)) : '-',
+    reviewStatus: String(reviewStatus || '-'),
+    isFinal: yesNo(Boolean(isFinal)),
+    mode: exportMode,
+    createdAtIso: toIsoUtc(createdAt),
+  };
+}
+
+function appendMarkdownMetadata(lines, metadata) {
+  lines.push(`- Job-ID: ${metadata.jobId}`);
+  lines.push(`- Session-ID: ${metadata.sessionId}`);
+  lines.push(`- Basis-Version: ${metadata.baseVersion}`);
+  lines.push(`- Arbeits-Version: ${metadata.workingVersion}`);
+  lines.push(`- Review-Status: ${metadata.reviewStatus}`);
+  lines.push(`- Final: ${metadata.isFinal}`);
+  lines.push(`- Export-Modus: ${metadata.mode}`);
+  lines.push(`- Erstellt: ${metadata.createdAtIso}`);
+}
+
+function appendPlainTextMetadata(lines, metadata) {
+  lines.push(`Job-ID: ${metadata.jobId}`);
+  lines.push(`Session-ID: ${metadata.sessionId}`);
+  lines.push(`Basis-Version: ${metadata.baseVersion}`);
+  lines.push(`Arbeits-Version: ${metadata.workingVersion}`);
+  lines.push(`Review-Status: ${metadata.reviewStatus}`);
+  lines.push(`Final: ${metadata.isFinal}`);
+  lines.push(`Export-Modus: ${metadata.mode}`);
+  lines.push(`Erstellt: ${metadata.createdAtIso}`);
 }
 
 export function buildCorrectionExportBaseName({ jobId = 'job', createdAt = new Date() }) {
@@ -24,28 +102,72 @@ export function buildCorrectionExportBaseName({ jobId = 'job', createdAt = new D
   return `transcript_${safeJob}_${year}${month}${day}_${hours}${minutes}`;
 }
 
+export function buildCorrectionExportSegments({
+  segments = [],
+  mode = EXPORT_MODE_COMPACT,
+}) {
+  const normalized = normalizeExportSegments(segments);
+  if (normalizeMode(mode) === EXPORT_MODE_RAW) {
+    return normalized.map((segment) => ({ ...segment }));
+  }
+  if (normalized.length < 2) {
+    return normalized.map((segment) => ({ ...segment }));
+  }
+
+  const compacted = [];
+  for (const segment of normalized) {
+    const last = compacted[compacted.length - 1];
+    if (!last) {
+      compacted.push({ ...segment });
+      continue;
+    }
+    if (String(last.speaker) === String(segment.speaker)) {
+      last.end = Number(segment.end);
+      last.text = last.text ? `${last.text}\n${segment.text}` : segment.text;
+      continue;
+    }
+    compacted.push({ ...segment });
+  }
+  return compacted;
+}
+
 export function buildCorrectionMarkdownExport({
   jobId = '',
+  sessionId = '',
+  baseVersion = null,
+  workingVersion = null,
+  reviewStatus = '',
+  isFinal = false,
+  mode = EXPORT_MODE_COMPACT,
   segments = [],
   speakerLabels = {},
   createdAt = new Date(),
 }) {
-  const iso = (createdAt instanceof Date ? createdAt : new Date(createdAt)).toISOString();
+  const metadata = buildMetadata({
+    jobId,
+    sessionId,
+    baseVersion,
+    workingVersion,
+    reviewStatus,
+    isFinal,
+    mode,
+    createdAt,
+  });
+  const renderSegments = buildCorrectionExportSegments({ segments, mode: metadata.mode });
   const lines = [
-    `# Korrektur-Export Job ${String(jobId || '-')}`,
-    '',
-    `- Erstellt: ${iso}`,
-    '',
-    '## Transkript',
+    `# Korrektur-Export Job ${metadata.jobId}`,
     '',
   ];
-  for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index] || {};
+  appendMarkdownMetadata(lines, metadata);
+  lines.push('');
+  lines.push('## Transkript');
+  lines.push('');
+  for (let index = 0; index < renderSegments.length; index += 1) {
+    const segment = renderSegments[index] || {};
     const label = resolveSpeakerLabel({ speaker: segment.speaker, speakerLabels });
     const start = formatTimestamp(segment.start);
     const end = formatTimestamp(segment.end);
-    lines.push(`### Block ${index + 1} - ${label}`);
-    lines.push(`- Zeit: ${start} - ${end}`);
+    lines.push(`### ${label} | ${start} - ${end}`);
     lines.push('');
     lines.push(String(segment.text ?? ''));
     lines.push('');
@@ -54,12 +176,35 @@ export function buildCorrectionMarkdownExport({
 }
 
 export function buildCorrectionPlainTextExport({
+  jobId = '',
+  sessionId = '',
+  baseVersion = null,
+  workingVersion = null,
+  reviewStatus = '',
+  isFinal = false,
+  mode = EXPORT_MODE_COMPACT,
+  createdAt = new Date(),
   segments = [],
   speakerLabels = {},
 }) {
-  const lines = [];
-  for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index] || {};
+  const metadata = buildMetadata({
+    jobId,
+    sessionId,
+    baseVersion,
+    workingVersion,
+    reviewStatus,
+    isFinal,
+    mode,
+    createdAt,
+  });
+  const renderSegments = buildCorrectionExportSegments({ segments, mode: metadata.mode });
+  const lines = ['Korrektur-Export'];
+  appendPlainTextMetadata(lines, metadata);
+  lines.push('');
+  lines.push('Transkript');
+  lines.push('');
+  for (let index = 0; index < renderSegments.length; index += 1) {
+    const segment = renderSegments[index] || {};
     const label = resolveSpeakerLabel({ speaker: segment.speaker, speakerLabels });
     const start = formatTimestamp(segment.start);
     const end = formatTimestamp(segment.end);

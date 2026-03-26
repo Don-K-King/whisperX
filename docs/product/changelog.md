@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-03-26
+- Korrekturmodus Timeline-Fix umgesetzt: Session-Start uebernimmt Segment-Zeitstempel (start/end) jetzt unveraendert aus der Transcript-Version.
+- Seed-Kompaktierung fuer Timeline-Luecken entfernt; Drift gegenueber der Original-Videotimeline wird dadurch nicht mehr kumulativ vergroessert.
+- Korrektur-Validierung angepasst: Luecken sind im Korrekturpfad zulaessig, Overlaps bleiben verboten; ungueltige Zeitwerte (NaN/inf/negativ) werden abgewiesen.
+- Korrektur-Workspace merged Speaker-Bloecke nur noch bei kontiguierlichen Segmenten; Pausen bleiben als echte Timeline-Luecken erhalten.
+- Medien-Sync im Workspace gehaertet: bei Seek in internen Luecken wird kein falscher vorheriger Block mehr als aktiv markiert.
+
 ## 2026-03-25
 - Korrekturmodus-Start gegen Legacy-Runtime-DB stabilisiert: Session-Erstellung ist jetzt schema-kompatibel, auch wenn alte transcript_correction_sessions noch expires_at NOT NULL erzwingen.
 - 404/500-Fehlerbild beim Start des Korrekturmodus im Docker-Zielbetrieb beseitigt; Session-Start (POST /api/v1/jobs/{id}/transcript/correction-sessions) liefert wieder erfolgreich 200.
@@ -230,3 +237,20 @@
 - Korrekturmodus-Editor passt Textblockhoehen jetzt automatisch an den Inhalt an; interne Scrollbalken in den Bloecken entfallen.
 - Neue Exportfunktion direkt im Korrekturmodus: Download als Markdown (.md), PDF (.pdf) und Word-kompatibel (.doc/RTF).
 - Header-Layout weiter gegliedert und Export-Aktionen integriert, inklusive konsistenter dezent hervorgehobener Action-Buttons.
+
+## 2026-03-26 - Legacy-Reseed gegen additive Timeline-Drift
+- Korrekturmodus-Session-Start akzeptiert jetzt optional `force_reseed_from_transcript` und kann damit bei Legacy-Session-Resume den Draft auf aktuelle Transcript-Segmente (absolute Timeline) zuruecksetzen.
+- Legacy-Resume-Fall wird fix-forward behandelt: `history[0]` wird reseeded, `history_index` auf `0` gesetzt und Drift aus historisch kompaktierter Draft-Historie entfernt.
+- End-Pause-Verhalten im Workspace gehaertet: fuer `currentTime > lastEnd` wird kein aktiver Block mehr markiert.
+
+## 2026-03-26 (Korrektur-Export Lesbarkeit)
+- Korrektur-Workspace Export erweitert: neuer Modus `compact|raw` (Default `compact`) ohne Backend-API-Aenderung.
+- Kompaktmodus nutzt Dashboard-Semantik (konsekutive gleiche Speaker werden zusammengefuehrt, Speakerwechsel bleiben getrennt).
+- Zeitachsenpraezision bleibt erhalten: kompakte Bloecke behalten absolute `start/end` Grenzen (keine Timeline-Kompaktierung).
+- Exportlayout vereinheitlicht: Speaker + Zeitrange in einer Zeile, Text darunter; Header mit Job-/Session-/Versions-Metadaten und UTC-Exportzeitpunkt.
+
+
+## 2026-03-26 (Korrekturmodus Seed-Overlap Hotfix)
+- Fehlerbehebung fuer `transcript.timeline_overlap` beim Start des Korrekturmodus: kleine Rundungs-Ueberlappungen in bestehenden Transcript-Zeitstempeln werden beim Session-Seed automatisch auf den vorherigen Segment-Endpunkt gesnappt (50ms Toleranz).
+- Strikte Safety bleibt erhalten: groessere Overlaps werden weiterhin mit `transcript.timeline_overlap` abgewiesen.
+- Zukuenftige Erstmaterialisierung aus Worker-Artefakten haertet die Timeline ebenfalls gegen kleine Rundungs-Ueberlappungen.

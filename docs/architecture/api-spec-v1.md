@@ -422,5 +422,6 @@ Fehlerpfade:
 - `set_segments`: ersetzt kompletten Draft-Stand, jedes Segment mit `segment_id`, `speaker`, `text`, `start`, `end`.
 - `replace_literal`: nur literal matching (kein Regex), optional speaker-filter.
 - `reassign_speaker`: ganzes Segment oder Teilbereich (`start_char`, `end_char`).
-- Timeline-Invarianten sind verpflichtend: keine Overlaps, keine Luecken, monotone Chronologie.
+- Timeline-Invarianten sind verpflichtend: keine Overlaps, monotone Chronologie, `start <= end`, nur finite Zeitwerte.
+- Timeline-Luecken sind im Korrekturpfad zulaessig und werden nicht als Fehler gewertet.
 - Audit-Pflicht fuer Session create/update/apply/undo/redo/discard/commit und Status-Updates.

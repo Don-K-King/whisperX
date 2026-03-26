@@ -278,6 +278,41 @@ class InfrastructureAdaptersTests(unittest.TestCase):
             self.assertEqual(current.segments[0]["text"], "Hallo")
             self.assertEqual(current.speaker_labels, {})
 
+    def test_transcript_repository_snaps_small_overlap_from_worker_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "jobs.db"
+            artifacts = SQLiteWorkerArtifactStore(db_path)
+            artifacts.put_transcript(
+                tenant_id="tenant-a",
+                job_id="job_overlap_seed",
+                artifact={
+                    "transcript": {
+                        "segments": [
+                            {"start": 0.0, "end": 1.0, "text": "A"},
+                            {"start": 0.98, "end": 2.0, "text": "B"},
+                        ]
+                    },
+                    "diarization": {
+                        "segments": [
+                            {"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0},
+                            {"speaker": "SPEAKER_01", "start": 0.98, "end": 2.0},
+                        ]
+                    },
+                },
+            )
+
+            repo = SQLiteTranscriptRepository(db_path)
+            current = repo.get_current("tenant-a", "job_overlap_seed")
+
+            self.assertIsNotNone(current)
+            assert current is not None
+            self.assertEqual(current.segments[0]["end"], 1.0)
+            self.assertEqual(current.segments[1]["start"], 1.0)
+            self.assertEqual(current.segments[1]["end"], 2.0)
+            del current
+            del repo
+            del artifacts
+
     def test_transcript_repository_save_new_version_enforces_optimistic_locking(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "jobs.db"

@@ -203,7 +203,18 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 
 ## 2026-03-24 - Controls fuer Korrekturmodus Sessions
 - **Control: Session Tenant+Actor Scope.** Correction-Sessions sind an `(tenant_id, session_id)` und `actor_id` gebunden; fremde Bearbeiter duerfen Session weder lesen noch mutieren.
-- **Control: Timeline Invariants.** Korrektur-Operationen validieren `start/end` strikt auf monotone, lueckenlose Timeline ohne Overlap.
+- **Control: Timeline Invariants.** Korrektur-Operationen validieren `start/end` strikt auf monotone, finite Timeline ohne Overlap (`start <= end`); Luecken sind erlaubt.
 - **Control: Draft-vs-Version Trennung.** Autosave aktualisiert nur Session-Draft; persistente Transcript-Versionen entstehen ausschliesslich ueber explizites Commit.
 - **Control: Status Governance.** `review_status` und `is_final` werden separat gepflegt und auditierbar protokolliert.
 - **Control: Input Safety.** Sprecher-/Text-/Replace-Inputs werden als Daten behandelt, inklusive Control-Character-Checks und XSS-sicherem Rendering im Workspace.
+
+## 2026-03-26 - Ergaenzende Controls fuer Legacy-Reseed im Korrekturmodus
+- **Control: Expliziter Fix-Forward-Trigger.** Legacy-Reseed wird nur bei explizitem Flag `force_reseed_from_transcript` ausgefuehrt, um unbeabsichtigtes Ueberschreiben historischer Drafts zu vermeiden.
+- **Control: Draft-Reset auf verifizierte Transcript-Basis.** Reseed setzt `history_index=0` und schreibt `history[0]` aus normalisierten, validierten Transcript-Segmenten (monotone, finite, non-overlapping Timeline).
+- **Control: Session-Ownership nach Reseed.** Reseeded Session wird auf den aktuellen Actor gebunden, damit Session-Zugriff im Korrekturfluss konsistent actor-scoped bleibt.
+
+
+## 2026-03-26 - Controls fuer Seed-Overlap-Korrektur im Korrekturmodus
+- **Control: Bounded overlap snapping.** Nur kleine Seed-Ueberlappungen (<= 50ms) duerfen beim Session-Seed auf `previous_end` korrigiert werden, um Rundungsartefakte sicher zu entschaerfen.
+- **Control: Hard reject fuer strukturelle Overlaps.** Ueberlappungen oberhalb der Toleranz bleiben als `transcript.timeline_overlap` blockiert (kein stilles Durchwinken).
+- **Control: Defensive Materialisierung.** Beim Uebernehmen von Worker-Artefakten in Transcript-Versionen werden kleine Rundungs-Ueberlappungen ebenfalls begrenzt korrigiert, um Folgefehler im Review-Flow zu verhindern.

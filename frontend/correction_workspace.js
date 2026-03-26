@@ -3,7 +3,7 @@ import {
   applySpeakerReassign,
   findActiveSegmentIndex,
   formatTimestamp,
-  mergeConsecutiveSpeakerBlocks,
+  mergeAdjacentSegments,
   normalizeSegments,
 } from './correction_utils.js';
 import { consumeCorrectionHandoff } from './correction_handoff.js';
@@ -33,6 +33,7 @@ const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
 const AUTO_SEEK_SELECTION_STORAGE_KEY = 'evodox-correction-auto-seek-selection';
+const EXPORT_MODE_STORAGE_KEY = 'evodox-correction-export-mode';
 
 const state = {
   token: '',
@@ -63,6 +64,7 @@ const state = {
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
   autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
+  exportMode: loadPersistedExportMode(),
   selectedTextRange: null,
 };
 
@@ -167,6 +169,23 @@ function persistAutoSeekSelectionEnabled(enabled) {
   }
 }
 
+function loadPersistedExportMode() {
+  try {
+    const mode = String(localStorage.getItem(EXPORT_MODE_STORAGE_KEY) || '').trim().toLowerCase();
+    return mode === 'raw' ? 'raw' : 'compact';
+  } catch {
+    return 'compact';
+  }
+}
+
+function persistExportMode(mode) {
+  try {
+    localStorage.setItem(EXPORT_MODE_STORAGE_KEY, mode === 'raw' ? 'raw' : 'compact');
+  } catch {
+    // ignore persistence errors
+  }
+}
+
 function renderSidebarTreeSection({ id, title, body }) {
   const isOpen = state.sidebarSectionsOpen?.[id] !== false;
   return `
@@ -243,25 +262,40 @@ function triggerDownload({ filename, mimeType, payload }) {
 
 function exportCurrentTranscript(format) {
   try {
+    const createdAt = new Date();
     const segments = collectSegmentsFromDom();
-    const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt: new Date() });
+    const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt });
     if (format === 'md') {
       const markdown = buildCorrectionMarkdownExport({
         jobId: state.jobId,
+        sessionId: state.sessionId,
+        baseVersion: state.baseVersion,
+        workingVersion: state.workingVersion,
+        reviewStatus: state.reviewStatus,
+        isFinal: state.isFinal,
+        mode: state.exportMode,
         segments,
         speakerLabels: state.speakerLabels,
-        createdAt: new Date(),
+        createdAt,
       });
       triggerDownload({
         filename: `${baseName}.md`,
         mimeType: 'text/markdown;charset=utf-8',
         payload: markdown,
       });
-      setStatus('Markdown-Export erstellt');
+      setStatus(`Markdown-Export erstellt (${state.exportMode})`);
       return;
     }
 
     const text = buildCorrectionPlainTextExport({
+      jobId: state.jobId,
+      sessionId: state.sessionId,
+      baseVersion: state.baseVersion,
+      workingVersion: state.workingVersion,
+      reviewStatus: state.reviewStatus,
+      isFinal: state.isFinal,
+      mode: state.exportMode,
+      createdAt,
       segments,
       speakerLabels: state.speakerLabels,
     });
@@ -273,13 +307,13 @@ function exportCurrentTranscript(format) {
         mimeType: 'application/pdf',
         payload: pdfBytes,
       });
-      setStatus('PDF-Export erstellt');
+      setStatus(`PDF-Export erstellt (${state.exportMode})`);
       return;
     }
 
     if (format === 'word') {
       const word = buildCorrectionWordDocument({
-        title: `Korrektur-Export Job ${state.jobId}`,
+        title: `Korrektur-Export Job ${state.jobId} (${state.exportMode})`,
         text,
       });
       triggerDownload({
@@ -287,7 +321,7 @@ function exportCurrentTranscript(format) {
         mimeType: 'application/msword',
         payload: word,
       });
-      setStatus('Word-Export erstellt');
+      setStatus(`Word-Export erstellt (${state.exportMode})`);
     }
   } catch (error) {
     setStatus(`Export fehlgeschlagen: ${error.message}`);
@@ -508,6 +542,11 @@ function render() {
           <span class="badge">Final: ${state.isFinal ? 'Ja' : 'Nein'}</span>
         </section>
         <section class="cw-topbar-group cw-topbar-group--actions">
+          <label for="cw-export-mode">Exportmodus</label>
+          <select id="cw-export-mode">
+            <option value="compact" ${state.exportMode === 'compact' ? 'selected' : ''}>Kompakt</option>
+            <option value="raw" ${state.exportMode === 'raw' ? 'selected' : ''}>Rohdaten</option>
+          </select>
           <button id="cw-save" class="primary">Manuell speichern</button>
           <button id="cw-commit" class="primary">Version committen</button>
           <button id="cw-export-md" class="cw-action">Download MD</button>
@@ -597,7 +636,7 @@ function collectSegmentsFromDom() {
     const textNode = document.querySelector(`[data-text-input="${CSS.escape(String(segment.segment_id))}"]`);
     if (textNode) segment.text = String(textNode.value ?? '');
   });
-  return mergeConsecutiveSpeakerBlocks(updated);
+  return mergeAdjacentSegments(updated);
 }
 
 async function applySegments(segments, message = 'Aenderungen gespeichert', options = {}) {
@@ -649,7 +688,7 @@ function patchStateFromSession(payload) {
   state.workingVersion = Number(payload.working_version ?? state.workingVersion);
   state.autosaveEnabled = Boolean(payload.autosave_enabled);
   state.speakerLabels = payload.speaker_labels ?? {};
-  state.segments = mergeConsecutiveSpeakerBlocks(normalizeSegments(payload.segments ?? []));
+  state.segments = mergeAdjacentSegments(normalizeSegments(payload.segments ?? []));
   state.operationLog = Array.isArray(payload.operation_log) ? payload.operation_log : [];
   state.reviewStatus = String(payload.review_status ?? state.reviewStatus);
   state.isFinal = Boolean(payload.is_final ?? state.isFinal);
@@ -797,6 +836,15 @@ function bindInteractions() {
   if (exportWordButton) {
     exportWordButton.onclick = () => {
       exportCurrentTranscript('word');
+    };
+  }
+
+  const exportModeNode = document.getElementById('cw-export-mode');
+  if (exportModeNode) {
+    exportModeNode.onchange = () => {
+      state.exportMode = String(exportModeNode.value || 'compact') === 'raw' ? 'raw' : 'compact';
+      persistExportMode(state.exportMode);
+      setStatus(`Exportmodus: ${state.exportMode === 'raw' ? 'Rohdaten' : 'Kompakt'}`);
     };
   }
 
@@ -1125,7 +1173,11 @@ async function init() {
 
     const session = await callApi(`/api/v1/jobs/${state.jobId}/transcript/correction-sessions`, {
       method: 'POST',
-      body: JSON.stringify({ base_version: state.baseVersion, autosave_enabled: false }),
+      body: JSON.stringify({
+        base_version: state.baseVersion,
+        autosave_enabled: false,
+        force_reseed_from_transcript: true,
+      }),
     });
 
     patchStateFromSession(session);

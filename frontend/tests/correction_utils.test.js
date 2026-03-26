@@ -15,7 +15,7 @@ test('normalizeSegments creates deterministic segment ids', () => {
   assert.equal(segments[0].segment_id, 'seg_000001');
 });
 
-test('findActiveSegmentIndex returns segment for current time and fallback', () => {
+test('findActiveSegmentIndex returns segment for current time and no active block after last end', () => {
   const segments = normalizeSegments([
     { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
     { segment_id: 'seg_2', start: 1, end: 2, speaker: 'S2', text: 'B' },
@@ -24,7 +24,15 @@ test('findActiveSegmentIndex returns segment for current time and fallback', () 
   assert.equal(findActiveSegmentIndex({ segments, currentTime: 0.5 }), 0);
   assert.equal(findActiveSegmentIndex({ segments, currentTime: 1.0 }), 1);
   assert.equal(findActiveSegmentIndex({ segments, currentTime: 2.0 }), 2);
-  assert.equal(findActiveSegmentIndex({ segments, currentTime: 3.5 }), 2);
+  assert.equal(findActiveSegmentIndex({ segments, currentTime: 3.5 }), -1);
+});
+
+test('findActiveSegmentIndex returns -1 in internal timeline gaps', () => {
+  const segments = normalizeSegments([
+    { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
+    { segment_id: 'seg_2', start: 2, end: 3, speaker: 'S2', text: 'B' },
+  ]);
+  assert.equal(findActiveSegmentIndex({ segments, currentTime: 1.5 }), -1);
 });
 
 test('applyReplaceLiteral replaces one or many matches', () => {
@@ -94,16 +102,24 @@ test('mergeAdjacentSegments merges contiguous segments of same speaker', () => {
   assert.equal(merged[0].text, 'A\nB');
 });
 
-test('mergeConsecutiveSpeakerBlocks merges consecutive speaker blocks and keeps range', () => {
+test('mergeConsecutiveSpeakerBlocks merges only contiguous speaker blocks and keeps gaps intact', () => {
   const merged = mergeConsecutiveSpeakerBlocks([
     { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
     { segment_id: 'seg_2', start: 1.2, end: 2, speaker: 'S1', text: 'B' },
     { segment_id: 'seg_3', start: 2, end: 3, speaker: 'S2', text: 'C' },
   ]);
 
-  assert.equal(merged.length, 2);
+  assert.equal(merged.length, 3);
   assert.equal(merged[0].segment_id, 'seg_1');
   assert.equal(merged[0].start, 0);
-  assert.equal(merged[0].end, 2);
-  assert.equal(merged[0].text, 'A\nB');
+  assert.equal(merged[0].end, 1);
+  assert.equal(merged[0].text, 'A');
+});
+
+test('mergeAdjacentSegments does not merge non-contiguous timeline blocks', () => {
+  const merged = mergeAdjacentSegments([
+    { segment_id: 'seg_1', start: 0, end: 1, speaker: 'S1', text: 'A' },
+    { segment_id: 'seg_2', start: 1.25, end: 2, speaker: 'S1', text: 'B' },
+  ]);
+  assert.equal(merged.length, 2);
 });

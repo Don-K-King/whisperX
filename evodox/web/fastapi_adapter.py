@@ -250,6 +250,7 @@ def create_fastapi_app(
     class CorrectionSessionCreatePayload(BaseModel):
         base_version: int | None = None
         autosave_enabled: bool = False
+        force_reseed_from_transcript: bool = False
 
     class CorrectionSessionUpdatePayload(BaseModel):
         autosave_enabled: bool
@@ -748,6 +749,7 @@ def create_fastapi_app(
                     job_id=job_id,
                     base_version=payload.base_version,
                     autosave_enabled=payload.autosave_enabled,
+                    force_reseed_from_transcript=payload.force_reseed_from_transcript,
                 ),
                 tenant_id=auth_context.tenant_id,
                 actor_id=auth_context.actor_id,

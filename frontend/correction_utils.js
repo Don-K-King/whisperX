@@ -39,16 +39,12 @@ export function findActiveSegmentIndex({ segments = [], currentTime = 0 }) {
       return index;
     }
   }
-  let fallback = -1;
-  for (let index = 0; index < segments.length; index += 1) {
-    const end = Number(segments[index].end ?? 0);
-    if (time >= end - EPSILON) {
-      fallback = index;
-      continue;
-    }
-    break;
-  }
-  return fallback;
+  const firstStart = Number(segments[0]?.start ?? 0);
+  const lastEnd = Number(segments[segments.length - 1]?.end ?? firstStart);
+  if (time < firstStart - EPSILON) return -1;
+  if (time > lastEnd + EPSILON) return -1;
+  // Internal gap between two non-overlapping segments.
+  return -1;
 }
 
 export function mergeConsecutiveSpeakerBlocks(segments = []) {
@@ -61,7 +57,8 @@ export function mergeConsecutiveSpeakerBlocks(segments = []) {
       merged.push({ ...segment });
       continue;
     }
-    if (String(segment.speaker) === String(last.speaker)) {
+    const contiguous = Math.abs(Number(segment.start) - Number(last.end)) <= EPSILON;
+    if (contiguous && String(segment.speaker) === String(last.speaker)) {
       last.end = Number(segment.end);
       last.text = last.text ? `${last.text}\n${segment.text}` : segment.text;
       continue;
