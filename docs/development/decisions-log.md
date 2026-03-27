@@ -294,3 +294,10 @@
 - Entscheidung: `docs/README.md` ist der zentrale Dokumentations-Navigator mit klarer Trennung von aktiven SoT-Dokumenten und Historie.
 - Entscheidung: Historische Schritt-/Signoff-/Incident-Artefakte bleiben aus Auditgruenden erhalten, werden aber ueber `docs/archive/README.md` als nicht-normativ klassifiziert.
 - Entscheidung: Widerspruechliche Zwischenstaende in historischen Dokumenten gelten nicht als aktive Vertragsquelle; verbindlich sind API-Spec, Data-Model, Security-Controls, ADRs und Runbooks.
+
+## 2026-03-27 - ADR-0024 No-Switch Offline-Readiness + Login-Autostart
+- Entscheidung: einheitlicher Bootstrap (`deploy/start-evodox.ps1`) fuer Dev und Uebergabe; kein manueller Moduswechsel.
+- Entscheidung: Offline-Readiness wird automatisch geprueft und bei verfuegbarem Internet durch Auto-Prepare vervollstaendigt.
+- Entscheidung: Worker-Runtime wird offline-sicher gehaertet (`--model_cache_only True`, optional `WORKER_OFFLINE_STRICT=true`, lokale Diarization-Snapshot-Aufloesung, fail-fast bei fehlendem `punkt_tab`).
+- Entscheidung: Windows Login-Autostart fuer beliebige User ueber Task Scheduler (`deploy/register-evodox-login-autostart.ps1`).
+- Referenz: ADR-0024 (`/docs/adr/ADR-0024-no-switch-offline-readiness-und-login-autostart.md`).

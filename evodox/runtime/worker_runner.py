@@ -70,9 +70,11 @@ class WorkerRuntimeSettings:
     max_speakers: int | None = None
     whisperx_vad_method: str = "silero"
     media_temp_dir: Path = Path("/tmp/evodox-worker")
+    nltk_data_dir: Path = Path("/runtime/nltk_data")
     whisperx_timeout_seconds: int = 0
     worker_max_retries: int = 3
     worker_allowed_queues: tuple[str, ...] = ()
+    offline_strict: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "WorkerRuntimeSettings":
@@ -114,12 +116,14 @@ class WorkerRuntimeSettings:
         max_speakers = _parse_optional_positive_int(source.get("WORKER_WHISPERX_MAX_SPEAKERS", ""), "WORKER_WHISPERX_MAX_SPEAKERS")
         whisperx_vad_method = source.get("WORKER_WHISPERX_VAD_METHOD", "silero").strip().lower()
         media_temp_dir = Path(source.get("WORKER_MEDIA_TEMP_DIR", "/tmp/evodox-worker").strip())
+        nltk_data_dir = Path(source.get("WORKER_NLTK_DATA_DIR", "/runtime/nltk_data").strip())
         whisperx_timeout_seconds = _parse_non_negative_int(
             source.get("WORKER_WHISPERX_TIMEOUT_SECONDS", "0"),
             "WORKER_WHISPERX_TIMEOUT_SECONDS",
         )
         worker_max_retries = _parse_non_negative_int(source.get("WORKER_MAX_RETRIES", "3"), "WORKER_MAX_RETRIES")
         worker_allowed_queues = _parse_csv_list(source.get("WORKER_ALLOWED_QUEUES", ""))
+        offline_strict = _parse_bool(source.get("WORKER_OFFLINE_STRICT", "false"))
 
         if mode == "whisperx":
             if not object_storage_base_url:
@@ -157,9 +161,11 @@ class WorkerRuntimeSettings:
             max_speakers=max_speakers,
             whisperx_vad_method=whisperx_vad_method or "silero",
             media_temp_dir=media_temp_dir,
+            nltk_data_dir=nltk_data_dir,
             whisperx_timeout_seconds=whisperx_timeout_seconds,
             worker_max_retries=worker_max_retries,
             worker_allowed_queues=worker_allowed_queues,
+            offline_strict=offline_strict,
         )
 
 
@@ -183,6 +189,8 @@ class WorkerRuntime:
         self.settings.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings.media_temp_dir.mkdir(parents=True, exist_ok=True)
         self.settings.whisperx_model_dir.mkdir(parents=True, exist_ok=True)
+        self.settings.nltk_data_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["NLTK_DATA"] = str(self.settings.nltk_data_dir)
 
         self.job_repository = SQLiteJobRepository(self.settings.db_path)
         self.outbox = SQLiteOutbox(self.settings.db_path)
@@ -200,6 +208,11 @@ class WorkerRuntime:
         if fallback_event is not None:
             self.audit_log.append(fallback_event)
             LOGGER.warning("worker.runtime.gpu_fallback", extra={"event": fallback_event})
+        offline_settings, offline_event = _resolve_offline_strict_whisperx_settings(self.settings)
+        self.settings = offline_settings
+        if offline_event is not None:
+            self.audit_log.append(offline_event)
+            LOGGER.info("worker.runtime.offline_strict_enabled", extra={"event": offline_event})
         self.artifact_store = SQLiteWorkerArtifactStore(self.settings.db_path)
         self.checkpoint_store = SQLiteJobCheckpointStore(self.settings.db_path)
         asr_engine, align_engine, diarize_engine = _build_processing_engines(
@@ -750,6 +763,8 @@ def _build_whisperx_command(
         str(output_dir),
         "--model_dir",
         str(settings.whisperx_model_dir),
+        "--model_cache_only",
+        "True",
         "--verbose",
         "False",
         "--print_progress",
@@ -946,6 +961,84 @@ def _default_cuda_available() -> bool:
     except Exception:
         return False
     return bool(torch.cuda.is_available())
+
+
+def _resolve_offline_strict_whisperx_settings(
+    settings: WorkerRuntimeSettings,
+) -> tuple[WorkerRuntimeSettings, dict[str, Any] | None]:
+    if settings.mode != "whisperx":
+        return settings, None
+    if not settings.offline_strict:
+        return settings, None
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+    resolved_settings = settings
+    local_diarization_model: Path | None = None
+    if settings.enable_diarization:
+        local_diarization_model = _resolve_local_diarization_model_path(
+            model_name=settings.diarization_model,
+            model_dir=settings.whisperx_model_dir,
+        )
+        if local_diarization_model is None:
+            raise WorkerRuntimeConfigError(
+                "WORKER_OFFLINE_STRICT=true, aber das konfigurierte Diarization-Modell ist lokal nicht vollständig verfügbar."
+            )
+        resolved_settings = replace(resolved_settings, diarization_model=str(local_diarization_model))
+
+    if not _is_nltk_punkt_tab_available():
+        raise WorkerRuntimeConfigError(
+            "WORKER_OFFLINE_STRICT=true, aber NLTK-Ressource 'punkt_tab' fehlt lokal."
+        )
+
+    event = {
+        "action": "worker.runtime.offline_strict_enabled",
+        "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
+        "transformers_offline": os.environ.get("TRANSFORMERS_OFFLINE"),
+        "diarization_model_resolved": str(local_diarization_model) if local_diarization_model is not None else None,
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    return resolved_settings, event
+
+
+def _resolve_local_diarization_model_path(*, model_name: str, model_dir: Path) -> Path | None:
+    value = str(model_name or "").strip()
+    if not value:
+        return None
+    explicit_path = Path(value)
+    if explicit_path.exists():
+        return explicit_path
+
+    cache_root = model_dir / f"models--{value.replace('/', '--')}"
+    snapshots_root = cache_root / "snapshots"
+    if not snapshots_root.exists():
+        return None
+
+    ref_main = cache_root / "refs" / "main"
+    if ref_main.exists():
+        commit = ref_main.read_text(encoding="utf-8").strip()
+        if commit:
+            candidate = snapshots_root / commit
+            if candidate.exists():
+                return candidate
+
+    snapshots = sorted(item for item in snapshots_root.iterdir() if item.is_dir())
+    if snapshots:
+        return snapshots[0]
+    return None
+
+
+def _is_nltk_punkt_tab_available() -> bool:
+    try:
+        from nltk.data import load as nltk_load
+    except Exception:
+        return False
+    try:
+        nltk_load("tokenizers/punkt_tab/english.pickle")
+    except LookupError:
+        return False
+    return True
 
 
 def _resolve_effective_whisperx_settings(

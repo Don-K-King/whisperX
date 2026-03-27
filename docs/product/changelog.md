@@ -355,3 +355,9 @@
 - Interpolations-Cap fuer `processing` auf UI-seitig bis max. 99% erweitert, damit der Balken nicht bei 59% stehenbleibt.
 - Zeitkurve verlangsamt: interne Phasendauer nutzt jetzt groessere Obergrenze, damit lange Jobs nicht schon nach kurzer Zeit auf 99% laufen.
 - Ergebnis: sichtbarer Fortschritt ueber 59% hinaus, ohne 100% vor `completed`.
+
+## 2026-03-27 (No-Switch Offline Readiness + Login Autostart)
+- Neuer einheitlicher Bootstrap `deploy/start-evodox.ps1` prueft automatisch die Offline-Readiness und fuehrt bei verfuegbarem Internet ein Auto-Prepare fehlender Artefakte aus.
+- Neuer Runtime-Readiness-Entry `python -m evodox.runtime.offline_readiness` mit `check|prepare` fuer reproduzierbare Betriebspruefungen.
+- Worker wurde fuer offline-sicheren Laufzeitpfad gehaertet: `--model_cache_only True` sowie optionaler Strict-Offline-Modus mit lokaler Diarization-Aufloesung und fail-fast bei fehlenden Pflichtartefakten.
+- Neuer Windows-Betriebspfad fuer Uebergabe: `deploy/register-evodox-login-autostart.ps1` registriert Login-Autostart (any user) auf denselben Bootstrap.

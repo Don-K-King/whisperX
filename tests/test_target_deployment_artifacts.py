@@ -38,6 +38,10 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         self.assertIn("WORKER_WHISPERX_DEVICE: ${WORKER_WHISPERX_DEVICE:-cuda}", compose)
         self.assertIn("WORKER_WHISPERX_COMPUTE_TYPE: ${WORKER_WHISPERX_COMPUTE_TYPE:-float16}", compose)
         self.assertIn("WORKER_WHISPERX_DEVICE_INDEX: ${WORKER_WHISPERX_DEVICE_INDEX:-0}", compose)
+        self.assertIn("WORKER_OFFLINE_STRICT: ${WORKER_OFFLINE_STRICT:-false}", compose)
+        self.assertIn("WORKER_NLTK_DATA_DIR: ${WORKER_NLTK_DATA_DIR:-/runtime/nltk_data}", compose)
+        self.assertIn("HF_HUB_OFFLINE: ${WORKER_HF_HUB_OFFLINE:-0}", compose)
+        self.assertIn("TRANSFORMERS_OFFLINE: ${WORKER_TRANSFORMERS_OFFLINE:-0}", compose)
         self.assertIn("WORKER_ALLOWED_QUEUES", compose)
         self.assertIn("gpus: all", compose)
         self.assertIn("WORKER_WHISPERX_TIMEOUT_SECONDS: ${WORKER_WHISPERX_TIMEOUT_SECONDS:-0}", compose)
@@ -67,6 +71,7 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
             "WORKER_WHISPERX_COMPUTE_TYPE=float16",
             "WORKER_WHISPERX_DEVICE_INDEX=0",
             "WORKER_ALLOWED_QUEUES=",
+            "WORKER_NLTK_DATA_DIR=",
             "RETENTION_VALIDATE_ENV_ONLY=false",
             "KEYCLOAK_ADMIN_PASSWORD=",
         ):
@@ -75,6 +80,7 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
     def test_runbook_covers_provisioning_secrets_healthchecks_and_rollback(self) -> None:
         runbook = self._read("docs/operations/runbooks.md")
         monitoring = self._read("docs/operations/monitoring-alerting.md")
+        self.assertIn("## 2026-03-27 - No-Switch Offline-Handover (Windows Login Autostart)", runbook)
 
         for heading in (
             "## 2026-03-08 – Zielbetrieb mit Docker Compose (API/Worker/Retention)",
@@ -85,6 +91,8 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
             "### 5) Rollback",
         ):
             self.assertIn(heading, runbook)
+        self.assertTrue(Path("deploy/start-evodox.ps1").exists())
+        self.assertTrue(Path("deploy/register-evodox-login-autostart.ps1").exists())
 
         for mapping in (
             "docker compose service `api`",

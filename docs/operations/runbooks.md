@@ -1,5 +1,47 @@
 # Runbooks
 
+## 2026-03-27 - No-Switch Offline-Handover (Windows Login Autostart)
+### Ziel
+- Ein Startweg fuer Entwicklung und Offline-Uebergabe ohne manuelles Umschalten.
+- Bei fehlenden Offline-Artefakten werden diese bei verfuegbarem Internet automatisch vorbereitet.
+- Nach Login eines beliebigen Users startet der Stack automatisch und kann ohne Internet weiter transkribieren.
+
+### Standardstart (immer gleich)
+1. Startkommando:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-evodox.ps1
+   ```
+2. Das Skript fuehrt intern aus:
+   - Docker-Verfuegbarkeit pruefen.
+   - Offline-Readiness (`python -m evodox.runtime.offline_readiness check --json`) pruefen.
+   - Bei fehlenden Artefakten und Internet: `prepare` ausfuehren.
+   - Worker im `offline_strict` Modus starten (`WORKER_OFFLINE_STRICT=true`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`).
+
+### Windows Login Autostart (any user)
+1. Einmalig als Administrator ausfuehren:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\register-evodox-login-autostart.ps1
+   ```
+2. Der Task Scheduler startet `deploy/start-evodox.ps1` bei jedem User-Login.
+3. Keine BIOS- und keine Firewall-Automation erforderlich.
+
+### Readiness-Report lesen
+- `ready=true`: Offline-faehige Runtime kann sofort starten.
+- `ready=false` + `internet_available=true`: Auto-Prepare kann fehlende Artefakte nachziehen.
+- `ready=false` + `internet_available=false`: Start wird mit Missing-Asset-Liste abgebrochen (fail-fast).
+
+### Offline-Uebergabe Checkliste
+1. Einmal online `deploy/start-evodox.ps1` erfolgreich durchlaufen lassen.
+2. Netzwerk trennen.
+3. PC neu starten, mit Ziel-User einloggen.
+4. `docker compose --env-file .env -f deploy/docker-compose.target.yml ps` pruefen.
+5. Testjob inkl. Diarization bis `completed` laufen lassen.
+
+### Troubleshooting
+- Fehler `config_error:*`: `.env` Pflichtparameter fuer Worker/Token/Storage korrigieren.
+- Fehler `diarization_snapshot:*`: Auto-Prepare mit Internet erneut ausfuehren.
+- Fehler `nltk_punkt_tab:*`: Auto-Prepare erneut ausfuehren oder NLTK-Daten im Worker-Image vorprovisionieren.
+
 ## Betrieb (On-Prem Docker)
 - Startreihenfolge: Keycloak, PostgreSQL, MinIO, RabbitMQ, API, Worker, Frontend, NGINX
 - Healthchecks fÃƒÂ¼r API/Worker/Broker/DB/Storage verpflichtend
@@ -150,7 +192,7 @@ RETENTION_VALIDATE_ENV_ONLY=true python -m evodox.runtime.retention_scheduler_ru
   - `db_mark_failed`
 - Unbekannte Klassen werden absichtlich **nicht** als recovered markiert (fail-safe) und verbleiben im Retry-Backlog bis Governance-Update.
 
-## 2026-03-08 Ã¢â‚¬â€œ Zielbetrieb mit Docker Compose (API/Worker/Retention)
+## 2026-03-08 – Zielbetrieb mit Docker Compose (API/Worker/Retention)
 ### 1) Provisioning
 1. Infrastruktur vorbereiten: persistente Volumes fÃƒÂ¼r `db`, `broker`, `object-storage` anlegen und auf Host-Ebene verschlÃƒÂ¼sseln.
 2. Zielartefakte bereitstellen:

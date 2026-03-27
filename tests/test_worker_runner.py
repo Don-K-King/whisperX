@@ -13,6 +13,7 @@ from evodox.runtime.worker_runner import (
     WorkerRuntimeConfigError,
     WorkerRuntimeSettings,
     _build_whisperx_command,
+    _resolve_local_diarization_model_path,
 )
 
 
@@ -45,6 +46,17 @@ class WorkerRunnerTests(unittest.TestCase):
         self.assertEqual(settings.whisperx_device_index, 2)
         self.assertEqual(settings.worker_allowed_queues, ("gpu-standard", "gpu-long"))
 
+    def test_settings_parse_offline_strict_flag(self) -> None:
+        settings = WorkerRuntimeSettings.from_env(
+            {
+                "WORKER_DB_PATH": "/tmp/jobs.db",
+                "WORKER_MODE": "whisperx",
+                "WORKER_ENABLE_DIARIZATION": "false",
+                "WORKER_OFFLINE_STRICT": "true",
+            }
+        )
+        self.assertTrue(settings.offline_strict)
+
     def test_build_whisperx_command_includes_diarization_flags_when_enabled(self) -> None:
         settings = WorkerRuntimeSettings(
             db_path=Path("/tmp/jobs.db"),
@@ -67,6 +79,41 @@ class WorkerRunnerTests(unittest.TestCase):
         self.assertIn("pyannote/speaker-diarization-community-1", command)
         self.assertIn("--hf_token", command)
         self.assertIn("--device_index", command)
+
+    def test_build_whisperx_command_enforces_model_cache_only_true(self) -> None:
+        settings = WorkerRuntimeSettings(
+            db_path=Path("/tmp/jobs.db"),
+            mode="whisperx",
+            enable_diarization=False,
+        )
+        command = _build_whisperx_command(
+            media_path=Path("/tmp/demo.wav"),
+            output_dir=Path("/tmp/out"),
+            settings=settings,
+            include_diarization=False,
+        )
+
+        self.assertIn("--model_cache_only", command)
+        flag_index = command.index("--model_cache_only")
+        self.assertEqual(command[flag_index + 1], "True")
+
+    def test_resolve_local_diarization_model_path_prefers_main_ref_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            cache_root = model_dir / "models--pyannote--speaker-diarization-community-1"
+            snapshots_dir = cache_root / "snapshots"
+            preferred = snapshots_dir / "snapshot-main"
+            fallback = snapshots_dir / "snapshot-old"
+            preferred.mkdir(parents=True)
+            fallback.mkdir(parents=True)
+            (cache_root / "refs").mkdir(parents=True)
+            (cache_root / "refs" / "main").write_text("snapshot-main", encoding="utf-8")
+
+            resolved = _resolve_local_diarization_model_path(
+                model_name="pyannote/speaker-diarization-community-1",
+                model_dir=model_dir,
+            )
+            self.assertEqual(resolved, preferred)
 
     def test_build_whisperx_command_includes_device_index(self) -> None:
         settings = WorkerRuntimeSettings(

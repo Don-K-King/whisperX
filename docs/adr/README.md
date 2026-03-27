@@ -26,5 +26,6 @@ Jede signifikante Architekturentscheidung muss hier dokumentiert und in `docs/de
 - [ADR-0021: Korrekturmodus Sessions und Statusfuehrung](ADR-0021-korrekturmodus-sessions-und-status.md)
 - [ADR-0022: Korrekturmodus mit absoluter Timeline ohne Seed-Kompaktierung](ADR-0022-korrekturmodus-absolute-timeline-ohne-seed-kompaktierung.md) (praezisiert Timeline-Invarianten gegenueber ADR-0021)
 - [ADR-0023: Korrekturmodus-Performance durch Virtualisierung und Delta-Operationen](ADR-0023-korrekturmodus-performance-virtualisierung-und-delta-operationen.md)
+- [ADR-0024: No-Switch Offline-Readiness und Login-Autostart](ADR-0024-no-switch-offline-readiness-und-login-autostart.md)
 
 Hinweis: Eine ADR-Datei `ADR-0015` existiert im Verzeichnis aktuell nicht. Der historische Log-Titel bleibt nur in `docs/development/decisions-log.md` erhalten und ist kein aktiver ADR-Dateiverweis.

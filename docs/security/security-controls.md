@@ -223,3 +223,10 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Bounded overlap snapping.** Nur kleine Seed-Ueberlappungen (<= 50ms) duerfen beim Session-Seed auf `previous_end` korrigiert werden, um Rundungsartefakte sicher zu entschaerfen.
 - **Control: Hard reject fuer strukturelle Overlaps.** Ueberlappungen oberhalb der Toleranz bleiben als `transcript.timeline_overlap` blockiert (kein stilles Durchwinken).
 - **Control: Defensive Materialisierung.** Beim Uebernehmen von Worker-Artefakten in Transcript-Versionen werden kleine Rundungs-Ueberlappungen ebenfalls begrenzt korrigiert, um Folgefehler im Review-Flow zu verhindern.
+
+## 2026-03-27 - Controls fuer No-Switch Offline-Betrieb
+- **Control: Einheitlicher Startpfad.** `deploy/start-evodox.ps1` ist der einzige freigegebene Bootstrap fuer Dev und Uebergabe; dadurch werden manuelle Modusfehler reduziert.
+- **Control: Readiness-before-start.** Vor dem Start werden lokale Pflichtartefakte (Whisper, Alignment, Diarization, NLTK punkt_tab) geprueft; bei Defiziten fail-fast oder Auto-Prepare.
+- **Control: Offline strict runtime.** Worker startet mit `WORKER_OFFLINE_STRICT=true`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1` und `--model_cache_only True`.
+- **Control: Lokale Diarization-Aufloesung.** Diarization-Modelle werden auf lokale Snapshot-Pfade aufgeloest; fehlende Snapshots sind harte Startfehler.
+- **Control: Login-Autostart Governance.** Windows Task Scheduler startet den Bootstrap bei Login jedes Users; dadurch bleibt das Startverhalten bei User-Wechsel reproduzierbar.
