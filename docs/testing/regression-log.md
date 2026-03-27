@@ -361,3 +361,25 @@
 - Ergebnis (Frontend Regression): Gruen, 86/86 Tests.
 - Screenshot-Nachweis (UI-Interaktion): node scripts/capture_correction_mode_screenshots.mjs in dieser Umgebung nicht ausfuehrbar (Cannot find module 'playwright').
 - Reproduktion Screenshot-Nachweis: npm --prefix frontend install und danach node scripts/capture_correction_mode_screenshots.mjs.
+## 2026-03-27 - Regression Editor-Scrollbar Empty-Window
+- Anlass: Scrollbar-Spruenge im Editor konnten leere Bereiche zeigen, weil Selection-Pinning die Scroll-range ueberschrieb.
+- Ausgefuehrt: node --check frontend/correction_workspace_viewmodel.js, node --check frontend/correction_workspace.js.
+- Ergebnis: Gruen.
+- Ausgefuehrt: node --test frontend/tests/correction_workspace_viewmodel.test.js.
+- Ergebnis: Gruen, 43/43 Tests.
+- Ausgefuehrt: node --test frontend/tests/*.test.js.
+- Ergebnis: Gruen, 88/88 Tests.
+## 2026-03-27 - Benchmark Virtual-Window Blockanzahl (Human-Latency Sweet Spot)
+- Anlass: Bestimmung der maximalen Blockanzahl pro Renderfenster ohne fuer Nutzer stoerende Latenz.
+- Tooling: scripts/benchmark_correction_virtual_window.mjs (Playwright Chromium, 80 Iterationen je Fenstergroesse).
+- Ausgefuehrt: node scripts/benchmark_correction_virtual_window.mjs.
+- Kernergebnis: Bei 30m-Profil (600 Segmente) bleibt p95 bis ca. 450 Bloecke im instant-Bereich (<100ms); 600 Bloecke liegen im noticeable-Bereich (p95 ~113-147ms).
+- Empfehlung: dynamischer Zielbereich 300-450 Bloecke fuer interaktive Spruenge; Voll-Laden bis 300 Segmente unkritisch, bei 600 Segmenten progressiv/idle nachladen statt sofort voll.
+## 2026-03-27 - Regression Adaptive Virtual-Window
+- Anlass: Umsetzung der empfohlenen Sweet-Spot-Strategie fuer Blockanzahl pro Renderfenster.
+- Ausgefuehrt (Syntax): node --check frontend/correction_workspace_viewmodel.js, node --check frontend/correction_workspace.js.
+- Ergebnis (Syntax): Gruen.
+- Ausgefuehrt (Unit): node --test frontend/tests/correction_workspace_viewmodel.test.js.
+- Ergebnis (Unit): Gruen, 46/46 Tests.
+- Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
+- Ergebnis (Frontend Regression): Gruen, 91/91 Tests.

@@ -233,6 +233,76 @@ export function resolveVirtualWindowPreferredIndex({
   return -1;
 }
 
+export function resolveVirtualWindowPinnedIndex({
+  preferredIndex = -1,
+  preferPlaybackAnchor = false,
+} = {}) {
+  const preferred = Number.isInteger(preferredIndex) ? preferredIndex : -1;
+  if (preferred < 0) return -1;
+  if (!preferPlaybackAnchor) return -1;
+  return preferred;
+}
+
+export function resolveAdaptiveWindowSize({
+  totalSegments = 0,
+} = {}) {
+  const total = Number.isInteger(totalSegments) ? totalSegments : 0;
+  if (total <= 0) return 0;
+  if (total <= 300) return total;
+  if (total <= 600) return Math.min(total, 450);
+  if (total <= 1200) return 300;
+  if (total <= 3000) return 240;
+  return 180;
+}
+
+export function resolveAdaptiveVirtualRange({
+  totalSegments = 0,
+  start = 0,
+  end = 0,
+  targetWindowSize = 0,
+  anchorIndex = -1,
+} = {}) {
+  const total = Number.isInteger(totalSegments) ? totalSegments : 0;
+  if (total <= 0) return { start: 0, end: 0 };
+  const target = Math.max(1, Math.min(total, Math.floor(Number(targetWindowSize) || 0)));
+
+  let resolvedStart = Math.floor(Number(start));
+  let resolvedEnd = Math.ceil(Number(end));
+  if (!Number.isFinite(resolvedStart)) resolvedStart = 0;
+  if (!Number.isFinite(resolvedEnd)) resolvedEnd = resolvedStart + 1;
+
+  resolvedStart = Math.min(Math.max(0, resolvedStart), total - 1);
+  resolvedEnd = Math.min(total, Math.max(resolvedStart + 1, resolvedEnd));
+
+  if (resolvedEnd - resolvedStart >= target) {
+    return { start: resolvedStart, end: resolvedEnd };
+  }
+
+  const anchor = Number.isInteger(anchorIndex)
+    ? Math.min(Math.max(0, anchorIndex), total - 1)
+    : -1;
+  const pivot = anchor >= 0
+    ? anchor
+    : Math.min(total - 1, Math.max(0, Math.floor((resolvedStart + resolvedEnd - 1) / 2)));
+  const halfBefore = Math.floor((target - 1) / 2);
+  let expandedStart = pivot - halfBefore;
+  let expandedEnd = expandedStart + target;
+
+  if (expandedStart < 0) {
+    expandedStart = 0;
+    expandedEnd = target;
+  }
+  if (expandedEnd > total) {
+    expandedEnd = total;
+    expandedStart = Math.max(0, total - target);
+  }
+
+  return {
+    start: expandedStart,
+    end: expandedEnd,
+  };
+}
+
 export function resolvePlaybackFollowDecision({
   activeIndex = -1,
   rangeStart = 0,

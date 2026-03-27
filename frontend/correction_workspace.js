@@ -19,6 +19,9 @@ import {
   resolveSelectedSegmentId,
   resolveGapSeekTargetIndex,
   resolveVirtualWindowPreferredIndex,
+  resolveVirtualWindowPinnedIndex,
+  resolveAdaptiveWindowSize,
+  resolveAdaptiveVirtualRange,
   resolvePlaybackFollowDecision,
   resolveSeekWarmupRange,
   resolveSeekWarmupReadiness,
@@ -863,6 +866,14 @@ function resolveVirtualRange() {
     playbackAnchorIndex,
     preferPlaybackAnchor: followPlaybackAnchor,
   });
+  const pinnedIndex = resolveVirtualWindowPinnedIndex({
+    preferredIndex,
+    preferPlaybackAnchor: followPlaybackAnchor,
+  });
+  const adaptiveWindowSize = resolveAdaptiveWindowSize({ totalSegments: total });
+  if (adaptiveWindowSize >= total) {
+    return { start: 0, end: total, topSpacer: 0, bottomSpacer: 0 };
+  }
   const forcedRange = state.seekForcedRange;
   if (forcedRange && Number.isFinite(Number(forcedRange.start)) && Number.isFinite(Number(forcedRange.end))) {
     const resolvedForcedRange = resolveForcedVirtualRange({
@@ -872,8 +883,15 @@ function resolveVirtualRange() {
       fallbackIndex: preferredIndex,
       overscan: VIRTUAL_OVERSCAN,
     });
-    const start = resolvedForcedRange.start;
-    const end = resolvedForcedRange.end;
+    const anchoredForcedRange = resolveAdaptiveVirtualRange({
+      totalSegments: total,
+      start: resolvedForcedRange.start,
+      end: resolvedForcedRange.end,
+      targetWindowSize: adaptiveWindowSize,
+      anchorIndex: preferredIndex,
+    });
+    const start = anchoredForcedRange.start;
+    const end = anchoredForcedRange.end;
     const topSpacer = Number(prefix[start] || 0);
     const bottomSpacer = Math.max(0, totalHeight - Number(prefix[end] || 0));
     return { start, end, topSpacer, bottomSpacer };
@@ -885,12 +903,22 @@ function resolveVirtualRange() {
   if (end <= start) {
     end = Math.min(total, start + 1);
   }
-  if (preferredIndex >= 0) {
-    if (preferredIndex < start || preferredIndex >= end) {
-      start = Math.max(0, preferredIndex - VIRTUAL_OVERSCAN);
-      end = Math.min(total, preferredIndex + VIRTUAL_OVERSCAN + 1);
+  if (pinnedIndex >= 0) {
+    if (pinnedIndex < start || pinnedIndex >= end) {
+      start = Math.max(0, pinnedIndex - VIRTUAL_OVERSCAN);
+      end = Math.min(total, pinnedIndex + VIRTUAL_OVERSCAN + 1);
     }
   }
+  const anchorIndex = pinnedIndex >= 0 ? pinnedIndex : preferredIndex;
+  const adaptiveRange = resolveAdaptiveVirtualRange({
+    totalSegments: total,
+    start,
+    end,
+    targetWindowSize: adaptiveWindowSize,
+    anchorIndex,
+  });
+  start = adaptiveRange.start;
+  end = adaptiveRange.end;
   const topSpacer = Number(prefix[start] || 0);
   const bottomSpacer = Math.max(0, totalHeight - Number(prefix[end] || 0));
   return { start, end, topSpacer, bottomSpacer };
@@ -1500,6 +1528,11 @@ function bindInteractions() {
 
     let scrollRaf = null;
     editor.onscroll = () => {
+      if (!state.playbackFollowPending && (state.seekForcedRange || state.seekResumePending)) {
+        resetSeekWarmupState();
+        state.playbackFollowPending = false;
+        syncStatusMessageNodes();
+      }
       state.editorScrollTop = Number(editor.scrollTop || 0);
       if (scrollRaf) return;
       scrollRaf = window.requestAnimationFrame(() => {

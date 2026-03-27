@@ -258,3 +258,12 @@
 - Entscheidung: Seek-Warmup-Pending gilt jetzt fuer Playing und Paused gleich; Finalisierung erfolgt bei Warmup-Ready oder Deadline-Timeout, Playback-Resume jedoch nur wenn zuvor tatsaechlich gespielt wurde.
 - Entscheidung: automatische Playback-Nachfuehrung nutzt im Follow-Pfad unmittelbares Zentrieren (kein smooth), um bei kurzen Segmenten/haeufigen Updates Drift aus dem Sichtfenster zu vermeiden.
 - Sicherheitsbewertung: keine neuen externen Schnittstellen, keine AuthN/AuthZ-Aenderung, keine Erweiterung sensibler Datenfluesse.
+## 2026-03-27 - Virtual-Window Scrollbar-Verhalten entkoppelt von Selection-Pinning
+- Entscheidung: Virtual-Range wird nur noch im Playback-Follow explizit an einen bevorzugten Index gepinnt; manueller Scroll bleibt source of truth.
+- Entscheidung: User-Scroll bricht stale Seek-Warmup-States kontrolliert ab (reset forced range), um leere Fenster bei Slider-Spruengen zu verhindern.
+- Sicherheitsbewertung: rein frontendspezifische Renderlogik, keine neuen Daten- oder Auth-Grenzen.
+## 2026-03-27 - Adaptive Windowing basierend auf Segmentumfang
+- Entscheidung: Rendering-Fenster wird dynamisch aus der Segmentmenge abgeleitet (<=300 full, <=600: 450, <=1200: 300, <=3000: 240, sonst 180).
+- Entscheidung: Sowohl normale Scroll-Range als auch Seek-forced-Range werden auf die adaptive Zielgroesse erweitert, damit Fenster-Spruenge weniger Nachladeartefakte zeigen.
+- Begruendung: erreicht den gemessenen UX-Sweet-Spot fuer Interaktivitaet bei gleichzeitig kontrollierter DOM-/Layout-Last.
+- Sicherheitsbewertung: keine neuen externen APIs, keine Aenderung von AuthN/AuthZ oder Tenant-Isolation.

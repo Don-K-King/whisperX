@@ -324,3 +324,11 @@
 - Seek-Warmup wird jetzt auch im pausierten Zustand deterministisch finalisiert (Ready oder Timeout), damit das Fenster nicht in inkonsistenten Zwischenzustaenden verbleibt.
 - Autofokus-Drift waehrend Playback reduziert: automatische Zentrierung im Follow-Pfad nutzt direktes Scrollen statt weicher Animation, damit der aktive Block stabil im Sichtbereich bleibt.
 - Seek-/Playback-Follow bleibt performant: Virtualisierung bleibt aktiv, aber Follow-Renders verarbeiten immer das neueste Ziel konsistent.
+## 2026-03-27 (Scrollbar-Seek im Editor: Empty-Window Fix)
+- Virtual-Window-Pinning auf ausgewaehlte Segmente wird beim manuellen Scrollen nicht mehr erzwungen; das Renderfenster folgt wieder der echten Scrollposition.
+- Damit werden leere Blockbereiche beim Springen mit der Editor-Scrollbar verhindert.
+- Bei manuellem Scrollen wird ein aktiver Seek-Warmup-Zwischenzustand sauber beendet, damit keine stale forced ranges das Rendering blockieren.
+## 2026-03-27 (Adaptive Virtual-Window Strategie)
+- Virtualisierung im Korrekturmodus nutzt jetzt adaptive Fenstergroessen statt statischem Verhalten.
+- Profile umgesetzt: bis 300 Segmente voll rendern, bis 600 Segmente grosses Arbeitsfenster (450), darueber adaptive Fenster (300/240/180 je nach Segmentmenge).
+- Ziel: fuer kleine/mittlere Medien deutlich weniger Nachlade-Wahrnehmung bei Scroll-/Seek-Spruengen, ohne den Main-Thread bei sehr grossen Transkripten zu ueberlasten.

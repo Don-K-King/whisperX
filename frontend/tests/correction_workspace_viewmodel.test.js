@@ -14,6 +14,9 @@ import {
   resolveSelectedSegmentId,
   resolveGapSeekTargetIndex,
   resolveVirtualWindowPreferredIndex,
+  resolveVirtualWindowPinnedIndex,
+  resolveAdaptiveWindowSize,
+  resolveAdaptiveVirtualRange,
   resolvePlaybackFollowDecision,
   resolveSeekWarmupRange,
   resolveSeekWarmupReadiness,
@@ -330,6 +333,63 @@ test('resolveVirtualWindowPreferredIndex falls back to selected when playback an
     preferPlaybackAnchor: false,
   });
   assert.equal(preferred, 12);
+});
+
+test('resolveVirtualWindowPinnedIndex does not pin for manual scroll context', () => {
+  const pinned = resolveVirtualWindowPinnedIndex({
+    preferredIndex: 12,
+    preferPlaybackAnchor: false,
+  });
+  assert.equal(pinned, -1);
+});
+
+test('resolveVirtualWindowPinnedIndex pins to preferred index while playback-follow is active', () => {
+  const pinned = resolveVirtualWindowPinnedIndex({
+    preferredIndex: 240,
+    preferPlaybackAnchor: true,
+  });
+  assert.equal(pinned, 240);
+});
+
+test('resolveAdaptiveWindowSize applies profile thresholds', () => {
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 240 }), 240);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 300 }), 300);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 450 }), 450);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 600 }), 450);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 601 }), 300);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 1800 }), 240);
+  assert.equal(resolveAdaptiveWindowSize({ totalSegments: 6000 }), 180);
+});
+
+test('resolveAdaptiveVirtualRange expands to target around anchor', () => {
+  const range = resolveAdaptiveVirtualRange({
+    totalSegments: 1200,
+    start: 120,
+    end: 150,
+    targetWindowSize: 300,
+    anchorIndex: 138,
+  });
+  assert.equal(range.end - range.start, 300);
+  assert.equal(range.start <= 138 && range.end > 138, true);
+});
+
+test('resolveAdaptiveVirtualRange clamps at transcript start and end', () => {
+  const atStart = resolveAdaptiveVirtualRange({
+    totalSegments: 600,
+    start: 0,
+    end: 20,
+    targetWindowSize: 450,
+    anchorIndex: 5,
+  });
+  const atEnd = resolveAdaptiveVirtualRange({
+    totalSegments: 600,
+    start: 580,
+    end: 600,
+    targetWindowSize: 450,
+    anchorIndex: 598,
+  });
+  assert.deepEqual(atStart, { start: 0, end: 450 });
+  assert.deepEqual(atEnd, { start: 150, end: 600 });
 });
 
 test('resolvePlaybackFollowDecision requests a window shift when active block is outside range', () => {
