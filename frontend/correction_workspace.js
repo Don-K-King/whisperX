@@ -13,6 +13,7 @@ import {
   parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
   parseSidebarVisibility,
+  resolveCorrectionBootstrapFeedback,
   resolveExportMenuState,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
@@ -62,6 +63,9 @@ const state = {
   closePromptVisible: false,
   mediaSource: null,
   mediaLoadError: '',
+  isBootstrapping: true,
+  bootstrapPhase: 'boot',
+  bootstrapError: '',
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
   autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
@@ -74,6 +78,7 @@ const state = {
 let exportMenuDismissHandler = null;
 let exportMenuEscapeHandler = null;
 let exportMenuFocusHandler = null;
+let cachedBootstrapPayload = null;
 
 function applyExportMenuEvent(event) {
   const nextState = resolveExportMenuState(
@@ -128,6 +133,9 @@ function syncExportMenuListeners() {
 }
 
 function getBootstrap() {
+  if (cachedBootstrapPayload) {
+    return cachedBootstrapPayload;
+  }
   const params = new URLSearchParams(window.location.search);
   const handoff = String(params.get('handoff') || '').trim();
   if (!handoff) {
@@ -137,7 +145,8 @@ function getBootstrap() {
   if (!payload) {
     return null;
   }
-  return payload;
+  cachedBootstrapPayload = payload;
+  return cachedBootstrapPayload;
 }
 
 async function callApi(path, options = {}) {
@@ -646,9 +655,62 @@ function renderEditorBlocks() {
   }).join('');
 }
 
+function renderBootstrapScreen() {
+  const app = document.getElementById('correction-app');
+  if (!app) return;
+  const feedback = resolveCorrectionBootstrapFeedback({ phase: state.bootstrapPhase });
+  const hasError = Boolean(String(state.bootstrapError || '').trim());
+  const steps = feedback.steps.map((step) => `
+    <li class="cw-loading-step cw-loading-step--${escapeHtml(step.status)}">
+      <span class="cw-loading-step-dot" aria-hidden="true"></span>
+      <span>${escapeHtml(step.label)}</span>
+    </li>
+  `).join('');
+  app.innerHTML = `
+    <section
+      class="cw-loading-root"
+      role="status"
+      aria-live="polite"
+      aria-busy="${hasError ? 'false' : 'true'}"
+      aria-label="Korrekturmodus wird geladen"
+    >
+      <article class="cw-loading-card">
+        <div class="cw-loading-header">
+          <span class="cw-loading-spinner" aria-hidden="true"></span>
+          <div>
+            <h1>${escapeHtml(feedback.title)}</h1>
+            <p class="cw-status">${escapeHtml(feedback.detail)}</p>
+          </div>
+        </div>
+        <ol class="cw-loading-steps">${steps}</ol>
+        ${hasError ? `
+          <p class="error">Korrekturmodus konnte nicht geladen werden: ${escapeHtml(state.bootstrapError)}</p>
+          <div class="cw-row">
+            <button id="cw-bootstrap-retry" class="primary" type="button">Erneut versuchen</button>
+          </div>
+        ` : ''}
+      </article>
+    </section>
+  `;
+  if (hasError) {
+    const retryButton = document.getElementById('cw-bootstrap-retry');
+    if (retryButton) {
+      retryButton.onclick = () => {
+        retryButton.disabled = true;
+        state.bootstrapError = '';
+        void init();
+      };
+    }
+  }
+}
+
 function render() {
   const app = document.getElementById('correction-app');
   if (!app) return;
+  if (state.isBootstrapping) {
+    renderBootstrapScreen();
+    return;
+  }
   const mediaSnapshot = captureMediaPlaybackState();
   const speakerOptions = getSpeakerOptions()
     .map((entry) => `<option value="${escapeHtml(entry.key)}">${escapeHtml(entry.label)}</option>`)
@@ -1458,6 +1520,9 @@ async function init() {
   state.token = String(bootstrap.token);
   state.jobId = String(bootstrap.jobId);
   state.tenantId = String(bootstrap.tenantId || '');
+  state.isBootstrapping = true;
+  state.bootstrapError = '';
+  state.bootstrapPhase = 'boot';
   const bootstrapTheme = String(bootstrap.theme || '').trim();
   let storedTheme = 'light';
   try {
@@ -1467,8 +1532,11 @@ async function init() {
   }
   const persistedTheme = bootstrapTheme || storedTheme;
   setTheme(persistedTheme === 'dark' ? 'dark' : 'light');
+  render();
 
   try {
+    state.bootstrapPhase = 'media';
+    render();
     try {
       state.mediaSource = await callApi(`/api/v1/jobs/${state.jobId}/media-source`);
       state.mediaLoadError = '';
@@ -1477,11 +1545,15 @@ async function init() {
       state.mediaLoadError = `Medienquelle konnte nicht geladen werden: ${mediaError.message}`;
     }
 
+    state.bootstrapPhase = 'transcript';
+    render();
     const transcript = await callApi(`/api/v1/jobs/${state.jobId}/transcript`);
     state.baseVersion = Number(transcript.version ?? 1);
     state.reviewStatus = String(transcript.review_status ?? 'in_review');
     state.isFinal = Boolean(transcript.is_final ?? false);
 
+    state.bootstrapPhase = 'session';
+    render();
     const session = await callApi(`/api/v1/jobs/${state.jobId}/transcript/correction-sessions`, {
       method: 'POST',
       body: JSON.stringify({
@@ -1493,10 +1565,14 @@ async function init() {
 
     patchStateFromSession(session);
     clearUnsavedChanges();
+    state.isBootstrapping = false;
+    state.bootstrapError = '';
     setStatus('Korrektursitzung gestartet');
     render();
   } catch (error) {
-    app.innerHTML = `<p class="error">Korrekturmodus konnte nicht geladen werden: ${escapeHtml(error.message)}</p>`;
+    state.isBootstrapping = true;
+    state.bootstrapError = String(error?.message || 'unknown_error');
+    render();
   }
 }
 

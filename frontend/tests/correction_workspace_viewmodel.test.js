@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildSpeakerDisplayLabel,
   buildSpeakerOptionEntries,
+  resolveCorrectionBootstrapFeedback,
   deriveMarkedTextRange,
   parseAutoSeekSelectionEnabled,
   parseSidebarSectionState,
@@ -277,4 +278,28 @@ test('resolveSelectedSegmentId falls back to first segment when previous is miss
   });
   assert.equal(selected, 'seg_1');
   assert.equal(resolveSelectedSegmentId({ previousSegmentId: 'seg_99', segments: [] }), null);
+});
+
+test('resolveCorrectionBootstrapFeedback exposes phase message and processing steps', () => {
+  const feedback = resolveCorrectionBootstrapFeedback({ phase: 'transcript' });
+
+  assert.equal(feedback.title, 'Transcript mit Media wird geladen');
+  assert.equal(feedback.detail, 'Transcript wird geladen...');
+  assert.deepEqual(feedback.steps.map((step) => step.status), [
+    'done',
+    'done',
+    'active',
+    'pending',
+  ]);
+});
+
+test('resolveCorrectionBootstrapFeedback falls back to boot phase for unknown values', () => {
+  const feedback = resolveCorrectionBootstrapFeedback({ phase: 'unknown' });
+  assert.equal(feedback.detail, 'Korrekturmodus wird vorbereitet...');
+  assert.deepEqual(feedback.steps.map((step) => step.status), [
+    'active',
+    'pending',
+    'pending',
+    'pending',
+  ]);
 });

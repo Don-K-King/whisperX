@@ -291,3 +291,8 @@
 ## 2026-03-26 (Block-Fokus Hervorhebung)
 - Fokusdarstellung der Transcript-Bloecke deutlich verstaerkt: aktive/selektierte Bloecke erhalten klarere Akzentfarbe, staerkere Outline und sichtbareren Left-Accent.
 - Kombinierter Zustand `active + selected` wurde explizit gehaertet, damit der aktuelle Media-Block waehrend Playback eindeutig erkennbar bleibt.
+
+## 2026-03-27
+- Korrekturmodus zeigt beim Oeffnen jetzt sofort einen Bootstrap-Ladebildschirm statt eines leeren Tabs.
+- Neues Feedback im Ladezustand: Titel Transcript mit Media wird geladen, Spinner sowie sichtbare Processing-Schritte (Arbeitsbereich, Media, Transcript, Session).
+- Ladefehler im Bootstrap-Pfad werden im selben Screen angezeigt und koennen direkt per Erneut versuchen erneut gestartet werden.

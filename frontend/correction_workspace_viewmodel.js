@@ -5,6 +5,13 @@ export const SIDEBAR_SECTION_IDS = Object.freeze([
   'changeLog',
 ]);
 
+const CORRECTION_BOOTSTRAP_PHASES = Object.freeze([
+  Object.freeze({ id: 'boot', label: 'Arbeitsbereich vorbereiten', detail: 'Korrekturmodus wird vorbereitet...' }),
+  Object.freeze({ id: 'media', label: 'Media laden', detail: 'Media wird geladen...' }),
+  Object.freeze({ id: 'transcript', label: 'Transcript laden', detail: 'Transcript wird geladen...' }),
+  Object.freeze({ id: 'session', label: 'Session starten', detail: 'Korrektursitzung wird gestartet...' }),
+]);
+
 const SPEAKER_TINT_NEUTRAL = Object.freeze({ r: 120, g: 128, b: 142 });
 const SPEAKER_TINT_PALETTE = Object.freeze([
   Object.freeze({ r: 70, g: 125, b: 193 }),
@@ -179,4 +186,21 @@ export function resolveSelectedSegmentId({ previousSegmentId = '', segments = []
   const splitCandidate = segmentIds.find((segmentId) => segmentId.startsWith(splitPrefix));
   if (splitCandidate) return splitCandidate;
   return segmentIds[0] || null;
+}
+
+export function resolveCorrectionBootstrapFeedback({ phase = 'boot' } = {}) {
+  const normalizedPhase = String(phase ?? '').trim().toLowerCase();
+  const phaseIndex = CORRECTION_BOOTSTRAP_PHASES.findIndex((entry) => entry.id === normalizedPhase);
+  const activeIndex = phaseIndex >= 0 ? phaseIndex : 0;
+  const activePhase = CORRECTION_BOOTSTRAP_PHASES[activeIndex];
+
+  return {
+    title: 'Transcript mit Media wird geladen',
+    detail: activePhase.detail,
+    steps: CORRECTION_BOOTSTRAP_PHASES.map((entry, index) => ({
+      id: entry.id,
+      label: entry.label,
+      status: index < activeIndex ? 'done' : (index === activeIndex ? 'active' : 'pending'),
+    })),
+  };
 }
