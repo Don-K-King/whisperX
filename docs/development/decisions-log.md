@@ -267,3 +267,21 @@
 - Entscheidung: Sowohl normale Scroll-Range als auch Seek-forced-Range werden auf die adaptive Zielgroesse erweitert, damit Fenster-Spruenge weniger Nachladeartefakte zeigen.
 - Begruendung: erreicht den gemessenen UX-Sweet-Spot fuer Interaktivitaet bei gleichzeitig kontrollierter DOM-/Layout-Last.
 - Sicherheitsbewertung: keine neuen externen APIs, keine Aenderung von AuthN/AuthZ oder Tenant-Isolation.
+
+## 2026-03-27 - Adaptive Progress-Interpolation (Dashboard + Jobdetail)
+- Entscheidung: Fortschritt vom Backend bleibt Source of Truth; die UI interpoliert nur zwischen bekannten Milestones fuer bessere Aktivitaetswahrnehmung.
+- Entscheidung: Interpolation ist strikt monoton und milestone-begrenzt (kein Rueckwaertslauf, kein vorzeitiges 100% vor terminalem Status).
+- Entscheidung: Interpolation stoppt bei Polling-Fehlern/stale Daten und bei terminalen Status sofort.
+- Entscheidung: ETA bleibt bewusst heuristisch (Dateigroesse-basiert mit Fallback), um Komplexitaet niedrig zu halten.
+- Sicherheitsbewertung: keine API-/AuthN-/AuthZ-Aenderung, rein frontendspezifisches Anzeigeverhalten.
+
+## 2026-03-27 - Progress-Heartbeat bei unveraenderten Poll-Snapshots
+- Entscheidung: Poll-Antworten gelten als Freshness-Signal, auch wenn `status/progress` unveraendert sind.
+- Umsetzung: `lastServerTimestamp` wird bei frischen Server-Snapshots aktualisiert, ohne `phaseStartMs` zu resetten.
+- Effekt: kein fruehes Einfrieren der UI-Interpolation in langen `processing`-Phasen; Milestone-Clamping bleibt erhalten.
+- Sicherheitsbewertung: reine Frontend-Anzeigelogik, keine Aenderung von AuthN/AuthZ/API-Contracts.
+
+## 2026-03-27 - UI-Progress-Cap fuer lange Processing-Phasen angepasst
+- Entscheidung: `processing` darf UI-seitig bis 99% interpolieren (statt indirekt bei 59% zu stoppen), um Abbruch-Eindruck zu vermeiden.
+- Entscheidung: Interpolationsdauer nutzt hohe Obergrenze, um verfruehtes Auflaufen auf 99% zu vermeiden.
+- Sicherheitsbewertung: reine Frontend-Darstellung, keine API-/Auth-Aenderung.

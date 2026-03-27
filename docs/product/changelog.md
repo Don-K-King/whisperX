@@ -332,3 +332,20 @@
 - Virtualisierung im Korrekturmodus nutzt jetzt adaptive Fenstergroessen statt statischem Verhalten.
 - Profile umgesetzt: bis 300 Segmente voll rendern, bis 600 Segmente grosses Arbeitsfenster (450), darueber adaptive Fenster (300/240/180 je nach Segmentmenge).
 - Ziel: fuer kleine/mittlere Medien deutlich weniger Nachlade-Wahrnehmung bei Scroll-/Seek-Spruengen, ohne den Main-Thread bei sehr grossen Transkripten zu ueberlasten.
+
+## 2026-03-27 (Dashboard/Jobdetail: aktiver Progress-Balken)
+- Dashboard- und Jobdetail-Fortschrittsanzeige vereinheitlicht: beide Views nutzen nun dieselbe zentrale Progress-Interpolation als UI-Schicht auf den bestehenden Server-Milestones.
+- Sichtbarer Zwischenfortschritt zwischen seltenen Backend-Updates eingefuehrt (monoton, ohne Rueckschritte, mit hartem Clamping am naechsten Milestone).
+- Terminale Status (`completed`, `failed_terminal`, `canceled`, `deleted`) beenden die Interpolation sofort und zeigen den finalen Serverwert.
+- ETA-Anzeige als leichte Heuristik ergaenzt (`ca. x min verbleibend`), mit Fallback bei fehlender Dateigroesse.
+- Robustheit gehaertet: bei Polling-Fehlern wird die Interpolation gestoppt; bei erfolgreichem Poll synchronisiert die Anzeige wieder auf den Serverzustand.
+
+## 2026-03-27 (Progress Freeze Fix: Jobdetail + Dashboard konsistent)
+- Fehlerbehebung fuer eingefrorenen Interpolationsfortschritt im Jobdetail (typisch bei ~28%): erfolgreiche Poll-Snapshots setzen jetzt einen Freshness-Heartbeat, auch wenn `status/progress` unveraendert bleiben.
+- Dadurch bleibt die Interpolation zwischen Milestones aktiv, statt nach der Stale-Grenze frueh zu stoppen.
+- Dashboard und Jobdetail nutzen denselben Heartbeat-Mechanismus und bleiben beim Wechsel zwischen Ansichten kongruent.
+
+## 2026-03-27 (Progresskurve >59% ohne fruehes 99%-Kleben)
+- Interpolations-Cap fuer `processing` auf UI-seitig bis max. 99% erweitert, damit der Balken nicht bei 59% stehenbleibt.
+- Zeitkurve verlangsamt: interne Phasendauer nutzt jetzt groessere Obergrenze, damit lange Jobs nicht schon nach kurzer Zeit auf 99% laufen.
+- Ergebnis: sichtbarer Fortschritt ueber 59% hinaus, ohne 100% vor `completed`.

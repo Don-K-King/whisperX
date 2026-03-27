@@ -383,3 +383,33 @@
 - Ergebnis (Unit): Gruen, 46/46 Tests.
 - Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
 - Ergebnis (Frontend Regression): Gruen, 91/91 Tests.
+
+## 2026-03-27 - Regression Adaptive Progress-UI (Dashboard + Jobdetail)
+- Anlass: sichtbarer Zwischenfortschritt zwischen Milestones ohne Backend-Contract-Aenderung.
+- Ausgefuehrt (Syntax): `node --check frontend/utils.js`, `node --check frontend/app.js`.
+- Ergebnis (Syntax): Gruen.
+- Ausgefuehrt (Unit): `node --test frontend/tests/utils.test.js`.
+- Ergebnis (Unit): Gruen, 20/20 Tests.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 97/97 Tests.
+- UI-Screenshot-Nachweis: in dieser Umgebung nicht automatisiert durchgefuehrt (kein passender Dashboard/Jobdetail Capture-Runner vorhanden).
+
+## 2026-03-27 - Regression Progress Freeze (Jobdetail bei ~28%)
+- Anlass: Jobdetail-Interpolation stoppte in langen `processing`-Phasen trotz erfolgreicher Poll-Responses frueh.
+- Log-Analyse: wiederholte `GET /api/v1/jobs/{id}` mit `200` alle ~5s, gleichzeitig UI-Stillstand => Freshness-Timestamp wurde nicht aktualisiert.
+- Root Cause: Interpolations-Stale-Check basierte auf `lastServerTimestamp`, der nur bei geaendertem `status/progress` erneuert wurde.
+- Ausgefuehrt (Syntax): `node --check frontend/utils.js`, `node --check frontend/app.js`.
+- Ergebnis (Syntax): Gruen.
+- Ausgefuehrt (Unit): `node --test frontend/tests/utils.test.js`.
+- Ergebnis (Unit): Gruen, 21/21 Tests.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 98/98 Tests.
+- Zusatzverifikation (Simulation): konstantes Server-Progress `20%` mit frischen Poll-Snapshots zeigt Anstieg bis Milestone-Cap (`59%`) statt Freeze bei ~28%.
+
+## 2026-03-27 - Regression Progresskurve >59% (kein 59%-Freeze, kein fruehes 99%)
+- Anlass: nach erstem Freeze-Fix blieb Anzeige nicht mehr bei 59%, lief aber in Tests zu schnell auf 99%.
+- Ausgefuehrt (Simulation): konstantes `processing` mit frischen Poll-Snapshots; Verlauf validiert (z. B. 60s=28, 300s=64, 420s=82).
+- Ausgefuehrt (Unit): `node --test frontend/tests/utils.test.js`.
+- Ergebnis (Unit): Gruen, 21/21.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 98/98.

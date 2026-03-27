@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   buildCompleteUploadPayload,
   deriveProgress,
+  estimateTranscriptionDurationMs,
   jobActionsForStatus,
   mapTranscriptToSpeakerAliases,
   mapTranscriptToSpeakerBlocks,
   mapTranscriptToSpeakerRows,
   nextPollingIntervalMs,
   parseToken,
+  resolveDisplayedProgress,
   sanitizedError,
   sha256HexFromArrayBuffer,
   uploadFileToPresignedUrl,
@@ -130,6 +132,111 @@ test('deriveProgress uses milestone defaults when API omits progress', () => {
   assert.equal(deriveProgress({ status: 'processing' }), 20);
   assert.equal(deriveProgress({ status: 'cancel_requested' }), 20);
   assert.equal(deriveProgress({ status: 'completed' }), 100);
+});
+
+test('resolveDisplayedProgress interpolates monotonically between server updates', () => {
+  const initial = resolveDisplayedProgress({
+    job: { job_id: 'job-1', status: 'processing', progress: 20 },
+    nowMs: 0,
+  });
+  const second = resolveDisplayedProgress({
+    job: { job_id: 'job-1', status: 'processing', progress: 20 },
+    previousState: initial.state,
+    nowMs: 6000,
+  });
+
+  assert.equal(initial.displayProgress, 20);
+  assert.ok(second.displayProgress >= initial.displayProgress);
+  assert.ok(second.displayProgress <= 99);
+});
+
+test('resolveDisplayedProgress can advance beyond 59 in long processing phases but never reaches 100 before terminal', () => {
+  let current = resolveDisplayedProgress({
+    job: { job_id: 'job-2', status: 'processing', progress: 20 },
+    nowMs: 0,
+    hasFreshServerSnapshot: true,
+  });
+
+  for (let nowMs = 5000; nowMs <= 360000; nowMs += 5000) {
+    current = resolveDisplayedProgress({
+      job: { job_id: 'job-2', status: 'processing', progress: 20 },
+      previousState: current.state,
+      nowMs,
+      hasFreshServerSnapshot: true,
+    });
+  }
+
+  assert.ok(current.displayProgress > 59);
+  assert.ok(current.displayProgress <= 99);
+});
+
+test('resolveDisplayedProgress does not move backwards on delayed lower server progress', () => {
+  const high = resolveDisplayedProgress({
+    job: { job_id: 'job-3', status: 'processing', progress: 60 },
+    nowMs: 2000,
+  });
+  const delayedLower = resolveDisplayedProgress({
+    job: { job_id: 'job-3', status: 'processing', progress: 20 },
+    previousState: high.state,
+    nowMs: 4000,
+  });
+
+  assert.ok(delayedLower.displayProgress >= 60);
+  assert.ok(delayedLower.state.lastServerProgress >= 60);
+});
+
+test('resolveDisplayedProgress stops interpolation for stale server updates', () => {
+  const initial = resolveDisplayedProgress({
+    job: { job_id: 'job-4', status: 'processing', progress: 20 },
+    nowMs: 0,
+  });
+  const stale = resolveDisplayedProgress({
+    job: { job_id: 'job-4', status: 'processing', progress: 20 },
+    previousState: initial.state,
+    nowMs: 70000,
+  });
+
+  assert.equal(stale.displayProgress, 20);
+});
+
+test('resolveDisplayedProgress keeps interpolating when fresh server snapshots keep arriving', () => {
+  let current = resolveDisplayedProgress({
+    job: { job_id: 'job-4b', status: 'processing', progress: 20 },
+    nowMs: 0,
+    hasFreshServerSnapshot: true,
+  });
+
+  for (let nowMs = 5000; nowMs <= 70000; nowMs += 5000) {
+    current = resolveDisplayedProgress({
+      job: { job_id: 'job-4b', status: 'processing', progress: 20 },
+      previousState: current.state,
+      nowMs,
+      hasFreshServerSnapshot: true,
+    });
+  }
+
+  assert.ok(current.displayProgress > 20);
+  assert.ok(current.displayProgress <= 99);
+});
+
+test('resolveDisplayedProgress terminal status snaps to final progress and zero eta', () => {
+  const previous = resolveDisplayedProgress({
+    job: { job_id: 'job-5', status: 'processing', progress: 62 },
+    nowMs: 1000,
+  });
+  const terminal = resolveDisplayedProgress({
+    job: { job_id: 'job-5', status: 'completed', progress: 100 },
+    previousState: previous.state,
+    nowMs: 3000,
+  });
+
+  assert.equal(terminal.displayProgress, 100);
+  assert.equal(terminal.etaSeconds, 0);
+});
+
+test('estimateTranscriptionDurationMs uses fallback defaults when media size is missing', () => {
+  assert.equal(estimateTranscriptionDurationMs({ status: 'queued' }), 120000);
+  assert.equal(estimateTranscriptionDurationMs({ status: 'processing' }), 540000);
 });
 
 test('jobActionsForStatus returns status-dependent lifecycle actions', () => {
