@@ -273,7 +273,9 @@ Fehlerpfade:
 - `POST /api/v1/jobs/{id}/cancel`:
   - `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
   - `canceled` ist terminal
-- `DELETE /api/v1/jobs/{id}` bleibt unveraendert, weiterhin konflikthaft fuer aktive Zustandsgruppen.
+- `DELETE /api/v1/jobs/{id}` ist Force-Soft-Delete aus allen nicht-`deleted` Status.
+- Delete entfernt pending Outbox-Events und interne Job-Reste (Checkpoint/Worker-Artefakt/Transcript-Versionen), um Re-Queue aus Altzustand zu verhindern.
+- `deleted` ist terminal.
 
 ### Erweiterte Zustandsmaschine
 - Kontrollzustand fuer kooperatives Pausieren: `pause_requested`.

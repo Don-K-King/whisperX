@@ -1,120 +1,140 @@
 # Regression Log
 
 ## Hinweise
-- Für reine Dokumentationsänderungen sind keine Regressionstests erforderlich.
-- Bei Änderungen an Pipeline, Build, Architektur oder Mandantenmodell ist die vollständige Regression verpflichtend.
+- Fuer reine Dokumentationsaenderungen sind keine Regressionstests erforderlich.
+- Bei Aenderungen an Pipeline, Build, Architektur oder Mandantenmodell ist die vollstaendige Regression verpflichtend.
 
-## Letzte Änderungen
+## 2026-03-27 - UI Governance Snapshot
+- Screenshot-Governance ist verbindlich fuer UI-Aenderungen: Artefakte liegen unter `docs/testing/screenshots/` und folgen dem Schema `<screen>-<state>.png`.
+- Verfuegbare Nachweise in diesem Workspace:
+  - `correction-shell-default.png`
+  - `correction-shell-responsive.png`
+  - `correction-editor-validation-error.png`
+  - `new-job-language-default.png`
+  - `new-job-language-responsive.png`
+  - `transcription-settings-default.png`
+  - `transcription-settings-responsive.png`
+  - `transcription-settings-validation-error.png`
+- Aktuelle UI-Aenderungen mit Nachweispflicht:
+  - Korrekturmodus Bootstrap, Windowing, Seek/Warmup und Autofokus-Follow.
+  - Dashboard/Jobdetail Progress-UI mit Interpolation und Heartbeat.
+  - Korrekturmodus-Editor mit Delta-Operationen und Event-Delegation.
+- Status:
+  - Korrekturmodus-Nachweise sind fuer die vorhandenen Screenshots dokumentiert.
+  - Fuer Dashboard/Jobdetail existieren in `docs/testing/screenshots/` derzeit keine separaten Screenshot-Artefakte; das ist als Ausnahme im PR oder im naechsten UI-Nachweis zu schliessen.
+  - Die eigentliche Rollentrennung der Testdoku steht in `docs/testing/test-strategy.md` und `docs/testing/test-matrix.md`; dieses Log fuehrt die Evidenz.
+
+## Letzte Aenderungen
 - 2026-03-27: Korrekturmodus-Performance-Refactor (Virtualisierung/Event-Delegation/Delta-Operationen) implementiert.
   - Ausgefuehrt: node --test frontend/tests/*.test.js (69/69 gruen).
   - Nicht ausfuehrbar in dieser Umgebung: Python-Regression (python/py/uv nicht verfuegbar im PATH).
   - Offenes Risiko: Backend-Tests fuer neue update_text-/return_mode-Pfade muessen in CI bzw. Python-Runtime nachgezogen werden.
-- 2026-03-06: Teststrategie um Edge-/Abuse-Tests pro Entwicklungsschritt erweitert (Dokumentationsänderung, keine Codepfade geändert, daher keine Regression ausgeführt).
-- 2026-03-06: Spezifikationsfreeze v1 (fachlich/API/Event/Datenmodell/Security/Test) dokumentiert; keine Implementierungsänderung, daher keine Runtime-Regression ausgeführt.
+- 2026-03-06: Teststrategie um Edge-/Abuse-Tests pro Entwicklungsschritt erweitert (DokumentationsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung, keine Codepfade geÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ndert, daher keine Regression ausgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt).
+- 2026-03-06: Spezifikationsfreeze v1 (fachlich/API/Event/Datenmodell/Security/Test) dokumentiert; keine ImplementierungsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung, daher keine Runtime-Regression ausgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt.
 
 
-## Vorlage Regressionseintrag (verbindlich für pflichtige Regressionen)
+## Vorlage Regressionseintrag (verbindlich fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r pflichtige Regressionen)
 - Datum/Zeit:
 - Release-Kandidat / Commit SHA:
-- Betroffener Änderungstyp (Pipeline/Build/Architektur/Struktur):
+- Betroffener ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾nderungstyp (Pipeline/Build/Architektur/Struktur):
 - Testumgebung (Versionen + Container-Digests):
-- Ausgeführte Gate-Stufen:
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrte Gate-Stufen:
 - Ergebnis je Gate:
 - Offene Risiken / Abweichungen:
 - Freigabe durch (Rolle/Name):
 
 
-## 2026-03-07 – Regression nach Strukturänderung (Adapter-Layer)
-- Anlass: Einführung neuer Interface-/Infrastrukturmodule (`evodox.web`, `evodox.jobs.infrastructure`).
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 20 Tests, 1 Skip (FastAPI-Integrationstest wegen fehlender Dependency im Offline-Umfeld).
+## 2026-03-07 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach StrukturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (Adapter-Layer)
+- Anlass: EinfÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrung neuer Interface-/Infrastrukturmodule (`evodox.web`, `evodox.jobs.infrastructure`).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 20 Tests, 1 Skip (FastAPI-Integrationstest wegen fehlender Dependency im Offline-Umfeld).
 - Bewertung: Kein regressiver Bruch in bestehender Auth-/Job-Service-Logik festgestellt.
 
 
-## 2026-03-07 – Regression nach WP-3.3 Strukturänderung
+## 2026-03-07 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-3.3 StrukturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung
 - Anlass: neue Module `evodox.jobs.complete_upload_service`, Outbox/Dispatcher in Infrastruktur, HTTP-Endpoint-Erweiterung.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 29 Tests, 1 Skip (FastAPI-Integrationsabhängigkeit).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 29 Tests, 1 Skip (FastAPI-IntegrationsabhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngigkeit).
 - Bewertung: Kein regressiver Bruch in WP-3.1/3.2; WP-3.3 Pfad durch Unit/Integration/Abuse abgesichert.
 
 
-## 2026-03-07 – Regression nach WP-3.4 Read-Pfad-Erweiterung
+## 2026-03-07 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-3.4 Read-Pfad-Erweiterung
 - Anlass: neuer Status-Read-Service und FastAPI-GET-Endpoint.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 34 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 34 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Keine Regression in WP-3.1/3.2/3.3; Read-Pfad tenant-sicher erweitert.
 
 
-## 2026-03-08 – Regression nach WP-4.1 Queue-Governance-Erweiterung
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-4.1 Queue-Governance-Erweiterung
 - Anlass: strukturelle Erweiterung der Queue-Infrastruktur (Retry/DLQ/Fehlerklassifikation/RabbitMQ-Adapter).
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 38 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 38 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: keine Regression in bestehenden WP-3.x-Flows; Queue-Failure-Pfade sind deterministisch abgedeckt.
 
 
-## 2026-03-08 – Regression nach WP-4 Vollständigung (WP-4.2/WP-4.3)
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-4 VollstÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ndigung (WP-4.2/WP-4.3)
 - Anlass: strukturelle Erweiterung um Worker-Pipeline-Service und Fairness/Backpressure-Scheduling.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 44 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 44 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: keine Regression in WP-3.x/WP-4.1; Worker-Fehlerpfade und Fairnessregeln testseitig abgesichert.
 
 
-## 2026-03-08 – Regression nach Schritt-5 Strukturänderung (Transcript/Export Services)
-- Anlass: neue Services und HTTP-Adapter-Pfade für Transcript-Versionierung und Export-Pipeline.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 52 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
-- Bewertung: keine Regression in WP-3/WP-4; Schritt-5 Kernpfade inkl. Konflikt- und Abuse-Fällen abgedeckt.
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach Schritt-5 StrukturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (Transcript/Export Services)
+- Anlass: neue Services und HTTP-Adapter-Pfade fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Transcript-Versionierung und Export-Pipeline.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 52 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
+- Bewertung: keine Regression in WP-3/WP-4; Schritt-5 Kernpfade inkl. Konflikt- und Abuse-FÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤llen abgedeckt.
 
 
-## 2026-03-08 – Regression nach WP-6.1 Strukturänderung (Retention Worker + Adapter)
-- Anlass: neue Retention-Service-Schicht und zusätzliche SQLite-Infrastrukturadapter für tenant-scoped Löschpfade.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 61 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-6.1 StrukturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (Retention Worker + Adapter)
+- Anlass: neue Retention-Service-Schicht und zusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤tzliche SQLite-Infrastrukturadapter fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r tenant-scoped LÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶schpfade.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 61 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: keine Regression in WP-3 bis WP-5; Retention-Entscheidungspfad inkl. Teilfehler-Audits ist testseitig abgedeckt.
 
 
-## 2026-03-08 – Regression nach WP-6.2 Strukturänderung (Restore-Service + Scheduler)
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach WP-6.2 StrukturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (Restore-Service + Scheduler)
 - Anlass: neue Architekturmodule `evodox.jobs.restore_service` und `evodox.jobs.retention_scheduler`.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 67 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 67 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: keine Regression in WP-3 bis WP-6.1; Restore- und Recovery-Pfade sind testseitig isoliert abgesichert.
 
-## 2026-03-08 – Regression nach Architekturänderung (persistente Retention-Scheduler-Infrastruktur)
-- Anlass: neue persistente SQLite-Adapter für Scheduler-Lease und Retry-Recovery-Queue, inkl. Idempotenz-/Index-Governance.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 74 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach ArchitekturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (persistente Retention-Scheduler-Infrastruktur)
+- Anlass: neue persistente SQLite-Adapter fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Scheduler-Lease und Retry-Recovery-Queue, inkl. Idempotenz-/Index-Governance.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 74 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Keine Regression in WP-3 bis WP-6.2; Scheduler-/Recovery-Pfade sind restart- und konkurrenzsicher testseitig abgedeckt.
 
 
-## 2026-03-08 – Regression nach Security-/Orchestrierungsanpassung (invalid Quarantine + Lease-Heartbeat)
-- Anlass: Verhaltensänderung im Scheduler-Recovery-Pfad (`invalid` statt `recovered`) und Lease-Heartbeat-Erweiterung.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 75 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach Security-/Orchestrierungsanpassung (invalid Quarantine + Lease-Heartbeat)
+- Anlass: VerhaltensÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung im Scheduler-Recovery-Pfad (`invalid` statt `recovered`) und Lease-Heartbeat-Erweiterung.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 75 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Keine Regression in bestehenden Servicepfaden; Sicherheits- und Betriebsverhalten ist durch neue Tests abgesichert.
 
 
-## 2026-03-08 – Regression nach Runtime-Orchestrierung (Scheduler-Startprofil)
-- Anlass: neue Runtime-Orchestrierung und fail-fast Konfiguration für Retention-Scheduler.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 78 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach Runtime-Orchestrierung (Scheduler-Startprofil)
+- Anlass: neue Runtime-Orchestrierung und fail-fast Konfiguration fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Retention-Scheduler.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 78 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Kein regressiver Effekt auf bestehende Services; Runtime-Wiring und Config-Guards sind testseitig abgedeckt.
 
-## 2026-03-08 – Regression nach Architekturänderung (dedizierter Retention-Scheduler-Runner)
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach ArchitekturÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung (dedizierter Retention-Scheduler-Runner)
 - Anlass: neues Runtime-Modul `evodox.runtime.retention_scheduler_runner` inkl. fail-fast Entrypoint und Graceful-Shutdown-Orchestrierung.
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 82 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 82 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Keine Regression in bestehenden Servicepfaden; dedizierter Runner-Pfad inkl. Startfehler- und Shutdown-Verhalten ist testseitig abgedeckt.
 
-## 2026-03-08 – Regression nach Runner-Bootstrap-Vervollständigung (produktives Dependency-Wiring)
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach Runner-Bootstrap-VervollstÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ndigung (produktives Dependency-Wiring)
 - Anlass: strukturelle Erweiterung des Runtime-Entrypoints um produktives Bootstrap-Wiring (Retention-Job, Recovery-Executor, Filesystem-Storage, Policy-/Tenant-Konfiguration).
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 87 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
-- Bewertung: Keine Regression in bestehenden Servicepfaden; Runner ist jetzt als ausführbarer Prozess mit fail-fast Bootstrap-Validierung abgesichert.
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 87 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
+- Bewertung: Keine Regression in bestehenden Servicepfaden; Runner ist jetzt als ausfÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrbarer Prozess mit fail-fast Bootstrap-Validierung abgesichert.
 
-## 2026-03-08 – Regression nach Storage-Backend-/Governance-/Preflight-Erweiterung
+## 2026-03-08 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Regression nach Storage-Backend-/Governance-/Preflight-Erweiterung
 - Anlass: strukturelle Erweiterung des Runner-Bootstraps (S3/MinIO-Adapter, versioniertes Recovery-Mapping, Deployment-Preflight).
-- Ausgeführt: `python -m unittest discover -s tests -p 'test_*.py'`.
-- Ergebnis: Grün, 92 Tests, 2 Skips (FastAPI-Dependency-abhängige Integrationstests).
+- AusgefÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hrt: `python -m unittest discover -s tests -p 'test_*.py'`.
+- Ergebnis: GrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼n, 92 Tests, 2 Skips (FastAPI-Dependency-abhÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ngige Integrationstests).
 - Bewertung: Keine Regression in bestehenden Servicepfaden; neuer Backend-/Governance-/Preflight-Pfad ist testseitig abgedeckt.
 
 
@@ -317,7 +337,7 @@
 - Ergebnis (Frontend Regression): Gruen, 69/69 Tests.
 - Ausgefuehrt (Backend gezielte Regression via Docker): `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_transcript_correction_service.TranscriptCorrectionServiceTests.test_update_text_operation_updates_target_segment_and_diff_metadata tests.test_transcript_correction_service.TranscriptCorrectionServiceTests.test_update_text_rejects_empty_text tests.test_transcript_correction_http_adapter.TranscriptCorrectionHttpAdapterTests.test_maps_correction_session_response_changed_segments_mode tests.test_transcript_correction_http_adapter.TranscriptCorrectionHttpAdapterTests.test_maps_correction_session_response_ack_mode tests.test_transcript_correction_fastapi_integration.TranscriptCorrectionFastAPIIntegrationTests.test_correction_session_roundtrip_and_commit tests.test_transcript_correction_fastapi_integration.TranscriptCorrectionFastAPIIntegrationTests.test_correction_operations_ack_mode_with_update_text"`.
 - Ergebnis (Backend gezielte Regression): Gruen, 6/6 Tests.
-- Zusatzlauf (Backend Full-Suite Correction via Docker): 31 Tests, 1 Fehler in Legacy-Migrationspfad (`sqlite3.OperationalError: Cannot add a column with non-constant default` bei `test_legacy_session_open_reseeds_and_removes_additive_drift`); nicht im Scope der Delta-/Virtualisierungsänderung.
+- Zusatzlauf (Backend Full-Suite Correction via Docker): 31 Tests, 1 Fehler in Legacy-Migrationspfad (`sqlite3.OperationalError: Cannot add a column with non-constant default` bei `test_legacy_session_open_reseeds_and_removes_additive_drift`); nicht im Scope der Delta-/VirtualisierungsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤nderung.
 - Screenshot-Nachweis (UI-Pflicht): `node scripts/capture_correction_mode_screenshots.mjs` in dieser Umgebung fehlgeschlagen, weil Modul `playwright` fehlt.
 - Reproduktion Screenshot-Nachweis (sobald Abhaengigkeit installiert): `npm --prefix frontend install` und danach `node scripts/capture_correction_mode_screenshots.mjs`.
 

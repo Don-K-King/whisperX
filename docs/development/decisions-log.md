@@ -164,19 +164,21 @@
 - Grune Gates: Frontend-Utilities/Tests fuer SHA-256 und Presigned-Upload, Python-Regression, Docker-Smoke im lokalen Runtime-Setup.
 - Danach: WhisperX-Worker fuer echte Live-Transkription und Speaker-Diarization als naechster funktionaler Schritt im selben Docker-Vertical-Slice.
 
-## 2026-03-22 - ADR-0014 Local WhisperX Runtime fuer erstes Docker-E2E
+## 2026-03-22 - Local WhisperX Runtime fuer erstes Docker-E2E (historischer Status-Eintrag)
 - Entscheidung: Worker-Mode `whisperx` als naechster Vertical Slice fuer lokale End-to-End-Transkription eingefuehrt, `stub` bleibt fuer deterministische Tests erhalten.
 - Entscheidung: Browser-tauglicher Uploadpfad lokal ueber MinIO Host-Port (`19000`) statt internem Container-Hostnamen, damit Presigned PUT aus dem Frontend funktioniert.
 - Entscheidung: MinIO-Bucket `uploads` wird im Compose-Init-Schritt automatisiert erstellt und fuer lokalen Dev-Betrieb auf `public` gesetzt.
 - Entscheidung: Diarization wird als best-effort ausgefuehrt; bei gated/inkompatiblen Modellfehlern erfolgt automatischer Fallback auf reine Transkription, damit der Job nicht terminal scheitert.
+- Abgrenzung: Die verbindliche Zielbetriebs- und Preflight-Gating-Entscheidung liegt in ADR-0014; dieser Eintrag dokumentiert nur den damaligen lokalen Runtime-Status.
 
-## 2026-03-22 - ADR-0015 Job Lifecycle Controls + Milestone Progress
+## 2026-03-22 - Job Lifecycle Controls + Milestone Progress (historischer Log-Titel, keine separate ADR-Datei)
 - Entscheidung: Job-Lifecycle fuer lokalen/prod-nahen Betrieb um `pause`, `resume` und `delete` erweitert.
 - API-Form festgelegt: `POST /pause`, `POST /resume`, `DELETE /jobs/{id}`.
 - Pause-Strategie bewusst als kooperatives Stop+Resume eingefuehrt (kein Midpoint-Checkpointing in diesem Schritt).
 - Retry-Strategie im Worker konkretisiert: begrenzte Auto-Retries fuer retryable Fehler, danach deterministischer Uebergang nach `failed_terminal`.
 - Progress-Strategie fuer UI/API festgelegt: deterministische Milestones (`5/20/60/90/100`) statt ETA-Schaetzung.
 - Konsequenz: Frontend zeigt Actions statusabhaengig und pollt mit 429-Backoff; Backend liefert konsistente Progress-Werte auch bei fehlendem Raw-Progress.
+- Historische Einordnung: Die Delete-Semantik wurde spaeter auf Force-Soft-Delete konsolidiert, und die UI-Progress-Anzeige wurde 2026-03-27 durch adaptive Interpolation weiterentwickelt. Dieser Eintrag bleibt als Herkunftsstand erhalten.
 
 ## 2026-03-22 - ADR-0016 Midpoint-Checkpointing + terminaler Cancel
 - Entscheidung: Pause/Resume wird auf persistentes Stage+Segment-Checkpointing erweitert (`job_checkpoints`), ASR setzt per `stage_offset` ab letztem Segment fort.
@@ -224,7 +226,7 @@
 - Neue Transcript-Korrekturlogik eingefuehrt: Session-basierter Draft mit `apply/undo/redo/discard/commit` statt sofortiger Versionspersistenz.
 - Autosave semantisch als Draft-Sicherung umgesetzt (keine automatische Versionserzeugung).
 - Transcript-Status erweitert um `review_status` und `is_final` inkl. eigener API und Audit-Events.
-- Timeline-Guards fuer Korrektur-Operationen verankert (keine Overlaps/Luecken, konsistente Segment-IDs).
+- Timeline-Guards fuer Korrektur-Operationen verankert (historisch noch gap-frei formuliert; ADR-0022 praezisiert spaeter auf keine Overlaps bei erlaubten Luecken, konsistente Segment-IDs).
 - Frontend um dedizierten Korrektur-Workspace erweitert (`window.open` ohne In-Tab-Fallback, Suche/Ersetzen, Sprecherumteilung, Audio-Mitfuehrung, Status/Final).
 - Handover-Strategie fuer den Korrekturstart auf kurzlebigen tabuebergreifenden Store umgestellt (single-use, TTL, Cleanup), um `Korrektur-Startdaten fehlen` im neuen Tab zu vermeiden.
 - Neue tenant-scoped Media-Quelle fuer den Workspace eingefuehrt (`GET /api/v1/jobs/{id}/media-source`) fuer automatisches Laden der Ursprungsdatei.
@@ -242,6 +244,7 @@
 - Entscheidung: `set_segments` akzeptiert Luecken, lehnt Overlaps sowie `NaN`/`inf`/negative Zeiten weiterhin strikt ab.
 - Entscheidung: Frontend merged Speaker-Bloecke nur noch bei kontiguierlichen Segmenten; in internen Luecken gibt es bewusst keinen aktiven Block.
 - Referenz: ADR-0022 (`/docs/adr/ADR-0022-korrekturmodus-absolute-timeline-ohne-seed-kompaktierung.md`).
+- Einordnung: Diese Entscheidung praezisiert und ersetzt die zuvor in ADR-0021 formulierte gap-freie Guard-Variante.
 
 ## 2026-03-26 - Legacy-Session-Reseed im Korrekturmodus
 - Entscheidung: Beim Start einer Correction-Session kann per `force_reseed_from_transcript` ein Legacy-Resume-Fall fix-forward auf die aktuelle Transcript-Timeline reseeded werden.
@@ -285,3 +288,9 @@
 - Entscheidung: `processing` darf UI-seitig bis 99% interpolieren (statt indirekt bei 59% zu stoppen), um Abbruch-Eindruck zu vermeiden.
 - Entscheidung: Interpolationsdauer nutzt hohe Obergrenze, um verfruehtes Auflaufen auf 99% zu vermeiden.
 - Sicherheitsbewertung: reine Frontend-Darstellung, keine API-/Auth-Aenderung.
+
+## 2026-03-27 - Dokumentationsgovernance SoT + Archiv
+- Entscheidung: README dient als EvidoX-Einstieg und verweist fuer normative Details auf die thematischen SoT-Dokumente unter `docs/`.
+- Entscheidung: `docs/README.md` ist der zentrale Dokumentations-Navigator mit klarer Trennung von aktiven SoT-Dokumenten und Historie.
+- Entscheidung: Historische Schritt-/Signoff-/Incident-Artefakte bleiben aus Auditgruenden erhalten, werden aber ueber `docs/archive/README.md` als nicht-normativ klassifiziert.
+- Entscheidung: Widerspruechliche Zwischenstaende in historischen Dokumenten gelten nicht als aktive Vertragsquelle; verbindlich sind API-Spec, Data-Model, Security-Controls, ADRs und Runbooks.

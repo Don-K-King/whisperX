@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-27
+- README von WhisperX-Upstream-Einstieg auf EvidoX-Produktuebersicht umgestellt (Nutzen, Architektur, Datenfluss, Lifecycle, Dokumentations-Navigation).
+- Zentrale Dokumentationsnavigation eingefuehrt: `docs/README.md` als Themen- und SoT-Navigator.
+- Dokumentationsgovernance geschaerft: Archivrichtlinie (`docs/archive/README.md`) und klare Trennung zwischen aktiven SoT-Dokumenten und historischen Arbeitspapieren.
+- P0-Doku-Konsistenz aktualisiert: Delete-Semantik, Timeline-Regeln im Korrekturmodus, ADR-Index und Ist-vs-Zielbetrieb-Darstellung vereinheitlicht.
+
 ## 2026-03-26
 - Frontend-Proxy gehaertet: Nginx nutzt jetzt Docker-DNS-Resolver (127.0.0.11) mit dynamischem API-Upstream, damit /api nach API-Container-Recreate automatisch wieder auf die neue Ziel-IP zeigt.
 - Fehlerbild 502 Bad Gateway nach API-Neustart behoben (kein persistentes Stale-Upstream-Mapping mehr im Frontend-Proxy).
@@ -25,7 +31,7 @@
 - Speaker-Diarization im Docker-Zielbetrieb stabilisiert: Legacy-Modell pyannote/speaker-diarization wird auf pyannote/speaker-diarization-community-1 normalisiert.
 - Worker-Defaults und Deploy-Compose-Defaults auf pyannote/speaker-diarization-community-1 angehoben, um diarization_fallback mit UNKNOWN-Only-Transkripten zu vermeiden.
 - Ops-Dokumentation und Beispiel-ENV-Profile auf das Community-Modell aktualisiert.
-
+- Dokumentations-Governance fuer UI- und Operationsaenderungen konsolidiert: README-Overview, Testrollen, Restore-Grenzen und Screenshot-Nachweise sind jetzt zentral verlinkt; Details bleiben in den jeweiligen SoT-Dokumenten.
 ## 2026-03-22
 - Task View zeigt Transcript jetzt in lesbaren Speaker-Bloecken statt als lange Liste einzelner Mikrosegmente.
 - Speaker koennen pro Transcript-Version persistent umbenannt werden, z. B. `SPEAKER_01` -> `Patrick`.
@@ -48,7 +54,7 @@
 - Delete prune't pending Outbox-Events und entfernt interne Checkpoint-/Artefakt-/Transcript-Reste auf Job-Ebene, sodass kein Re-Queue aus Altzustand mehr erfolgt.
 - Worker-Timeout-Policy angepasst: `WORKER_WHISPERX_TIMEOUT_SECONDS=0` bedeutet kein hartes Subprocess-Timeout fuer lange ASR-Laeufe.
 - Worker-Robustheit verschaerft: generische Exceptions gehen nicht mehr in Retry-Schleifen, sondern in terminale Behandlung (DLQ + `failed_terminal`), ausser bei explizit retryable Fehlerpfaden.
-- Laufende WhisperX-Prozesse reagieren jetzt kooperativ auf `pause_requested`, `cancel_requested` und `deleted` (graceful terminate, dann kill fallback), damit Pause/Resume/Cancel/Delete auch bei langen Jobs verlässlich greifen.
+- Laufende WhisperX-Prozesse reagieren jetzt kooperativ auf `pause_requested`, `cancel_requested` und `deleted` (graceful terminate, dann kill fallback), damit Pause/Resume/Cancel/Delete auch bei langen Jobs verlÃ¤sslich greifen.
 - Midpoint-Checkpointing eingefuehrt: Worker persistiert Stage+Segment-Checkpoint (`downloaded`, `asr_started`, `asr_done`, `diarization_done`) und setzt bei Resume ab letztem Segment fort.
 - Neuer terminaler Cancel-Endpunkt eingefuehrt: `POST /api/v1/jobs/{id}/cancel`.
 - Statusmodell erweitert um `cancel_requested -> canceled`; `resume` auf `canceled` liefert konsistent `409 job.resume.invalid_state`.
@@ -74,95 +80,95 @@
 - Lokaler E2E-Nachweis erfolgt: Job-Upload via Presigned PUT, Worker-Verarbeitung und Transcript-Abruf erfolgreich getestet.
 
 ## 2026-03-06
-- Architektur präzisiert: Multi-Tenant, On-Prem Docker, RabbitMQ/Celery Skalierungsstrategie, lokale Modellbereitstellung.
-- Produktanforderung ergänzt: Löschfristen im Frontend/Job-Kontext, Default per ENV in Monaten.
+- Architektur prÃ¤zisiert: Multi-Tenant, On-Prem Docker, RabbitMQ/Celery Skalierungsstrategie, lokale Modellbereitstellung.
+- Produktanforderung ergÃ¤nzt: LÃ¶schfristen im Frontend/Job-Kontext, Default per ENV in Monaten.
 - Produktumfang Phase 1 klargestellt: initialer Edit-Export.
 - Teststrategie erweitert: verpflichtende Edge-/Abuse-Tests pro Entwicklungsschritt (Prompt-Injection-Resilienz, Rate-Limiting, unkonventionelle Eingaben, Eingabevalidierung).
-- Spezifikationsfreeze v1 hinzugefügt: fachliche Spezifikation, API- und Event-Contracts, Datenmodell, Security-Spezifikation und Test-Spezifikation als verbindliche Umsetzungsbasis.
-- Entwicklungsplan aktualisiert: nächster optimaler Schritt ist der TDD-Implementierungsstart „Auth + Upload Vertical Slice“.
-- Entwicklungsdokumentation bereinigt: `/Entwicklungs.md` als Single Point of Truth festgelegt; `/docs/development/Entwicklungs.md` enthält nur noch Referenz- und Contract-Check-Hinweise.
-- Planungspräzisierung vor Realisierung: kein separates Frontend-Primärdokument, stattdessen verpflichtender Frontend/API-Contract-Check gegen API-, Security- und Test-Spezifikation v1.
+- Spezifikationsfreeze v1 hinzugefÃ¼gt: fachliche Spezifikation, API- und Event-Contracts, Datenmodell, Security-Spezifikation und Test-Spezifikation als verbindliche Umsetzungsbasis.
+- Entwicklungsplan aktualisiert: nÃ¤chster optimaler Schritt ist der TDD-Implementierungsstart â€žAuth + Upload Vertical Sliceâ€œ.
+- Entwicklungsdokumentation bereinigt: `/Entwicklungs.md` als Single Point of Truth festgelegt; `/docs/development/Entwicklungs.md` enthÃ¤lt nur noch Referenz- und Contract-Check-Hinweise.
+- PlanungsprÃ¤zisierung vor Realisierung: kein separates Frontend-PrimÃ¤rdokument, stattdessen verpflichtender Frontend/API-Contract-Check gegen API-, Security- und Test-Spezifikation v1.
 
 
 ## 2026-03-07
 - Entwicklungsplanung um verbindliches Implementation Playbook v1 erweitert (DoR/DoD, Work-Packages, Gate-Reihenfolge, Reproduzierbarkeitsnachweise).
-- Implementierungsstart Schritt 3 (WP-3.1): zentrales Auth-/Tenant-Context-Modul mit Default-Deny, Rollen-Whitelist und normierten `401/403`-Fehlercodes inkl. `correlation_id` ergänzt.
-- Sicherheits- und Testdokumentation um verpflichtende Threat?Control?Test-Traceability sowie CI-Blocker-Gates pro Entwicklungsschritt ergänzt.
-- Architektur-/Event-Spezifikation um normative Job-State-Machine und Duplikat-/Recovery-Regeln präzisiert.
+- Implementierungsstart Schritt 3 (WP-3.1): zentrales Auth-/Tenant-Context-Modul mit Default-Deny, Rollen-Whitelist und normierten `401/403`-Fehlercodes inkl. `correlation_id` ergÃ¤nzt.
+- Sicherheits- und Testdokumentation um verpflichtende Threat?Control?Test-Traceability sowie CI-Blocker-Gates pro Entwicklungsschritt ergÃ¤nzt.
+- Architektur-/Event-Spezifikation um normative Job-State-Machine und Duplikat-/Recovery-Regeln prÃ¤zisiert.
 
 ## 2026-03-07
-- Frontend/UI-Spezifikation v1 für Phase 1 ergänzt (`docs/product/frontend-ui-spec-v1.md`) mit verbindlichen Entscheidungen zu Branding, Light/Dark, Karten-Dashboard, Upload-UX, i18n-Readiness und Admin-Audit-Ansicht.
+- Frontend/UI-Spezifikation v1 fÃ¼r Phase 1 ergÃ¤nzt (`docs/product/frontend-ui-spec-v1.md`) mit verbindlichen Entscheidungen zu Branding, Light/Dark, Karten-Dashboard, Upload-UX, i18n-Readiness und Admin-Audit-Ansicht.
 - Entwicklungsplan-Referenzen aktualisiert, damit die neue Frontend-Umsetzungsspezifikation formal eingebunden ist.
-- Governance aktualisiert: Für UI/Design-Änderungen sind in der Realisierungsphase verpflichtende Screenshots im PR nachzuweisen.
+- Governance aktualisiert: FÃ¼r UI/Design-Ã„nderungen sind in der Realisierungsphase verpflichtende Screenshots im PR nachzuweisen.
 
 ## 2026-03-07
-- Gap-Analyse und priorisierte Blocker-Liste dokumentiert, um Architektur-/Security-Risiken (Tenant-Leak, AuthZ-Drift, Contract-Drift) vor Implementierungsbeginn zu schließen.
+- Gap-Analyse und priorisierte Blocker-Liste dokumentiert, um Architektur-/Security-Risiken (Tenant-Leak, AuthZ-Drift, Contract-Drift) vor Implementierungsbeginn zu schlieÃŸen.
 
 - Schritt-3 Vorbereitungsdokumente auf technische Arbeitsreferenzen ohne formale Gate-Entscheidungen umgestellt.
 
 - Implementierungsfortschritt Schritt 3 (WP-3.2): Job-Erstellung mit serverseitiger Upload-Validierung, tenant-scope Upload-Session, Audit-Eventing und Idempotenzschutz umgesetzt.
 
-- Betreiberrelevante Erweiterung: HTTP-Adapter für Job-Erstellung sowie produktive Persistenz-/Audit-/Presign-Adapter (SQLite/JSONL/signierte Upload-URLs) ergänzt.
+- Betreiberrelevante Erweiterung: HTTP-Adapter fÃ¼r Job-Erstellung sowie produktive Persistenz-/Audit-/Presign-Adapter (SQLite/JSONL/signierte Upload-URLs) ergÃ¤nzt.
 
-- Implementierungsfortschritt Schritt 3 (WP-3.3): `complete-upload` mit idempotentem Queueing, tenant-scoped Objektprüfung und Outbox-basierter Publish-Strategie ergänzt.
+- Implementierungsfortschritt Schritt 3 (WP-3.3): `complete-upload` mit idempotentem Queueing, tenant-scoped ObjektprÃ¼fung und Outbox-basierter Publish-Strategie ergÃ¤nzt.
 
-- Implementierungsfortschritt Schritt 3 (WP-3.4): tenant-sicherer Job-Statusabruf (`GET /jobs/{id}`) mit Progress- und Retention-Information ergänzt.
+- Implementierungsfortschritt Schritt 3 (WP-3.4): tenant-sicherer Job-Statusabruf (`GET /jobs/{id}`) mit Progress- und Retention-Information ergÃ¤nzt.
 
 ## 2026-03-08
 - Implementierungsfortschritt Schritt 4 (WP-4.1): Outbox-Dispatcher um RabbitMQ-Publisher-Adapter, Retry/Backoff mit Jitter, DLQ-Routing und Duplicate-Delivery-Handling erweitert.
-- Betreiberrelevante Monitoring-Erweiterung: Metrik-Hooks für Queue-Lag, Retry-Rate, DLQ-Count und Duplicate-Events in der Queue-Dispatch-Pipeline ergänzt.
+- Betreiberrelevante Monitoring-Erweiterung: Metrik-Hooks fÃ¼r Queue-Lag, Retry-Rate, DLQ-Count und Duplicate-Events in der Queue-Dispatch-Pipeline ergÃ¤nzt.
 
-- Implementierungsfortschritt Schritt 4 (WP-4.2/WP-4.3): Worker-Processing-Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz sowie Tenant-Fairness/Backpressure-Policy ergänzt.
+- Implementierungsfortschritt Schritt 4 (WP-4.2/WP-4.3): Worker-Processing-Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz sowie Tenant-Fairness/Backpressure-Policy ergÃ¤nzt.
 
-- Implementierungsfortschritt Schritt 5 (WP-5.1/WP-5.2): Transkript-Versionierung mit Optimistic Locking und sichere Export-Pipeline (`txt|json|srt|vtt`) im Tenant-Kontext ergänzt.
+- Implementierungsfortschritt Schritt 5 (WP-5.1/WP-5.2): Transkript-Versionierung mit Optimistic Locking und sichere Export-Pipeline (`txt|json|srt|vtt`) im Tenant-Kontext ergÃ¤nzt.
 
 
 ## 2026-03-08
-- Schritt 6.1 umgesetzt: Retention Enforcement Job eingeführt (Policy-Resolver + periodischer Löschlauf) inkl. Audit-Events pro Entscheidung und Ausführung.
-- Sicherheitsrelevante Härtung: tenant-scoped Löschqueries, Clock-Skew-Schutz gegen verfrühte Löschung und Teilfehler-Nachweis bei Storage/DB-Inkonsistenzen.
+- Schritt 6.1 umgesetzt: Retention Enforcement Job eingefÃ¼hrt (Policy-Resolver + periodischer LÃ¶schlauf) inkl. Audit-Events pro Entscheidung und AusfÃ¼hrung.
+- Sicherheitsrelevante HÃ¤rtung: tenant-scoped LÃ¶schqueries, Clock-Skew-Schutz gegen verfrÃ¼hte LÃ¶schung und Teilfehler-Nachweis bei Storage/DB-Inkonsistenzen.
 - Infrastruktur erweitert: SQLite-Retention-Candidate/Execution-Adapter mit Anonymisierung (`filename` redacted, Status `deleted`) und tenant-spezifischem Outbox-Pruning.
 
 
 ## 2026-03-08
-- Schritt 6.2 umgesetzt: tenant-sicherer Restore-Workflow mit fester Restore-Reihenfolge und automatischer Konsistenzprüfung (`Job?Transcript?Export?Audit`) eingeführt.
-- Betriebsrelevante Härtung: periodischer Retention-Scheduler mit idempotentem Retry-Recovery-Pfad für Teilfehlerklassen ergänzt.
-- Sicherheitsrelevante Absicherung: Restore-Guards gegen Cross-Tenant-Scopes und verpflichtende Restore-Audit-Events (`restore.started`, `restore.completed`) ergänzt.
+- Schritt 6.2 umgesetzt: tenant-sicherer Restore-Workflow mit fester Restore-Reihenfolge und automatischer KonsistenzprÃ¼fung (`Job?Transcript?Export?Audit`) eingefÃ¼hrt.
+- Betriebsrelevante HÃ¤rtung: periodischer Retention-Scheduler mit idempotentem Retry-Recovery-Pfad fÃ¼r Teilfehlerklassen ergÃ¤nzt.
+- Sicherheitsrelevante Absicherung: Restore-Guards gegen Cross-Tenant-Scopes und verpflichtende Restore-Audit-Events (`restore.started`, `restore.completed`) ergÃ¤nzt.
 
 
 ## 2026-03-08
-- Retention-Scheduler läuft produktiv jetzt mit persistentem SQLite-Lease statt In-Memory-Zustand; Scheduler-Intervall und Recovery-Fortschritt bleiben über Prozessneustarts erhalten.
-- Retry-Recovery-Queue ist persistent und idempotent pro `failure_id + failure_class`; Duplikate lösen keine Mehrfachausführung mehr aus.
-- Betriebsseitig wurden neue Monitoring-/Alerting-Anforderungen für Lease-Stale und Recovery-Backlog eingeführt.
+- Retention-Scheduler lÃ¤uft produktiv jetzt mit persistentem SQLite-Lease statt In-Memory-Zustand; Scheduler-Intervall und Recovery-Fortschritt bleiben Ã¼ber Prozessneustarts erhalten.
+- Retry-Recovery-Queue ist persistent und idempotent pro `failure_id + failure_class`; Duplikate lÃ¶sen keine MehrfachausfÃ¼hrung mehr aus.
+- Betriebsseitig wurden neue Monitoring-/Alerting-Anforderungen fÃ¼r Lease-Stale und Recovery-Backlog eingefÃ¼hrt.
 
 
 ## 2026-03-08
-- Ungültige/manipulierte Retention-Retry-Datensätze werden nun explizit als `invalid` quarantänisiert (statt implizit als `recovered`).
-- Für lange Scheduler-Läufe wurde ein Lease-Heartbeat ergänzt, um konkurrierende Parallel-Ausführung bei Lease-Expiry zu vermeiden.
+- UngÃ¼ltige/manipulierte Retention-Retry-DatensÃ¤tze werden nun explizit als `invalid` quarantÃ¤nisiert (statt implizit als `recovered`).
+- FÃ¼r lange Scheduler-LÃ¤ufe wurde ein Lease-Heartbeat ergÃ¤nzt, um konkurrierende Parallel-AusfÃ¼hrung bei Lease-Expiry zu vermeiden.
 
 
 ## 2026-03-08
-- E2E-Testabdeckung für den Kern-Lifecycle ergänzt (`create_job` ? `complete_upload` ? Outbox-Dispatch ? Statusabruf) und ein Status-Gap behoben: `complete_upload` akzeptiert jetzt auch frisch erzeugte Jobs im Zustand `upload_pending` (ohne Queue-/Tenant-Sicherheitsregeln zu lockern).
-- Retention-Scheduler verfügt jetzt über ein verbindliches Runtime-Startprofil mit fail-fast Konfigurationsvalidierung (DB-Pfad, Lock-Owner, Intervall, TTL/Heartbeat).
+- E2E-Testabdeckung fÃ¼r den Kern-Lifecycle ergÃ¤nzt (`create_job` ? `complete_upload` ? Outbox-Dispatch ? Statusabruf) und ein Status-Gap behoben: `complete_upload` akzeptiert jetzt auch frisch erzeugte Jobs im Zustand `upload_pending` (ohne Queue-/Tenant-Sicherheitsregeln zu lockern).
+- Retention-Scheduler verfÃ¼gt jetzt Ã¼ber ein verbindliches Runtime-Startprofil mit fail-fast Konfigurationsvalidierung (DB-Pfad, Lock-Owner, Intervall, TTL/Heartbeat).
 - Der produktive Startpfad verdrahtet den Scheduler explizit auf persistente SQLite-Adapter und vermeidet implizite In-Memory-Fallbacks.
 
-## 2026-03-08 – Betreiberupdate: Dedizierter Retention-Scheduler-Prozess
+## 2026-03-08 â€“ Betreiberupdate: Dedizierter Retention-Scheduler-Prozess
 - Neu: Retention-Scheduler wird als dedizierter Runner-Prozess betrieben statt als eingebettete Nebenfunktion.
-- Auswirkungen für Betrieb:
+- Auswirkungen fÃ¼r Betrieb:
   - eigener Startpfad mit fail-fast Konfigurationschecks,
   - strukturierte Start-/Tick-/Shutdown-Logs,
   - kontrollierter Graceful-Shutdown via `SIGTERM`/`SIGINT`.
 - Erwarteter Nutzen: klare Verantwortlichkeit, bessere Skalierbarkeit und geringere Kopplung zwischen API-Lifecycle und Retention-Lifecycle.
 
-## 2026-03-08 – Betriebsupdate: produktiver Runner-Bootstrap vervollständigt
-- Der dedizierte Retention-Runner besitzt nun einen ausführbaren Entrypoint (`python -m evodox.runtime.retention_scheduler_runner`) mit produktivem Dependency-Wiring.
-- Neu sind fail-fast Bootstrap-Checks für Tenant-Liste, Audit-Log-Pfad, Storage-Root und Retention-Policy-Grenzen.
-- Recovery-Pfad wurde für bekannte Teilfehlerklassen (`storage_delete_failed`, `db_mark_failed`) konkretisiert; unbekannte Klassen bleiben fail-safe im Retry.
+## 2026-03-08 â€“ Betriebsupdate: produktiver Runner-Bootstrap vervollstÃ¤ndigt
+- Der dedizierte Retention-Runner besitzt nun einen ausfÃ¼hrbaren Entrypoint (`python -m evodox.runtime.retention_scheduler_runner`) mit produktivem Dependency-Wiring.
+- Neu sind fail-fast Bootstrap-Checks fÃ¼r Tenant-Liste, Audit-Log-Pfad, Storage-Root und Retention-Policy-Grenzen.
+- Recovery-Pfad wurde fÃ¼r bekannte Teilfehlerklassen (`storage_delete_failed`, `db_mark_failed`) konkretisiert; unbekannte Klassen bleiben fail-safe im Retry.
 
-## 2026-03-08 – Betreiberupdate: S3/MinIO-Backend + Recovery-Governance + Preflight
-- Retention-Runner unterstützt jetzt neben lokalem Filesystem ein dediziertes `s3`-Backend (MinIO-kompatibel) mit gleicher Prefix-Delete-Semantik.
-- Recovery-Failure-Klassen werden versioniert über `RETENTION_RECOVERY_MAPPING_VERSION` gesteuert (aktuell `v1`).
-- Neuer Betriebsmodus zur Deployment-Härtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
-- Neue vollständige Konfigurationsvorlage: `.env.example`.
+## 2026-03-08 â€“ Betreiberupdate: S3/MinIO-Backend + Recovery-Governance + Preflight
+- Retention-Runner unterstÃ¼tzt jetzt neben lokalem Filesystem ein dediziertes `s3`-Backend (MinIO-kompatibel) mit gleicher Prefix-Delete-Semantik.
+- Recovery-Failure-Klassen werden versioniert Ã¼ber `RETENTION_RECOVERY_MAPPING_VERSION` gesteuert (aktuell `v1`).
+- Neuer Betriebsmodus zur Deployment-HÃ¤rtung: `RETENTION_VALIDATE_ENV_ONLY=true` validiert Pflicht-ENVs vor Runner-Start.
+- Neue vollstÃ¤ndige Konfigurationsvorlage: `.env.example`.
 
 
 

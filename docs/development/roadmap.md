@@ -1,49 +1,34 @@
-# Roadmap
+﻿# Roadmap
 
-## Schritt 1 (abgeschlossen)
-- Architektur vollständig festgelegt
-- Governance und Dokumentationspflichten definiert
-- Edge-/Abuse-Teststrategie pro Entwicklungsschritt als Pflicht ergänzt
+## Zweck
+Diese Roadmap gibt den aktuellen Umsetzungsstand auf hoher Ebene wieder.
+Normative Detailentscheidungen stehen in `docs/development/decisions-log.md` und den ADRs.
 
-## Schritt 2
-- Monorepo-Struktur und ADRs operationalisieren
-- Docker-Compose On-Prem Baseline bereitstellen
-- Infra-Edge-Tests: Hardening, Rate-Limit, Fehlkonfigurationsprüfungen
+## Umsetzungsstand (Stand: 2026-03-27)
 
-## Schritt 2.5 (Gate)
-- Implementation Playbook v1 finalisieren und freigeben
-- DoR/DoD und Testqualitygates als CI-Blocker operationalisieren
-- Reproduzierbare Build-/Testumgebung inkl. Nachweisschema fixieren
+### Schritt 1 bis 3
+- Architektur- und Governance-Basis ist abgeschlossen.
+- Auth, Upload, Complete-Upload und Status-Read sind umgesetzt und testseitig abgesichert.
 
-## Schritt 3
-- Auth + Upload Skeleton TDD-implementieren
-- Tenant-Isolation-Tests und Retention-Basis einführen
-- Upload-Fuzzing und Input-Validation-Tests etablieren
+### Schritt 4
+- Queue-Routing, Retry/DLQ und Worker-Pipeline sind umgesetzt.
+- Tenant-Fairness und Backpressure-Baseline sind verankert.
 
-## Schritt 4
-- WhisperX-Worker Pipeline und Queue-Skalierung integrieren
-- E2E Upload→Transkript→Edit→Export
-- Queue-Resilience-Tests (Retry/DLQ/Poison Message/Restart Recovery)
+### Schritt 5
+- Transcript-Versionierung, Speaker-Alias und Export-Pipeline sind umgesetzt.
+- Korrekturmodus ist funktional verfuegbar und wurde auf Performance (Virtualisierung, Delta-Operationen) optimiert.
 
-## Schritt 5
-- Edit-Export-Härtung (XSS/Injection/Unicode Edge Cases)
-- Export-Autorisierung im Tenant-Kontext absichern
+### Schritt 6
+- Retention-Enforcement und Scheduler-Runtime sind umgesetzt.
+- Restore-/Betriebsgovernance ist dokumentiert und in Runbooks/Testdoku verankert.
 
-## Schritt 6
-- Retention-/Compliance-Automation finalisieren
-- Auditierbare Lösch- und Restore-Konsistenztests etablieren
+## Offene Fokuspunkte
+- Weitere Konsolidierung historischer Doku-Artefakte in den Archivbereich.
+- Vollstaendige UI-Screenshot-Nachweise fuer Dashboard/Jobdetail ergaenzen.
+- Fortlaufende Lesbarkeits- und Konsistenzpflege entlang der SoT-Regeln.
 
-
-## Schritt 4 (Umsetzungsstand 2026-03-08)
-- WP-4.1 abgeschlossen: Queue Routing + Retry/DLQ Governance.
-- WP-4.2 abgeschlossen: Worker Processing Chain (ASR/Alignment/Diarization) mit tenant-scoped Artefaktpersistenz und Fehlerklassifikation.
-- WP-4.3 abgeschlossen: Tenant-Fairness + Backpressure-Baseline mit globalen/per-tenant Inflight-Limits und Round-Robin-Scheduling.
-
-
-## Schritt 5 (Umsetzungsstand 2026-03-08)
-- WP-5.1 abgeschlossen: Transcript-Versionierung mit Optimistic Locking.
-- WP-5.2 abgeschlossen: Export-Pipeline (`txt|json|srt|vtt`) mit tenant-scoped Sicherheitsprüfungen.
-
-
-## Schritt 6 (Umsetzungsstand 2026-03-08)
-- WP-6.3 abgeschlossen: Runtime-Orchestrierung des Retention-Schedulers mit fail-fast Konfigurationsprofil und verbindlichem SQLite-Wiring.
+## SoT-Verweise
+- Entscheidungen: `docs/development/decisions-log.md`
+- Architekturentscheidungen: `docs/adr/`
+- Testevidenz: `docs/testing/regression-log.md`
+- Betrieb: `docs/operations/runbooks.md`

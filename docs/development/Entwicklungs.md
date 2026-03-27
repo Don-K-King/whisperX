@@ -1,26 +1,20 @@
-# Entwicklungsplan Referenz
+﻿# Entwicklungsplan Referenz
 
-**Single Point of Truth:** Der Entwicklungsplan wird ausschließlich in der Repository-Wurzel gepflegt: [`/Entwicklungs.md`](../../Entwicklungs.md).
+**Single Point of Truth:** Der Entwicklungsplan wird ausschliesslich in der Repository-Wurzel gepflegt: [`/Entwicklungs.md`](../../Entwicklungs.md).
 
-Dieses Dokument enthält bewusst keine inhaltliche Duplizierung, um Divergenzen zwischen zwei Planständen zu vermeiden.
+Dieses Dokument dient nur als stabiler Navigator und enthaelt bewusst keine zweite inhaltliche Planversion.
 
-## Verbindliche Referenzstellen
-- Vorgeschaltetes AuthN/AuthZ-Gate: Abschnitt „Verbindlicher vorgeschalteter Teilschritt 3A“ in `/Entwicklungs.md`.
-- Nächster Realisierungsschritt: Abschnitt „Schritt 3: Auth + Upload Vertical Slice“ in `/Entwicklungs.md`.
-- Ergänzende Frontend-Umsetzungsspezifikation: `docs/product/frontend-ui-spec-v1.md`.
+## Verbindliche Referenzen
+- Primarplan: [`/Entwicklungs.md`](../../Entwicklungs.md)
+- Umsetzungs-Gates und DoR/DoD: [`implementation-playbook-v1.md`](implementation-playbook-v1.md)
+- Entscheidungsverlauf: [`decisions-log.md`](decisions-log.md)
+- Aktueller Stand und Priorisierung: [`roadmap.md`](roadmap.md)
 
-## Planungsleitlinie bis Realisierungsphase
-Die Frontend-Umsetzung wird über `docs/product/frontend-ui-spec-v1.md` konkretisiert; Primärquelle für Contracts bleiben die v1-Spezifikationen.
-Verpflichtend gilt ein **Contract-Check Frontend ↔ API** gegen (`api-spec-v1`, `security-spec-v1`, `test-spec-v1`) vor Implementierungsstart.
+## Historische Arbeitsdokumente
+Die folgenden Schritt-Dokumente bleiben aus Auditgruenden erhalten, sind aber keine normative Primarquelle:
+- [`step3-dor-checklist.md`](step3-dor-checklist.md)
+- [`step3-gate-gap-and-blockers-v1.md`](step3-gate-gap-and-blockers-v1.md)
+- [`step3-go-signoff-v1.md`](step3-go-signoff-v1.md)
+- [`step-next-pause-resume-delete-tdd.md`](step-next-pause-resume-delete-tdd.md)
 
-- Verbindliche Ausführungsanweisung/Gates: `docs/development/implementation-playbook-v1.md`.
-
-
-## Pflichtartefakte vor Implementierungsstart Schritt 3
-- `docs/security/keycloak-integration-profile-v1.md`
-- `docs/security/keycloak-integration-inputs-v1.md`
-- `docs/development/step3-dor-checklist.md`
-- `docs/testing/frontend-api-contract-check-v1.md`
-
-## Aktueller Umsetzungsschritt
-- Lifecycle/Progress TDD-Schritt: `docs/development/step-next-pause-resume-delete-tdd.md`
+Die Archivierungsregeln sind in [`/docs/archive/README.md`](../archive/README.md) dokumentiert.

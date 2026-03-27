@@ -17,7 +17,7 @@
 - `id` (PK)
 - `tenant_id` (FK -> tenant.id)
 - `created_by_user_id`
-- `status` (`upload_pending|queued|processing|completed|failed|retention_due|deleted`)
+- `status` (`upload_pending|uploaded|queued|processing|completed|failed_retryable|failed_terminal|pause_requested|paused|cancel_requested|canceled|retention_due|deleted`)
 - `media_filename`
 - `media_content_type`
 - `size_bytes`
@@ -90,12 +90,15 @@
 
 ## Zustandsmodelle
 
-### job-status Übergänge
-- `upload_pending -> queued -> processing -> completed`
-- `processing -> failed`
-- `completed|failed -> retention_due -> deleted`
-
-Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
+### job-status (kanonisch)
+- `upload_pending -> uploaded -> queued -> processing -> completed`
+- `processing -> failed_retryable -> queued`
+- `processing -> failed_terminal`
+- `queued -> paused`
+- `processing -> pause_requested -> paused`
+- `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
+- `completed|failed_retryable|failed_terminal|canceled|retention_due -> deleted`
+- `DELETE` wirkt als Force-Soft-Delete auf alle nicht-`deleted` Status; `deleted` ist terminal.
 
 ### export-status Übergänge
 - `queued -> processing -> completed`
@@ -111,9 +114,9 @@ Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
 
 
 ## WP-4 Statuspräzisierung
-- Job-Statuswerte für Worker-Lifecycle werden präzisiert auf: `upload_pending|uploaded|queued|processing|completed|failed_retryable|failed_terminal|retention_due|deleted`.
-- Retry-Pfad: `processing -> failed_retryable -> queued`.
-- Terminal-Pfad: `processing -> failed_terminal` (kein automatisches Requeue).
+- Die oben definierte kanonische Job-Statusmaschine ist die einzige aktive Referenz.
+- Fruehere Teilmengen (z. B. nur `failed`) gelten als historisch und werden nicht mehr als normative Liste gepflegt.
+- Retry- und Terminal-Pfade sind bereits in der kanonischen Statusmaschine enthalten.
 
 
 ## WP-5 Präzisierung
@@ -132,11 +135,8 @@ Ungültige Rücksprünge sind verboten (z. B. `completed -> processing`).
 - `updated_at`
 
 ### Job-Status Ergaenzung
-- zusaetzliche Statuswerte: `pause_requested`, `paused`, `cancel_requested`, `canceled`.
-- erlaubte Kontrollpfade:
-  - `processing -> pause_requested -> paused`
-  - `queued|processing|pause_requested|paused -> cancel_requested -> canceled`
-- `canceled` ist terminal, kein Rueckweg nach `queued`.
+- Die Zusatzstatus `pause_requested`, `paused`, `cancel_requested`, `canceled` sind bereits Teil der kanonischen Job-Statusmaschine oben.
+- Die zugehoerigen Kontrollpfade sind dort ebenfalls dokumentiert und werden nicht mehr als konkurrierende zweite Liste gefuehrt.
 
 ## 2026-03-22 - Addendum: Transcript-Aliase als Versions-Snapshot
 - `speaker_labels_json` speichert das Mapping `Roh-Speaker -> Anzeigename` zusammen mit jeder Transcript-Version.

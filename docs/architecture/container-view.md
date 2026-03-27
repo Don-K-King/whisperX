@@ -1,27 +1,20 @@
-# Container View – EvidoX
+# Container View - EvidoX
 
-## Frontend Container
-- React/TypeScript SPA
-- OIDC Login (PKCE)
-- Upload, Jobmonitoring, Transkript-Editor, Export
-- Anzeige/Übergabe von `retention_months`
+## Istbetrieb (lokale Runtime)
+- Frontend: React/TypeScript SPA mit OIDC-Login (PKCE).
+- API: FastAPI mit tenant-scoped AuthZ, Upload-/Job-/Transcript-/Export-API.
+- Worker: Celery Worker fuer WhisperX-Pipeline, lokale Runtime-Adapter und Objektverarbeitung.
+- Persistenz: SQLite-basierte Runtime-Pfade fuer lokale Entwicklung und Tests.
+- Infrastruktur: RabbitMQ, MinIO, Keycloak und NGINX.
 
-## API Container
-- FastAPI
-- OIDC Token Validation + RBAC/Tenant AuthZ
-- Job-/Transcript-/Export-API
-- Presigned Upload URLs
-- Audit Event Emission
+## Zielbetrieb (produktiver Referenz-Stack)
+- Frontend: gleiche SPA, gleiche UI-Vertraege.
+- API: FastAPI mit OIDC Token Validation, RBAC und Tenant-AuthZ.
+- Worker: horizontal skalierbare Worker-Pools mit Queue-Isolation.
+- Persistenz: PostgreSQL als Ziel-Datenbank fuer das mandantenfaehige Datenmodell.
+- Infrastruktur: RabbitMQ, PostgreSQL, MinIO, Keycloak und NGINX.
 
-## Worker Container
-- Celery Worker
-- Konsumiert RabbitMQ Queues
-- Führt WhisperX-Pipeline aus
-- Schreibt Artefakte in Storage, Status in DB
-
-## Daten-/Infra-Container
-- RabbitMQ (durable queues + DLQ)
-- PostgreSQL (mandantenfähiges Datenmodell)
-- MinIO (S3-kompatibel)
-- Keycloak
-- NGINX Reverse Proxy
+## Architekturhinweise
+- Der Istbetrieb darf sich in der lokalen Laufzeit von der Zielarchitektur unterscheiden, solange Contracts, Tenant-Isolation und Auditierbarkeit konsistent bleiben.
+- Der Zielbetrieb ist die normative Referenz fuer Skalierung, Betrieb und Deployment.
+- SQLite im Istbetrieb ist ein Laufzeitdetail, kein Widerspruch zur PostgreSQL-Zielarchitektur.

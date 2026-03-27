@@ -1,5 +1,9 @@
 # Step Next: Pause/Resume/Delete + Progress (TDD)
 
+> Historischer Arbeitsstand: Dieses Dokument ist kein normativer Vertrag mehr.
+> Verbindliche Semantik fuer Delete/Lifecycle steht in `docs/architecture/api-spec-v1.md`
+> und im `docs/development/decisions-log.md`.
+
 ## Scope
 This step delivers an operable job lifecycle for long-running processing jobs:
 - `POST /api/v1/jobs/{id}/pause`
@@ -17,8 +21,9 @@ This step delivers an operable job lifecycle for long-running processing jobs:
 - retry limit in worker: `failed_retryable -> failed_terminal` (retry exhausted)
 - `completed|failed_terminal|paused|canceled -> deleted` via `delete`
 
-Delete conflict:
-- active jobs (`processing|pause_requested|queued`) return `409 job.delete.active_conflict`
+Historischer Zwischenstand (durch spaetere Entscheidung ersetzt):
+- In einer fruehen Variante wurde `job.delete.active_conflict` fuer aktive Jobs dokumentiert.
+- Aktuell gilt Force-Soft-Delete fuer alle nicht-`deleted` Status (siehe API-Spec/Decisions Log).
 
 ## Progress Semantics
 Milestone percentages:

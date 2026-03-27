@@ -97,9 +97,9 @@
 - **Threat:** Session-Entfuehrung im Korrekturmodus.
   - **Control:** tenant-/actor-scoped Session-Validierung in allen Session-Endpunkten (inkl. Read).
   - **Test:** Session-Read/Mutation durch fremden Actor fuehrt zu `transcript.correction_session_forbidden`.
-- **Threat:** Timeline-Korruption durch fehlerhafte Speaker-Teilumteilung.
-  - **Control:** verpflichtende Timeline-Invariant-Checks bei jeder Operation.
-  - **Test:** Overlap/Gap Injection wird mit `transcript.timeline_*` geblockt.
+- **Threat:** Timeline-Korruption durch fehlerhafte Speaker-Teilumteilung oder falsche Gap-Interpretation.
+  - **Control:** verpflichtende Timeline-Invariant-Checks bei jeder Operation; Overlaps werden blockiert, Luecken sind erlaubt und muessen im Korrekturmodus als kein aktiver Block gerendert werden.
+  - **Test:** Overlap Injection wird mit `transcript.timeline_*` geblockt; Gap-Windows bleiben valide und duerfen nicht als Inkonsistenz markiert werden.
 - **Threat:** Silent State Drift zwischen Draft und persistierter Version.
   - **Control:** klare Trennung Draft (Autosave) vs Commit (Version+1) mit Audit-Event.
   - **Test:** Commit ist einziger Pfad fuer neue `transcript_version`.
