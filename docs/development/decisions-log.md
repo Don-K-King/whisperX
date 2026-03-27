@@ -1,5 +1,10 @@
 # Decisions Log
 
+## 2026-03-27
+- ADR-0023 angenommen: Korrekturmodus-Performance wird durch Editor-Virtualisierung, Event-Delegation und Delta-Operationen (`update_text`) verbessert.
+- API-Entscheidung: Operations-Endpoint unterstuetzt `return_mode` (`ack|changed_segments|full`), Default auf `changed_segments`.
+- Betriebskonsequenz: Autosave/Save vermeiden Vollpayload-`set_segments` im Regelfall und reduzieren Main-Thread-/Netzwerk-Last bei grossen Transkripten.
+
 ## 2026-03-06
 - ADR-0001 angenommen: On-Prem Multi-Tenant Architektur mit RabbitMQ/Celery Pipeline, lokaler Modellbereitstellung und Retention-Konzept.
 - Konsequenz: Alle neuen API-/DB-/Export-Pfade müssen `tenant_id`-gescoped umgesetzt und getestet werden.
@@ -242,3 +247,14 @@
 - Entscheidung: Beim Start einer Correction-Session kann per `force_reseed_from_transcript` ein Legacy-Resume-Fall fix-forward auf die aktuelle Transcript-Timeline reseeded werden.
 - Entscheidung: Reseed ersetzt den aktiven Draft auf `history[0]` mit absoluten Segmentzeiten der aktuellen Transcript-Version und setzt `history_index=0`.
 - Entscheidung: Active-Highlighting nach Segmentende wird als "kein aktiver Block" behandelt, um End-Pausen nicht als Drift des letzten Blocks darzustellen.
+## 2026-03-27 - Seek/Autofokus bei Virtualisierung: Lifecycle-Hardening
+- Entscheidung: Media-Reuse im Render-Pfad wird vor dem erneuten Binding abgeschlossen; Event-Handler (timeupdate/seek) werden danach auf dem finalen Media-Node registriert.
+- Begruendung: verhindert stale Closures mit veraltetem Editor-Referenzkontext und stabilisiert das automatische Follow nach Seek/Render.
+- Entscheidung: Bei bereits geplanter Follow-rAF wird das Pending-Frame zugunsten des neuesten Seek-Ziels ersetzt (latest-wins), statt neue Seek-Spruenge zu verwerfen.
+- Entscheidung: Virtual-Scroll-Projektion basiert auf gemessenen Segmenthoehen (mit Cache + Prefix-Summen) statt nur fixer Zeilenhoehe, um Drift bei variablen Blocktexten zu reduzieren.
+- Sicherheitsbewertung: keine neuen AuthN/AuthZ- oder Datenflussaenderungen; Verarbeitung bleibt tenant-scoped und input-validiert wie bisher.
+## 2026-03-27 - Seek/Follow Stabilisierung bei Virtualisierung (Empty-Window + Drift)
+- Entscheidung: forced Virtual-Range wird zentral sanitisiert (Clamp auf gueltige Grenzen, nie leeres Fenster, Fallback auf Zielindex), um stale Range-Zustaende bei Seek robust abzufangen.
+- Entscheidung: Seek-Warmup-Pending gilt jetzt fuer Playing und Paused gleich; Finalisierung erfolgt bei Warmup-Ready oder Deadline-Timeout, Playback-Resume jedoch nur wenn zuvor tatsaechlich gespielt wurde.
+- Entscheidung: automatische Playback-Nachfuehrung nutzt im Follow-Pfad unmittelbares Zentrieren (kein smooth), um bei kurzen Segmenten/haeufigen Updates Drift aus dem Sichtfenster zu vermeiden.
+- Sicherheitsbewertung: keine neuen externen Schnittstellen, keine AuthN/AuthZ-Aenderung, keine Erweiterung sensibler Datenfluesse.

@@ -449,6 +449,75 @@ class TranscriptCorrectionServiceTests(unittest.TestCase):
         self.assertEqual(updated.segments[0]["start"], 0.0)
         self.assertEqual(updated.segments[1]["end"], 10.0)
 
+    def test_update_text_operation_updates_target_segment_and_diff_metadata(self):
+        transcripts = InMemoryTranscriptRepository()
+        transcripts.seed(
+            tenant_id="tenant-a",
+            job_id="job_3b",
+            version=1,
+            segments=[
+                {"segment_id": "seg_1", "start": 0.0, "end": 2.0, "speaker": "S1", "text": "Hallo"},
+                {"segment_id": "seg_2", "start": 2.0, "end": 4.0, "speaker": "S2", "text": "Welt"},
+            ],
+        )
+        corrections = InMemoryTranscriptCorrectionStore()
+        session = create_correction_session(
+            CorrectionSessionCreateInput(job_id="job_3b"),
+            tenant_id="tenant-a",
+            actor_id="reviewer-1",
+            transcript_repo=transcripts,
+            correction_store=corrections,
+            audit_log=[],
+        )
+
+        updated = apply_correction_operations(
+            CorrectionSessionApplyInput(
+                job_id="job_3b",
+                session_id=session.session_id,
+                operations=[{"type": "update_text", "segment_id": "seg_2", "text": "Universum"}],
+            ),
+            tenant_id="tenant-a",
+            actor_id="reviewer-1",
+            correction_store=corrections,
+            audit_log=[],
+        )
+
+        self.assertEqual(updated.segments[1]["text"], "Universum")
+        self.assertEqual([item["segment_id"] for item in (updated.changed_segments or [])], ["seg_2"])
+        self.assertEqual(updated.removed_segment_ids, [])
+
+    def test_update_text_rejects_empty_text(self):
+        transcripts = InMemoryTranscriptRepository()
+        transcripts.seed(
+            tenant_id="tenant-a",
+            job_id="job_3c",
+            version=1,
+            segments=[{"segment_id": "seg_1", "start": 0.0, "end": 2.0, "speaker": "S1", "text": "Hallo"}],
+        )
+        corrections = InMemoryTranscriptCorrectionStore()
+        session = create_correction_session(
+            CorrectionSessionCreateInput(job_id="job_3c"),
+            tenant_id="tenant-a",
+            actor_id="reviewer-1",
+            transcript_repo=transcripts,
+            correction_store=corrections,
+            audit_log=[],
+        )
+
+        with self.assertRaises(TranscriptValidationError) as ctx:
+            apply_correction_operations(
+                CorrectionSessionApplyInput(
+                    job_id="job_3c",
+                    session_id=session.session_id,
+                    operations=[{"type": "update_text", "segment_id": "seg_1", "text": ""}],
+                ),
+                tenant_id="tenant-a",
+                actor_id="reviewer-1",
+                correction_store=corrections,
+                audit_log=[],
+            )
+        self.assertEqual(ctx.exception.error_code, "transcript.invalid_operations")
+
     def test_undo_and_redo_switch_history_index(self):
         transcripts = InMemoryTranscriptRepository()
         transcripts.seed(

@@ -358,7 +358,7 @@ Fehlerpfade:
 
 ### POST /api/v1/jobs/{id}/transcript/correction-sessions/{session_id}/operations
 - AuthZ: `user|reviewer|admin`, tenant-scoped.
-- Zweck: Draft-Operationen anwenden (v1: `set_segments`, `replace_literal`, `reassign_speaker`).
+- Zweck: Draft-Operationen anwenden (v1: `set_segments`, `replace_literal`, `reassign_speaker`, `update_text`).
 - Request (Beispiele):
 ```json
 {
@@ -378,6 +378,18 @@ Fehlerpfade:
 {
   "operations": [
     {
+      "type": "update_text",
+      "segment_id": "seg_000042",
+      "text": "Korrigierter Segmenttext"
+    }
+  ],
+  "return_mode": "ack"
+}
+```
+```json
+{
+  "operations": [
+    {
       "type": "reassign_speaker",
       "segment_id": "seg_000042",
       "speaker": "S2",
@@ -387,7 +399,10 @@ Fehlerpfade:
   ]
 }
 ```
-- Response 200: aktualisierte Session.
+- Response 200:
+  - `return_mode=full`: aktualisierte Session inkl. vollstaendiger `segments`.
+  - `return_mode=changed_segments` (Default): Session-Metadaten + `segments` nur fuer geaenderte Segmente + `removed_segment_ids`.
+  - `return_mode=ack`: Session-Metadaten + `changed_segments_count`/`removed_segments_count` (ohne Segmentliste).
 - Fehlercodes: `401, 403, 404, 409, 422, 503`.
 
 ### POST /api/v1/jobs/{id}/transcript/correction-sessions/{session_id}/undo
@@ -422,6 +437,7 @@ Fehlerpfade:
 - `set_segments`: ersetzt kompletten Draft-Stand, jedes Segment mit `segment_id`, `speaker`, `text`, `start`, `end`.
 - `replace_literal`: nur literal matching (kein Regex), optional speaker-filter.
 - `reassign_speaker`: ganzes Segment oder Teilbereich (`start_char`, `end_char`).
+- `update_text`: aktualisiert Text eines vorhandenen Segments (`segment_id`, `text`), ohne kompletten Draft zu uebertragen.
 - Timeline-Invarianten sind verpflichtend: keine Overlaps, monotone Chronologie, `start <= end`, nur finite Zeitwerte.
 - Timeline-Luecken sind im Korrekturpfad zulaessig und werden nicht als Fehler gewertet.
 - Audit-Pflicht fuer Session create/update/apply/undo/redo/discard/commit und Status-Updates.

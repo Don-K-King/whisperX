@@ -12,6 +12,13 @@ import {
   resolveExportMenuState,
   resolveSpeakerTint,
   resolveSelectedSegmentId,
+  resolveGapSeekTargetIndex,
+  resolveVirtualWindowPreferredIndex,
+  resolvePlaybackFollowDecision,
+  resolveSeekWarmupRange,
+  resolveSeekWarmupReadiness,
+  resolveSeekPlaybackResumeDecision,
+  resolveForcedVirtualRange,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
   shouldAutoSeek,
@@ -278,6 +285,213 @@ test('resolveSelectedSegmentId falls back to first segment when previous is miss
   });
   assert.equal(selected, 'seg_1');
   assert.equal(resolveSelectedSegmentId({ previousSegmentId: 'seg_99', segments: [] }), null);
+});
+
+test('resolveGapSeekTargetIndex picks next segment in timeline gaps', () => {
+  const target = resolveGapSeekTargetIndex({
+    segments: [
+      { segment_id: 'seg_1', start: 0, end: 2 },
+      { segment_id: 'seg_2', start: 5, end: 7 },
+      { segment_id: 'seg_3', start: 10, end: 12 },
+    ],
+    currentTime: 3,
+    activeIndex: -1,
+  });
+  assert.equal(target, 1);
+});
+
+test('resolveGapSeekTargetIndex falls back to previous when seek is beyond last segment', () => {
+  const target = resolveGapSeekTargetIndex({
+    segments: [
+      { segment_id: 'seg_1', start: 0, end: 2 },
+      { segment_id: 'seg_2', start: 5, end: 7 },
+    ],
+    currentTime: 99,
+    activeIndex: -1,
+  });
+  assert.equal(target, 1);
+});
+
+test('resolveVirtualWindowPreferredIndex prefers playback anchor when follow is enabled', () => {
+  const preferred = resolveVirtualWindowPreferredIndex({
+    selectedIndex: 12,
+    activeIndex: 24,
+    playbackAnchorIndex: 240,
+    preferPlaybackAnchor: true,
+  });
+  assert.equal(preferred, 240);
+});
+
+test('resolveVirtualWindowPreferredIndex falls back to selected when playback anchor is disabled', () => {
+  const preferred = resolveVirtualWindowPreferredIndex({
+    selectedIndex: 12,
+    activeIndex: 24,
+    playbackAnchorIndex: 240,
+    preferPlaybackAnchor: false,
+  });
+  assert.equal(preferred, 12);
+});
+
+test('resolvePlaybackFollowDecision requests a window shift when active block is outside range', () => {
+  const decision = resolvePlaybackFollowDecision({
+    activeIndex: 420,
+    rangeStart: 0,
+    rangeEnd: 30,
+    followPending: false,
+    nowMs: 1200,
+    lastFollowMs: 0,
+    throttleMs: 200,
+    editorClientHeight: 760,
+    rowHeight: 156,
+  });
+  assert.equal(decision.shouldShift, true);
+  assert.equal(decision.reason, 'out_of_range');
+  assert.ok(decision.targetScrollTop > 0);
+});
+
+test('resolvePlaybackFollowDecision skips shift when active block is already visible', () => {
+  const decision = resolvePlaybackFollowDecision({
+    activeIndex: 18,
+    rangeStart: 10,
+    rangeEnd: 30,
+    followPending: false,
+    nowMs: 1200,
+    lastFollowMs: 0,
+    throttleMs: 200,
+  });
+  assert.equal(decision.shouldShift, false);
+  assert.equal(decision.reason, 'in_range');
+});
+
+test('resolvePlaybackFollowDecision skips shift while follow render is pending', () => {
+  const decision = resolvePlaybackFollowDecision({
+    activeIndex: 120,
+    rangeStart: 0,
+    rangeEnd: 20,
+    followPending: true,
+    nowMs: 1200,
+    lastFollowMs: 0,
+    throttleMs: 200,
+  });
+  assert.equal(decision.shouldShift, false);
+  assert.equal(decision.reason, 'pending');
+});
+
+test('resolveSeekWarmupRange includes active segment and lookahead window', () => {
+  const range = resolveSeekWarmupRange({
+    activeIndex: 100,
+    totalSegments: 1000,
+    lookahead: 10,
+    overscan: 8,
+  });
+  assert.deepEqual(range, { start: 82, end: 119 });
+});
+
+test('resolveSeekWarmupRange clamps near transcript end', () => {
+  const range = resolveSeekWarmupRange({
+    activeIndex: 95,
+    totalSegments: 100,
+    lookahead: 10,
+    overscan: 8,
+  });
+  assert.deepEqual(range, { start: 77, end: 100 });
+});
+
+test('resolveSeekWarmupReadiness returns ready when active and lookahead are covered', () => {
+  const readiness = resolveSeekWarmupReadiness({
+    rangeStart: 88,
+    rangeEnd: 125,
+    activeIndex: 100,
+    totalSegments: 1000,
+    lookahead: 10,
+  });
+  assert.equal(readiness.isReady, true);
+  assert.equal(readiness.requiredStartInclusive, 90);
+  assert.equal(readiness.requiredEndExclusive, 111);
+});
+
+test('resolveSeekWarmupReadiness returns not ready when lookahead is not covered', () => {
+  const readiness = resolveSeekWarmupReadiness({
+    rangeStart: 90,
+    rangeEnd: 108,
+    activeIndex: 100,
+    totalSegments: 1000,
+    lookahead: 10,
+  });
+  assert.equal(readiness.isReady, false);
+  assert.equal(readiness.requiredStartInclusive, 90);
+  assert.equal(readiness.requiredEndExclusive, 111);
+});
+
+test('resolveSeekPlaybackResumeDecision resumes when warmup is ready', () => {
+  const decision = resolveSeekPlaybackResumeDecision({
+    wasPlaying: true,
+    isWarmupReady: true,
+    nowMs: 100,
+    resumeDeadlineMs: 350,
+  });
+  assert.equal(decision.shouldResume, true);
+  assert.equal(decision.shouldFinalize, true);
+  assert.equal(decision.reason, 'ready');
+});
+
+test('resolveSeekPlaybackResumeDecision resumes on timeout when still not ready', () => {
+  const decision = resolveSeekPlaybackResumeDecision({
+    wasPlaying: true,
+    isWarmupReady: false,
+    nowMs: 400,
+    resumeDeadlineMs: 350,
+  });
+  assert.equal(decision.shouldResume, true);
+  assert.equal(decision.shouldFinalize, true);
+  assert.equal(decision.reason, 'timeout');
+});
+
+test('resolveSeekPlaybackResumeDecision stays pending before timeout', () => {
+  const decision = resolveSeekPlaybackResumeDecision({
+    wasPlaying: true,
+    isWarmupReady: false,
+    nowMs: 200,
+    resumeDeadlineMs: 350,
+  });
+  assert.equal(decision.shouldResume, false);
+  assert.equal(decision.shouldFinalize, false);
+  assert.equal(decision.reason, 'pending');
+});
+
+test('resolveSeekPlaybackResumeDecision finalizes warmup when paused and ready', () => {
+  const decision = resolveSeekPlaybackResumeDecision({
+    wasPlaying: false,
+    isWarmupReady: true,
+    nowMs: 200,
+    resumeDeadlineMs: 350,
+  });
+  assert.equal(decision.shouldResume, false);
+  assert.equal(decision.shouldFinalize, true);
+  assert.equal(decision.reason, 'ready_not_playing');
+});
+
+test('resolveForcedVirtualRange clamps stale ranges and keeps target visible', () => {
+  const resolved = resolveForcedVirtualRange({
+    totalSegments: 12,
+    start: 99,
+    end: 110,
+    fallbackIndex: 9,
+    overscan: 2,
+  });
+  assert.deepEqual(resolved, { start: 7, end: 12 });
+});
+
+test('resolveForcedVirtualRange returns at least one row on inverted ranges', () => {
+  const resolved = resolveForcedVirtualRange({
+    totalSegments: 6,
+    start: 4,
+    end: 2,
+    fallbackIndex: 4,
+    overscan: 2,
+  });
+  assert.equal(resolved.start, 4);
+  assert.equal(resolved.end, 5);
 });
 
 test('resolveCorrectionBootstrapFeedback exposes phase message and processing steps', () => {

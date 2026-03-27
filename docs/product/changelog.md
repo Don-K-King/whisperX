@@ -296,3 +296,31 @@
 - Korrekturmodus zeigt beim Oeffnen jetzt sofort einen Bootstrap-Ladebildschirm statt eines leeren Tabs.
 - Neues Feedback im Ladezustand: Titel Transcript mit Media wird geladen, Spinner sowie sichtbare Processing-Schritte (Arbeitsbereich, Media, Transcript, Session).
 - Ladefehler im Bootstrap-Pfad werden im selben Screen angezeigt und koennen direkt per Erneut versuchen erneut gestartet werden.
+- Korrekturmodus fuer grosse Transkripte beschleunigt: Editor rendert nur noch den sichtbaren Segmentbereich (Windowing statt Voll-DOM).
+- Event-Verarbeitung im Editor auf Delegation umgestellt; dadurch entfallen Massen-Bindings pro Block/Textarea.
+- Media-Sync entlastet: aktive Segmentsuche effizienter und timeupdate gedrosselt.
+- Save/Autosave im Korrekturmodus auf Delta-Operationen umgestellt (update_text) statt Vollpayload-set_segments.
+- Operations-API erweitert: return_mode (ack|changed_segments|full) zur Payload-Reduktion, Default changed_segments.
+- API und Service validieren neue update_text-Operation serverseitig (Segment-Existenz und Textgrenzen).
+
+## 2026-03-27 (Playback Autofocus Follow Fix)
+- Correction mode autoplay focus works again with virtualized editor windows: viewport follows the active media segment reliably.
+- Virtual window anchor now prefers playback progress during active follow mode instead of sticking to stale manual selection.
+- Out-of-range active segment triggers throttled window-shift and re-render, preventing frozen focus while keeping performance gains.
+- Status line shows temporary feedback during follow synchronization: `Aktiven Block synchronisieren ...`.
+
+## 2026-03-27 (Seek Warmup + Autofokus Stabilisierung)
+- Seek ausserhalb des aktuell gerenderten Virtual-Windows fuehrt den Editor jetzt deterministisch auf den Zielblock nach.
+- Fuer Seek wird ein temporaeres Warmup-Fenster mit Zielblock + Lookahead (10 Bloecke) erzwungen, ohne API-Nachladen.
+- Laufende Wiedergabe wird beim Out-of-Window-Seek kurz pausiert und nach Warmup-Ready oder spaetestens nach Timeout fortgesetzt.
+- Waehrend der Nachfuehrung bleibt visuelles Feedback aktiv: `Aktiven Block synchronisieren ...`.
+## 2026-03-27 (Seek/Autofokus Follow Lifecycle Hardening)
+- Fehlerbehebung fuer Seek + Autofokus bei virtualisiertem Editor: Media-Follow-Handler werden nach Media-Reuse am finalen DOM-Node neu gebunden und verlieren den aktuellen Editor-Kontext nicht mehr.
+- Schnelle aufeinanderfolgende Seek-Events verlieren kein Follow-Update mehr: laufende requestAnimationFrame-Follow-Renders werden auf den neuesten Zielsprung aktualisiert.
+- Gap-Seek-Zielauflosung bleibt deterministisch (naechstes Segment, am Ende vorheriges) und Warmup-Fenster deckt target plus/minus 10 (plus Overscan) ab.
+- Virtualisierung fuer variable Blockhoehen wurde gehaertet (Hoehenmessung + Cache + Prefix-basierte Spacer-/Range-Berechnung), um leere Fenster und Scroll-Drift bei grossen Transkripten zu reduzieren.
+## 2026-03-27 (Seek-Render Empty-Window + Autofokus-Drift Fix)
+- Leeres Editorfenster nach Timeline-Seek gehaertet: forced Virtual-Ranges werden jetzt robust geklemmt und mit Fallback auf den aktiven Zielindex abgesichert.
+- Seek-Warmup wird jetzt auch im pausierten Zustand deterministisch finalisiert (Ready oder Timeout), damit das Fenster nicht in inkonsistenten Zwischenzustaenden verbleibt.
+- Autofokus-Drift waehrend Playback reduziert: automatische Zentrierung im Follow-Pfad nutzt direktes Scrollen statt weicher Animation, damit der aktive Block stabil im Sichtbereich bleibt.
+- Seek-/Playback-Follow bleibt performant: Virtualisierung bleibt aktiv, aber Follow-Renders verarbeiten immer das neueste Ziel konsistent.

@@ -188,6 +188,221 @@ export function resolveSelectedSegmentId({ previousSegmentId = '', segments = []
   return segmentIds[0] || null;
 }
 
+export function resolveGapSeekTargetIndex({
+  segments = [],
+  currentTime = 0,
+  activeIndex = -1,
+} = {}) {
+  if (Number.isInteger(activeIndex) && activeIndex >= 0) return activeIndex;
+  if (!Array.isArray(segments) || segments.length === 0) return -1;
+  const time = Number(currentTime);
+  if (!Number.isFinite(time)) return 0;
+  let lo = 0;
+  let hi = segments.length - 1;
+  let candidate = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const start = Number(segments[mid]?.start);
+    if (!Number.isFinite(start)) {
+      lo = mid + 1;
+      continue;
+    }
+    if (start >= time) {
+      candidate = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  if (candidate >= 0) return candidate;
+  return Math.max(0, segments.length - 1);
+}
+
+export function resolveVirtualWindowPreferredIndex({
+  selectedIndex = -1,
+  activeIndex = -1,
+  playbackAnchorIndex = -1,
+  preferPlaybackAnchor = false,
+} = {}) {
+  const selected = Number.isInteger(selectedIndex) ? selectedIndex : -1;
+  const active = Number.isInteger(activeIndex) ? activeIndex : -1;
+  const playbackAnchor = Number.isInteger(playbackAnchorIndex) ? playbackAnchorIndex : -1;
+  if (preferPlaybackAnchor && playbackAnchor >= 0) return playbackAnchor;
+  if (selected >= 0) return selected;
+  if (active >= 0) return active;
+  return -1;
+}
+
+export function resolvePlaybackFollowDecision({
+  activeIndex = -1,
+  rangeStart = 0,
+  rangeEnd = 0,
+  followPending = false,
+  nowMs = 0,
+  lastFollowMs = 0,
+  throttleMs = 200,
+  editorClientHeight = 760,
+  rowHeight = 156,
+} = {}) {
+  const active = Number.isInteger(activeIndex) ? activeIndex : -1;
+  const start = Number.isInteger(rangeStart) ? rangeStart : 0;
+  const end = Number.isInteger(rangeEnd) ? rangeEnd : 0;
+  const last = Number.isFinite(Number(lastFollowMs)) ? Number(lastFollowMs) : 0;
+  const now = Number(nowMs);
+  const throttle = Number.isFinite(Number(throttleMs)) && Number(throttleMs) > 0
+    ? Number(throttleMs)
+    : 200;
+  const viewport = Math.max(280, Number(editorClientHeight) || 760);
+  const safeRowHeight = Math.max(1, Number(rowHeight) || 156);
+  const centeredScrollTop = Math.max(0, (active * safeRowHeight) - (viewport / 2) + (safeRowHeight / 2));
+
+  if (active < 0) {
+    return {
+      shouldShift: false,
+      reason: 'no_active',
+      nextFollowMs: last,
+      targetScrollTop: centeredScrollTop,
+    };
+  }
+  if (followPending) {
+    return {
+      shouldShift: false,
+      reason: 'pending',
+      nextFollowMs: last,
+      targetScrollTop: centeredScrollTop,
+    };
+  }
+  if (active >= start && active < end) {
+    return {
+      shouldShift: false,
+      reason: 'in_range',
+      nextFollowMs: last,
+      targetScrollTop: centeredScrollTop,
+    };
+  }
+  if (Number.isFinite(now) && now - last < throttle) {
+    return {
+      shouldShift: false,
+      reason: 'throttled',
+      nextFollowMs: last,
+      targetScrollTop: centeredScrollTop,
+    };
+  }
+  return {
+    shouldShift: true,
+    reason: 'out_of_range',
+    nextFollowMs: Number.isFinite(now) ? now : last,
+    targetScrollTop: centeredScrollTop,
+  };
+}
+
+export function resolveSeekWarmupRange({
+  activeIndex = -1,
+  totalSegments = 0,
+  lookahead = 10,
+  overscan = 8,
+} = {}) {
+  const active = Number.isInteger(activeIndex) ? activeIndex : -1;
+  const total = Number.isInteger(totalSegments) ? totalSegments : 0;
+  if (active < 0 || total <= 0 || active >= total) return null;
+  const lookaheadCount = Math.max(0, Number.isFinite(Number(lookahead)) ? Number(lookahead) : 10);
+  const overscanCount = Math.max(0, Number.isFinite(Number(overscan)) ? Number(overscan) : 8);
+  const requiredStartInclusive = Math.max(0, active - lookaheadCount);
+  const requiredEndExclusive = Math.min(total, active + lookaheadCount + 1);
+  const start = Math.max(0, requiredStartInclusive - overscanCount);
+  const end = Math.min(total, requiredEndExclusive + overscanCount);
+  return { start, end };
+}
+
+export function resolveSeekWarmupReadiness({
+  rangeStart = 0,
+  rangeEnd = 0,
+  activeIndex = -1,
+  totalSegments = 0,
+  lookahead = 10,
+} = {}) {
+  const start = Number.isInteger(rangeStart) ? rangeStart : 0;
+  const end = Number.isInteger(rangeEnd) ? rangeEnd : 0;
+  const active = Number.isInteger(activeIndex) ? activeIndex : -1;
+  const total = Number.isInteger(totalSegments) ? totalSegments : 0;
+  const lookaheadCount = Math.max(0, Number.isFinite(Number(lookahead)) ? Number(lookahead) : 10);
+  if (active < 0 || total <= 0) {
+    return { isReady: false, requiredStartInclusive: 0, requiredEndExclusive: 0 };
+  }
+  const requiredStartInclusive = Math.max(0, active - lookaheadCount);
+  const requiredEndExclusive = Math.min(total, active + lookaheadCount + 1);
+  const activeVisible = active >= start && active < end;
+  const lookbehindCovered = start <= requiredStartInclusive;
+  const lookaheadCovered = end >= requiredEndExclusive;
+  return {
+    isReady: activeVisible && lookbehindCovered && lookaheadCovered,
+    requiredStartInclusive,
+    requiredEndExclusive,
+  };
+}
+
+export function resolveSeekPlaybackResumeDecision({
+  wasPlaying = false,
+  isWarmupReady = false,
+  nowMs = 0,
+  resumeDeadlineMs = 0,
+} = {}) {
+  if (isWarmupReady) {
+    return {
+      shouldResume: Boolean(wasPlaying),
+      shouldFinalize: true,
+      reason: wasPlaying ? 'ready' : 'ready_not_playing',
+    };
+  }
+  const now = Number(nowMs);
+  const deadline = Number(resumeDeadlineMs);
+  if (Number.isFinite(now) && Number.isFinite(deadline) && now >= deadline) {
+    return {
+      shouldResume: Boolean(wasPlaying),
+      shouldFinalize: true,
+      reason: wasPlaying ? 'timeout' : 'timeout_not_playing',
+    };
+  }
+  if (!wasPlaying) {
+    return { shouldResume: false, shouldFinalize: false, reason: 'pending_not_playing' };
+  }
+  return { shouldResume: false, shouldFinalize: false, reason: 'pending' };
+}
+
+export function resolveForcedVirtualRange({
+  totalSegments = 0,
+  start = 0,
+  end = 0,
+  fallbackIndex = -1,
+  overscan = 8,
+} = {}) {
+  const total = Number.isInteger(totalSegments) ? totalSegments : 0;
+  if (total <= 0) return { start: 0, end: 0 };
+  const safeOverscan = Math.max(0, Number.isFinite(Number(overscan)) ? Number(overscan) : 8);
+  const fallback = Number.isInteger(fallbackIndex)
+    ? Math.min(Math.max(0, fallbackIndex), total - 1)
+    : -1;
+
+  let resolvedStart = Math.floor(Number(start));
+  let resolvedEnd = Math.ceil(Number(end));
+  if (!Number.isFinite(resolvedStart)) resolvedStart = fallback >= 0 ? fallback : 0;
+  if (!Number.isFinite(resolvedEnd)) resolvedEnd = resolvedStart + 1;
+
+  resolvedStart = Math.min(Math.max(0, resolvedStart), total - 1);
+  resolvedEnd = Math.min(total, Math.max(resolvedStart + 1, resolvedEnd));
+
+  const fallbackOutside = fallback >= 0
+    && (fallback < resolvedStart || fallback >= resolvedEnd);
+  if (fallbackOutside) {
+    resolvedStart = Math.max(0, fallback - safeOverscan);
+    resolvedEnd = Math.min(total, fallback + safeOverscan + 1);
+  }
+  return {
+    start: resolvedStart,
+    end: resolvedEnd,
+  };
+}
+
 export function resolveCorrectionBootstrapFeedback({ phase = 'boot' } = {}) {
   const normalizedPhase = String(phase ?? '').trim().toLowerCase();
   const phaseIndex = CORRECTION_BOOTSTRAP_PHASES.findIndex((entry) => entry.id === normalizedPhase);

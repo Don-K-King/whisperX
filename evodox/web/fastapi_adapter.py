@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -152,20 +152,32 @@ def map_transcript_update_response(response: Any) -> dict[str, Any]:
     return {"job_id": response.job_id, "version": response.version, "saved_at": response.saved_at}
 
 
-def map_correction_session_response(response: Any) -> dict[str, Any]:
-    return {
+def map_correction_session_response(response: Any, *, return_mode: str = "full") -> dict[str, Any]:
+    mode = str(return_mode or "full").strip().lower()
+    payload = {
         "session_id": response.session_id,
         "job_id": response.job_id,
         "base_version": response.base_version,
         "working_version": response.working_version,
         "autosave_enabled": response.autosave_enabled,
         "history_index": response.history_index,
-        "segments": response.segments,
         "speaker_labels": response.speaker_labels,
-        "operation_log": response.operation_log,
         "review_status": response.review_status,
         "is_final": response.is_final,
+        "return_mode": mode,
     }
+    if mode == "ack":
+        payload["changed_segments_count"] = len(getattr(response, "changed_segments", []) or [])
+        payload["removed_segments_count"] = len(getattr(response, "removed_segment_ids", []) or [])
+        return payload
+    if mode == "changed_segments":
+        payload["segments"] = list(getattr(response, "changed_segments", []) or [])
+        payload["removed_segment_ids"] = [str(item) for item in (getattr(response, "removed_segment_ids", []) or [])]
+        payload["operation_log"] = response.operation_log
+        return payload
+    payload["operation_log"] = response.operation_log
+    payload["segments"] = response.segments
+    return payload
 
 
 def map_transcript_status_response(response: Any) -> dict[str, Any]:
@@ -258,6 +270,7 @@ def create_fastapi_app(
     class CorrectionSessionOperation(BaseModel):
         type: str = Field(min_length=1, max_length=64)
         segment_id: str | None = None
+        text: str | None = None
         speaker: str | None = None
         start_char: int | None = None
         end_char: int | None = None
@@ -269,6 +282,7 @@ def create_fastapi_app(
     class CorrectionSessionApplyPayload(BaseModel):
         operations: list[CorrectionSessionOperation] = Field(min_length=1)
         autosave_enabled: bool | None = None
+        return_mode: Literal["ack", "changed_segments", "full"] = "changed_segments"
 
     class CorrectionSessionCommitPayload(BaseModel):
         base_version: int
@@ -839,13 +853,14 @@ def create_fastapi_app(
                     session_id=session_id,
                     operations=[item.model_dump(exclude_none=True) for item in payload.operations],
                     autosave_enabled=payload.autosave_enabled,
+                    return_mode=payload.return_mode,
                 ),
                 tenant_id=auth_context.tenant_id,
                 actor_id=auth_context.actor_id,
                 correction_store=transcript_correction_store,
                 audit_log=audit_log,
             )
-            return map_correction_session_response(result)
+            return map_correction_session_response(result, return_mode=payload.return_mode)
         except AuthzError as exc:
             raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except TranscriptValidationError as exc:

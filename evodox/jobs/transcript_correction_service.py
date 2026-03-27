@@ -49,6 +49,7 @@ class CorrectionSessionApplyInput:
     session_id: str
     operations: list[dict[str, Any]]
     autosave_enabled: bool | None = None
+    return_mode: str = "changed_segments"
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,8 @@ class CorrectionSessionResponse:
     operation_log: list[dict[str, Any]]
     review_status: str
     is_final: bool
+    changed_segments: list[dict[str, Any]] | None = None
+    removed_segment_ids: list[str] | None = None
 
 
 class InMemoryTranscriptCorrectionStore:
@@ -279,6 +282,7 @@ def apply_correction_operations(
         updated_segments, summary = _apply_operation(updated_segments, operation)
         summaries.append(summary)
     _validate_segments(updated_segments)
+    diff = _diff_segments(previous=current_segments, current=updated_segments)
 
     history = _clone_history(session.get("history", []))
     index = max(0, int(session.get("history_index", len(history) - 1)))
@@ -306,7 +310,13 @@ def apply_correction_operations(
         },
     )
     status = _get_status(correction_store, tenant_id=tenant_id, job_id=request.job_id)
-    return _map_session(session, status=status)
+    return _map_session(
+        session,
+        status=status,
+        segments_override=updated_segments,
+        changed_segments=diff["changed_segments"],
+        removed_segment_ids=diff["removed_segment_ids"],
+    )
 
 def undo_correction_session(
     *,
@@ -537,7 +547,7 @@ def _require_session(store: Any, *, tenant_id: str, job_id: str, session_id: str
         raise TranscriptValidationError("transcript.correction_session_not_found", "Korrektursitzung nicht gefunden.")
     if str(session.get("job_id")) != str(job_id):
         raise TranscriptValidationError("transcript.correction_session_not_found", "Korrektursitzung nicht gefunden.")
-    return _clone_session(session)
+    return session
 
 
 def _assert_actor(session: dict[str, Any], actor_id: str) -> None:
@@ -546,7 +556,14 @@ def _assert_actor(session: dict[str, Any], actor_id: str) -> None:
         raise TranscriptValidationError("transcript.correction_session_forbidden", "Korrektursitzung gehoert zu anderem Bearbeiter.")
 
 
-def _map_session(session: dict[str, Any], *, status: dict[str, Any] | None = None) -> CorrectionSessionResponse:
+def _map_session(
+    session: dict[str, Any],
+    *,
+    status: dict[str, Any] | None = None,
+    segments_override: list[dict[str, Any]] | None = None,
+    changed_segments: list[dict[str, Any]] | None = None,
+    removed_segment_ids: list[str] | None = None,
+) -> CorrectionSessionResponse:
     resolved_status = status or {
         "review_status": str(session.get("review_status", DEFAULT_REVIEW_STATUS)),
         "is_final": bool(session.get("is_final", False)),
@@ -558,29 +575,38 @@ def _map_session(session: dict[str, Any], *, status: dict[str, Any] | None = Non
         working_version=int(session.get("base_version", 1)) + int(session.get("history_index", 0)),
         autosave_enabled=bool(session.get("autosave_enabled", False)),
         history_index=int(session.get("history_index", 0)),
-        segments=_session_segments(session),
+        segments=_clone_segments(segments_override) if segments_override is not None else _session_segments(session),
         speaker_labels=dict(session.get("speaker_labels", {})),
         operation_log=_session_operation_log(session),
         review_status=str(resolved_status.get("review_status", DEFAULT_REVIEW_STATUS)),
         is_final=bool(resolved_status.get("is_final", False)),
+        changed_segments=_clone_segments(changed_segments or []),
+        removed_segment_ids=[str(item) for item in (removed_segment_ids or []) if str(item).strip()],
     )
 
 
 def _session_segments(session: dict[str, Any]) -> list[dict[str, Any]]:
-    history = _clone_history(session.get("history", []))
+    history_raw = session.get("history", [])
+    history = history_raw if isinstance(history_raw, list) else []
     if len(history) == 0:
         raise TranscriptValidationError("transcript.correction_invalid_session", "Korrektursitzung ist ungueltig.")
     index = max(0, min(int(session.get("history_index", 0)), len(history) - 1))
-    return _clone_segments(history[index].get("segments", []))
+    item = history[index]
+    if not isinstance(item, dict):
+        raise TranscriptValidationError("transcript.correction_invalid_session", "Korrektursitzung ist ungueltig.")
+    return _clone_segments(item.get("segments", []))
 
 
 def _session_operation_log(session: dict[str, Any]) -> list[dict[str, Any]]:
-    history = _clone_history(session.get("history", []))
+    history_raw = session.get("history", [])
+    history = history_raw if isinstance(history_raw, list) else []
     if len(history) == 0:
         return []
     index = max(0, min(int(session.get("history_index", 0)), len(history) - 1))
     log: list[dict[str, Any]] = []
     for item in history[1 : index + 1]:
+        if not isinstance(item, dict):
+            continue
         summary = item.get("summary")
         if isinstance(summary, dict):
             log.append(dict(summary))
@@ -709,6 +735,19 @@ def _apply_operation(segments: list[dict[str, Any]], operation: dict[str, Any]) 
         if replacements == 0:
             raise TranscriptValidationError("transcript.replace_no_match", "Keine passenden Treffer fuer replace_literal gefunden.")
         return updated, {"type": "replace_literal", "replacements": replacements}
+    if op_type == "update_text":
+        segment_id = str(operation.get("segment_id", "")).strip()
+        text = str(operation.get("text", ""))
+        if len(segment_id) == 0:
+            raise TranscriptValidationError("transcript.invalid_operations", "update_text segment_id ist ungueltig.")
+        if len(text) == 0 or len(text) > 5000:
+            raise TranscriptValidationError("transcript.invalid_operations", "update_text text ist ungueltig.")
+        updated = _clone_segments(segments)
+        index = _find_index(updated, segment_id)
+        if index < 0:
+            raise TranscriptValidationError("transcript.invalid_operations", "segment_id wurde nicht gefunden.")
+        updated[index]["text"] = text
+        return updated, {"type": "update_text", "segment_id": segment_id, "text_length": len(text)}
     if op_type == "reassign_speaker":
         segment_id = str(operation.get("segment_id", "")).strip()
         speaker = str(operation.get("speaker", "")).strip()
@@ -737,6 +776,34 @@ def _apply_operation(segments: list[dict[str, Any]], operation: dict[str, Any]) 
         updated = updated[:index] + split + updated[index + 1 :]
         return updated, {"type": "reassign_speaker", "mode": "partial", "created_segments": len(split)}
     raise TranscriptValidationError("transcript.invalid_operations", "Operationstyp wird nicht unterstuetzt.")
+
+
+def _diff_segments(previous: list[dict[str, Any]], current: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    previous_map = {
+        str(item.get("segment_id", "")): item
+        for item in previous
+        if isinstance(item, dict) and str(item.get("segment_id", "")).strip()
+    }
+    current_map = {
+        str(item.get("segment_id", "")): item
+        for item in current
+        if isinstance(item, dict) and str(item.get("segment_id", "")).strip()
+    }
+    changed: list[dict[str, Any]] = []
+    for segment in current:
+        if not isinstance(segment, dict):
+            continue
+        segment_id = str(segment.get("segment_id", "")).strip()
+        if not segment_id:
+            continue
+        previous_segment = previous_map.get(segment_id)
+        if previous_segment is None or previous_segment != segment:
+            changed.append(dict(segment))
+    removed = [segment_id for segment_id in previous_map.keys() if segment_id not in current_map]
+    return {
+        "changed_segments": changed,
+        "removed_segment_ids": removed,
+    }
 
 
 def _split_segment(segment: dict[str, Any], *, start_idx: int, end_idx: int, new_speaker: str) -> list[dict[str, Any]]:

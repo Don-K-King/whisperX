@@ -23,6 +23,11 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Gruppierung der Transcript-Bloecke basiert auf Roh-Speaker-Wechseln; Alias-Gleichheit darf nicht zu stiller Segmentfusion fuehren.
 - Audit-Events muessen Alias-Reads und Alias-Updates nachvollziehbar machen, mindestens mit `tenant_id`, `job_id`, `transcript_version` und `actor_id`.
 
+## Korrekturmodus-Operationen
+- Operationstypen werden serverseitig allowlist-basiert validiert (`set_segments`, `replace_literal`, `reassign_speaker`, `update_text`).
+- `update_text` validiert `segment_id`-Existenz sowie Textgrenzen strikt, damit keine ungueltigen Segmentreferenzen oder leeren Texte persistiert werden.
+- `return_mode` fuer Operations-Responses ist strikt auf `ack|changed_segments|full` begrenzt; unbekannte Werte werden durch Request-Validierung abgewiesen.
+
 ## Upload- und Verarbeitungs-Sicherheit
 - Dateityp-/Signaturprüfung (MIME + Magic Bytes)
 - Maximalgrößen und Ratenlimits

@@ -1,6 +1,4 @@
 import {
-  applyReplaceLiteral,
-  applySpeakerReassign,
   findActiveSegmentIndex,
   formatTimestamp,
   normalizeSegments,
@@ -19,6 +17,13 @@ import {
   resolveMediaSeekTime,
   resolveSpeakerTint,
   resolveSelectedSegmentId,
+  resolveGapSeekTargetIndex,
+  resolveVirtualWindowPreferredIndex,
+  resolvePlaybackFollowDecision,
+  resolveSeekWarmupRange,
+  resolveSeekWarmupReadiness,
+  resolveSeekPlaybackResumeDecision,
+  resolveForcedVirtualRange,
   shouldAutoSeek,
   serializeSidebarSectionState,
   SIDEBAR_SECTION_IDS,
@@ -36,6 +41,10 @@ const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
 const AUTO_SEEK_SELECTION_STORAGE_KEY = 'evodox-correction-auto-seek-selection';
 const EXPORT_MODE_STORAGE_KEY = 'evodox-correction-export-mode';
+const VIRTUAL_ROW_HEIGHT = 156;
+const VIRTUAL_OVERSCAN = 8;
+const SEEK_WARMUP_LOOKAHEAD = 10;
+const SEEK_WARMUP_TIMEOUT_MS = 250;
 
 const state = {
   token: '',
@@ -73,6 +82,26 @@ const state = {
   exportMenuOpen: false,
   lastExportAction: '',
   selectedTextRange: null,
+  segmentIndexById: {},
+  dirtySegmentIds: new Set(),
+  editorScrollTop: 0,
+  editorClientHeight: 760,
+  virtualRange: { start: 0, end: 0 },
+  playbackFollowAnchorSegmentId: null,
+  playbackFollowPending: false,
+  lastPlaybackFollowMs: 0,
+  lastPlaybackTickMs: 0,
+  seekForcedRange: null,
+  seekWarmupTargetIndex: -1,
+  seekWarmupTargetSegmentId: null,
+  seekResumePending: false,
+  seekResumeWasPlaying: false,
+  seekResumeDeadlineMs: 0,
+  seekResumeTimerId: null,
+  segmentHeightById: {},
+  segmentHeightPrefix: [0],
+  segmentHeightCacheDirty: true,
+  initializedTextareaIds: new Set(),
 };
 
 let exportMenuDismissHandler = null;
@@ -170,10 +199,38 @@ async function callApi(path, options = {}) {
 
 function setStatus(message) {
   state.statusMessage = message;
+  syncStatusMessageNodes();
+}
+
+function resolveDisplayedStatusMessage() {
+  if (state.playbackFollowPending) {
+    return 'Aktiven Block synchronisieren ...';
+  }
+  return String(state.statusMessage || '');
+}
+
+function syncStatusMessageNodes() {
+  const message = resolveDisplayedStatusMessage();
   const sidebarNode = document.getElementById('cw-status-message');
   if (sidebarNode) sidebarNode.textContent = message;
   const footerNode = document.getElementById('cw-global-status');
   if (footerNode) footerNode.textContent = message;
+}
+
+function clearSeekResumeTimer() {
+  if (!state.seekResumeTimerId) return;
+  window.clearTimeout(state.seekResumeTimerId);
+  state.seekResumeTimerId = null;
+}
+
+function resetSeekWarmupState() {
+  state.seekForcedRange = null;
+  state.seekWarmupTargetIndex = -1;
+  state.seekWarmupTargetSegmentId = null;
+  state.seekResumePending = false;
+  state.seekResumeWasPlaying = false;
+  state.seekResumeDeadlineMs = 0;
+  clearSeekResumeTimer();
 }
 
 function setTheme(theme) {
@@ -271,7 +328,171 @@ function renderSidebarTreeSection({ id, title, body }) {
 
 function getSelectedSegment() {
   if (!state.selectedSegmentId) return null;
-  return state.segments.find((segment) => String(segment.segment_id) === String(state.selectedSegmentId)) || null;
+  const index = getSegmentIndex(String(state.selectedSegmentId));
+  if (index < 0) return null;
+  return state.segments[index] || null;
+}
+
+function getSegmentIndex(segmentId) {
+  const key = String(segmentId || '');
+  if (!key) return -1;
+  const index = state.segmentIndexById?.[key];
+  return Number.isInteger(index) ? index : -1;
+}
+
+function getSegmentById(segmentId) {
+  const index = getSegmentIndex(segmentId);
+  if (index < 0) return null;
+  return state.segments[index] || null;
+}
+
+function rebuildSegmentIndex() {
+  const map = {};
+  state.segments.forEach((segment, index) => {
+    const key = String(segment?.segment_id || '');
+    if (!key) return;
+    map[key] = index;
+  });
+  state.segmentIndexById = map;
+  state.segmentHeightCacheDirty = true;
+}
+
+function estimateSegmentRowHeight(segment) {
+  const text = String(segment?.text ?? '');
+  const newlineCount = (text.match(/\n/g) || []).length;
+  const textLength = text.length;
+  const wrappedLines = Math.ceil(Math.max(1, textLength) / 120);
+  const totalLines = Math.max(1, newlineCount + wrappedLines);
+  const estimated = 112 + (totalLines * 20);
+  return Math.max(96, estimated);
+}
+
+function getSegmentHeightByIndex(index) {
+  const segment = state.segments[index];
+  if (!segment) return VIRTUAL_ROW_HEIGHT;
+  const segmentId = String(segment.segment_id || '');
+  const cached = Number(state.segmentHeightById?.[segmentId]);
+  if (Number.isFinite(cached) && cached > 20) {
+    return cached;
+  }
+  return estimateSegmentRowHeight(segment);
+}
+
+function updateSegmentHeightCache(segmentId, height) {
+  const key = String(segmentId || '').trim();
+  const next = Number(height);
+  if (!key || !Number.isFinite(next) || next < 20) return false;
+  const previous = Number(state.segmentHeightById?.[key]);
+  if (Number.isFinite(previous) && Math.abs(previous - next) < 2) return false;
+  state.segmentHeightById[key] = next;
+  state.segmentHeightCacheDirty = true;
+  return true;
+}
+
+function rebuildSegmentHeightPrefixIfDirty() {
+  if (!state.segmentHeightCacheDirty && Array.isArray(state.segmentHeightPrefix) && state.segmentHeightPrefix.length === (state.segments.length + 1)) {
+    return;
+  }
+  const prefix = [0];
+  let cumulative = 0;
+  for (let i = 0; i < state.segments.length; i += 1) {
+    cumulative += getSegmentHeightByIndex(i);
+    prefix.push(cumulative);
+  }
+  state.segmentHeightPrefix = prefix;
+  state.segmentHeightCacheDirty = false;
+}
+
+function lowerBoundPrefix(prefix, target) {
+  let lo = 0;
+  let hi = Math.max(0, prefix.length - 1);
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (Number(prefix[mid]) < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function resolveEditorScrollTopForIndex(index) {
+  const targetIndex = Number.isInteger(index) ? index : -1;
+  if (targetIndex < 0) return 0;
+  rebuildSegmentHeightPrefixIfDirty();
+  const prefix = state.segmentHeightPrefix;
+  const viewport = Math.max(280, Number(state.editorClientHeight || 760));
+  const top = Number(prefix[targetIndex] || 0);
+  const bottom = Number(prefix[targetIndex + 1] || top + VIRTUAL_ROW_HEIGHT);
+  const center = (top + bottom) / 2;
+  return Math.max(0, center - (viewport / 2));
+}
+
+function syncVisibleBlockHeightCache(editor) {
+  if (!editor) return false;
+  let changed = false;
+  editor.querySelectorAll('.cw-block[data-segment-id]').forEach((block) => {
+    const segmentId = String(block.getAttribute('data-segment-id') || '');
+    if (!segmentId) return;
+    const measuredHeight = Number(block.getBoundingClientRect().height || block.offsetHeight || 0);
+    if (updateSegmentHeightCache(segmentId, measuredHeight)) {
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function initializeVisibleTextareas(editor) {
+  if (!editor) return;
+  editor.querySelectorAll('[data-text-input]').forEach((node) => {
+    const segmentId = String(node.getAttribute('data-text-input') || '').trim();
+    if (!segmentId) return;
+    if (!state.initializedTextareaIds.has(segmentId)) {
+      autoResizeTextarea(node);
+      state.initializedTextareaIds.add(segmentId);
+    }
+  });
+  syncVisibleBlockHeightCache(editor);
+}
+
+function markSegmentDirty(segmentId) {
+  const key = String(segmentId || '').trim();
+  if (!key) return;
+  state.dirtySegmentIds.add(key);
+  state.pendingSave = true;
+  markUnsavedChanges();
+}
+
+function clearDirtySegments(segmentIds = []) {
+  segmentIds.forEach((segmentId) => {
+    state.dirtySegmentIds.delete(String(segmentId));
+  });
+  if (state.dirtySegmentIds.size === 0) {
+    state.pendingSave = false;
+    clearUnsavedChanges();
+  }
+}
+
+function resetDirtyState() {
+  state.dirtySegmentIds = new Set();
+  state.pendingSave = false;
+  clearUnsavedChanges();
+}
+
+function buildUpdateTextOperationsFromDirtySegments() {
+  if (!(state.dirtySegmentIds instanceof Set) || state.dirtySegmentIds.size === 0) return [];
+  const operations = [];
+  state.dirtySegmentIds.forEach((segmentId) => {
+    const segment = getSegmentById(segmentId);
+    if (!segment) return;
+    operations.push({
+      type: 'update_text',
+      segment_id: String(segment.segment_id),
+      text: String(segment.text ?? ''),
+    });
+  });
+  return operations;
 }
 
 function clearMarkedTextSelection() {
@@ -297,7 +518,7 @@ function updateMarkedTextSelectionFromNode(textNode, segmentId) {
 function seekMediaToSegmentStart(segmentId) {
   const mediaNode = getMediaElement();
   if (!mediaNode || !segmentId) return;
-  const segment = state.segments.find((item) => String(item.segment_id) === String(segmentId));
+  const segment = getSegmentById(segmentId);
   if (!segment) return;
   const seekTime = resolveMediaSeekTime(segment.start);
   if (seekTime == null) return;
@@ -360,7 +581,7 @@ function openPrintPreview({ title, text }) {
 function exportCurrentTranscript(format) {
   try {
     const createdAt = new Date();
-    const segments = collectSegmentsFromDom();
+    const segments = collectSegmentsFromState();
     const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt });
     if (format === 'md') {
       const markdown = buildCorrectionMarkdownExport({
@@ -488,7 +709,7 @@ function syncActiveBlockHighlight(editor) {
 }
 
 function activateSegmentForUi(segmentId, editor) {
-  const nextIndex = state.segments.findIndex((segment) => String(segment.segment_id) === String(segmentId));
+  const nextIndex = getSegmentIndex(segmentId);
   if (nextIndex < 0) return;
   state.activeSegmentIndex = nextIndex;
   syncActiveBlockHighlight(editor);
@@ -520,7 +741,13 @@ function restoreEditorContext(editor, context) {
   syncSelectedBlockHighlight(editor);
   syncSpeakerReassignMeta();
   const node = editor.querySelector(`[data-segment-id="${CSS.escape(String(resolvedSegmentId))}"]`);
-  if (!node) return;
+  if (!node) {
+    const segmentIndex = getSegmentIndex(resolvedSegmentId);
+    if (segmentIndex >= 0) {
+      editor.scrollTop = resolveEditorScrollTopForIndex(segmentIndex);
+    }
+    return;
+  }
   const editorRect = editor.getBoundingClientRect();
   const nodeRect = node.getBoundingClientRect();
   if (nodeRect.top < editorRect.top || nodeRect.bottom > editorRect.bottom) {
@@ -617,8 +844,63 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function resolveVirtualRange() {
+  const total = state.segments.length;
+  if (total === 0) {
+    return { start: 0, end: 0, topSpacer: 0, bottomSpacer: 0 };
+  }
+  rebuildSegmentHeightPrefixIfDirty();
+  const prefix = state.segmentHeightPrefix;
+  const totalHeight = Number(prefix[total] || 0);
+  const selectedIndex = getSegmentIndex(state.selectedSegmentId);
+  const activeIndex = Number.isInteger(state.activeSegmentIndex) ? state.activeSegmentIndex : -1;
+  const playbackAnchorIndex = getSegmentIndex(state.playbackFollowAnchorSegmentId);
+  const followPlaybackAnchor = Boolean(state.playbackFollowAnchorSegmentId)
+    && (state.playbackFollowPending || ((Date.now() - Number(state.lastPlaybackTickMs || 0)) < 1200));
+  const preferredIndex = resolveVirtualWindowPreferredIndex({
+    selectedIndex,
+    activeIndex,
+    playbackAnchorIndex,
+    preferPlaybackAnchor: followPlaybackAnchor,
+  });
+  const forcedRange = state.seekForcedRange;
+  if (forcedRange && Number.isFinite(Number(forcedRange.start)) && Number.isFinite(Number(forcedRange.end))) {
+    const resolvedForcedRange = resolveForcedVirtualRange({
+      totalSegments: total,
+      start: Number(forcedRange.start),
+      end: Number(forcedRange.end),
+      fallbackIndex: preferredIndex,
+      overscan: VIRTUAL_OVERSCAN,
+    });
+    const start = resolvedForcedRange.start;
+    const end = resolvedForcedRange.end;
+    const topSpacer = Number(prefix[start] || 0);
+    const bottomSpacer = Math.max(0, totalHeight - Number(prefix[end] || 0));
+    return { start, end, topSpacer, bottomSpacer };
+  }
+  const viewport = Math.max(280, Number(state.editorClientHeight || 760));
+  const scrollTop = Math.max(0, Math.min(Number(state.editorScrollTop || 0), Math.max(0, totalHeight - viewport)));
+  let start = Math.max(0, lowerBoundPrefix(prefix, scrollTop) - 1 - VIRTUAL_OVERSCAN);
+  let end = Math.min(total, lowerBoundPrefix(prefix, scrollTop + viewport + 1) + VIRTUAL_OVERSCAN);
+  if (end <= start) {
+    end = Math.min(total, start + 1);
+  }
+  if (preferredIndex >= 0) {
+    if (preferredIndex < start || preferredIndex >= end) {
+      start = Math.max(0, preferredIndex - VIRTUAL_OVERSCAN);
+      end = Math.min(total, preferredIndex + VIRTUAL_OVERSCAN + 1);
+    }
+  }
+  const topSpacer = Number(prefix[start] || 0);
+  const bottomSpacer = Math.max(0, totalHeight - Number(prefix[end] || 0));
+  return { start, end, topSpacer, bottomSpacer };
+}
+
 function renderEditorBlocks() {
-  return state.segments.map((segment, index) => {
+  const range = resolveVirtualRange();
+  state.virtualRange = { start: range.start, end: range.end };
+  const rows = state.segments.slice(range.start, range.end).map((segment, relativeIndex) => {
+    const index = range.start + relativeIndex;
     const activeClass = index === state.activeSegmentIndex ? 'active' : '';
     const selectedClass = String(segment.segment_id) === String(state.selectedSegmentId) ? 'selected' : '';
     const speakerLabel = buildSpeakerDisplayLabel({
@@ -636,6 +918,7 @@ function renderEditorBlocks() {
       <article
         class="cw-block ${activeClass} ${selectedClass}"
         data-segment-id="${escapeHtml(segment.segment_id)}"
+        data-segment-index="${index}"
         style="${escapeHtml(tintStyle)}"
       >
         <header class="cw-block-header">
@@ -653,6 +936,11 @@ function renderEditorBlocks() {
       </article>
     `;
   }).join('');
+  return `
+    <div class="cw-virtual-spacer" style="height:${Math.max(0, range.topSpacer)}px"></div>
+    ${rows}
+    <div class="cw-virtual-spacer" style="height:${Math.max(0, range.bottomSpacer)}px"></div>
+  `;
 }
 
 function renderBootstrapScreen() {
@@ -711,12 +999,20 @@ function render() {
     renderBootstrapScreen();
     return;
   }
+  const previousEditor = document.getElementById('cw-editor');
+  if (previousEditor) {
+    state.editorScrollTop = Number(previousEditor.scrollTop || 0);
+    state.editorClientHeight = Number(previousEditor.clientHeight || state.editorClientHeight || 760);
+  }
+  const existingMedia = getMediaElement();
+  const existingMediaSrc = String(existingMedia?.currentSrc || existingMedia?.getAttribute('src') || '').trim();
   const mediaSnapshot = captureMediaPlaybackState();
   const speakerOptions = getSpeakerOptions()
     .map((entry) => `<option value="${escapeHtml(entry.key)}">${escapeHtml(entry.label)}</option>`)
     .join('');
   const theme = document.body.dataset.theme === 'dark' ? 'dark' : 'light';
   const mediaNode = renderMediaNode();
+  const displayedStatusMessage = resolveDisplayedStatusMessage();
   const sidebarToggleLabel = state.sidebarVisible ? 'Sidebar aktiv' : 'Sidebar aus';
   const themeToggleLabel = theme === 'dark' ? 'Dark aktiv' : 'Light aktiv';
   const layoutClass = state.sidebarVisible ? 'cw-layout' : 'cw-layout cw-layout--sidebar-hidden';
@@ -917,12 +1213,12 @@ function render() {
             ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[2], title: 'Sprecherumteilung', body: sidebarReassignBody })}
             ${renderSidebarTreeSection({ id: SIDEBAR_SECTION_IDS[3], title: 'Aenderungslog', body: sidebarChangeLogBody })}
           </section>
-          <p id="cw-status-message" class="cw-status cw-sidebar-status">${escapeHtml(state.statusMessage)}</p>
+          <p id="cw-status-message" class="cw-status cw-sidebar-status">${escapeHtml(displayedStatusMessage)}</p>
         </aside>
         ` : ''}
       </section>
       <footer class="cw-audio">
-        ${mediaNode}
+        <div id="cw-media-slot">${mediaNode}</div>
         <label for="cw-audio-rate">Rate</label>
         <select id="cw-audio-rate">
           <option value="0.75">0.75x</option>
@@ -932,7 +1228,7 @@ function render() {
           <option value="2">2.0x</option>
         </select>
         <span class="cw-status">${escapeHtml(state.mediaLoadError || 'Ursprungsdatei automatisch geladen.')}</span>
-        <span id="cw-global-status" class="cw-status">${escapeHtml(state.statusMessage)}</span>
+        <span id="cw-global-status" class="cw-status">${escapeHtml(displayedStatusMessage)}</span>
       </footer>
       ${state.closePromptVisible ? `
       <section class="cw-modal-backdrop" role="dialog" aria-modal="true" aria-label="Ungespeicherte Aenderungen">
@@ -953,10 +1249,30 @@ function render() {
   const speakerFilterNode = document.getElementById('cw-search-speaker');
   if (speakerFilterNode) speakerFilterNode.value = state.searchSpeaker;
 
+  const shouldReuseMedia = existingMedia
+    && existingMediaSrc
+    && state.mediaSource?.media_url
+    && existingMediaSrc === String(state.mediaSource.media_url).trim();
+  if (shouldReuseMedia) {
+    const mediaSlot = document.getElementById('cw-media-slot');
+    if (mediaSlot?.parentNode) {
+      mediaSlot.replaceWith(existingMedia);
+    }
+  } else {
+    restoreMediaPlaybackState(mediaSnapshot);
+  }
+  const renderedEditor = document.getElementById('cw-editor');
+  if (renderedEditor) {
+    renderedEditor.scrollTop = Math.max(0, Number(state.editorScrollTop || 0));
+    const measured = syncVisibleBlockHeightCache(renderedEditor);
+    if (measured) {
+      state.segmentHeightCacheDirty = true;
+    }
+  }
   bindInteractions();
-  restoreMediaPlaybackState(mediaSnapshot);
   syncExportMenuListeners();
   syncSpeakerReassignMeta();
+  syncStatusMessageNodes();
 }
 
 function renderMediaNode() {
@@ -971,26 +1287,45 @@ function renderMediaNode() {
   return `<audio id="cw-media" data-media-player controls preload="metadata" src="${url}"></audio>`;
 }
 
-function collectSegmentsFromDom() {
-  const updated = normalizeSegments(state.segments);
-  updated.forEach((segment) => {
-    const textNode = document.querySelector(`[data-text-input="${CSS.escape(String(segment.segment_id))}"]`);
-    if (textNode) segment.text = String(textNode.value ?? '');
-  });
-  return updated;
+function collectSegmentsFromState() {
+  return normalizeSegments(state.segments.map((segment) => ({ ...segment })));
 }
 
-async function applySegments(segments, message = 'Aenderungen gespeichert', options = {}) {
+function mergeChangedSegmentsIntoState(changedSegments = [], removedSegmentIds = []) {
+  const removedSet = new Set((removedSegmentIds || []).map((item) => String(item)).filter(Boolean));
+  const changedMap = new Map();
+  (changedSegments || []).forEach((segment) => {
+    const key = String(segment?.segment_id || '').trim();
+    if (!key) return;
+    changedMap.set(key, segment);
+  });
+  const merged = [];
+  for (const segment of state.segments) {
+    const key = String(segment.segment_id || '');
+    if (!key || removedSet.has(key)) continue;
+    if (changedMap.has(key)) {
+      merged.push({ ...segment, ...changedMap.get(key) });
+      changedMap.delete(key);
+      continue;
+    }
+    merged.push(segment);
+  }
+  changedMap.forEach((segment) => {
+    merged.push(segment);
+  });
+  state.segments = normalizeSegments(merged);
+  rebuildSegmentIndex();
+  state.segmentHeightCacheDirty = true;
+}
+
+async function applyOperations(operations, message = 'Aenderungen gespeichert', options = {}) {
+  if (!Array.isArray(operations) || operations.length === 0) return null;
   const editor = document.getElementById('cw-editor');
   const fallbackContext = captureEditorContext(editor);
   const context = options?.editorContext || fallbackContext;
   const payload = {
-    operations: [
-      {
-        type: 'set_segments',
-        segments,
-      },
-    ],
+    operations,
+    return_mode: options.returnMode || 'changed_segments',
   };
   if (state.autosaveEnabled) payload.autosave_enabled = true;
   const result = await callApi(`/api/v1/jobs/${state.jobId}/transcript/correction-sessions/${state.sessionId}/operations`, {
@@ -998,25 +1333,42 @@ async function applySegments(segments, message = 'Aenderungen gespeichert', opti
     body: JSON.stringify(payload),
   });
   patchStateFromSession(result);
-  clearUnsavedChanges();
+  if (Array.isArray(options.clearDirtyIds) && options.clearDirtyIds.length > 0) {
+    clearDirtySegments(options.clearDirtyIds);
+  }
   setStatus(message);
-  render();
-  const renderedEditor = document.getElementById('cw-editor');
-  restoreEditorContext(renderedEditor, context);
+  if (options.renderAfter !== false) {
+    render();
+    const renderedEditor = document.getElementById('cw-editor');
+    restoreEditorContext(renderedEditor, context);
+  }
+  return result;
+}
+
+async function flushDirtyTextOperations(message = 'Draft-Stand gespeichert', options = {}) {
+  const operations = buildUpdateTextOperationsFromDirtySegments();
+  if (operations.length === 0) return false;
+  const dirtyIds = operations.map((operation) => operation.segment_id);
+  await applyOperations(operations, message, {
+    returnMode: options.returnMode || 'ack',
+    renderAfter: options.renderAfter !== false,
+    clearDirtyIds: dirtyIds,
+  });
+  return true;
 }
 
 function scheduleAutosave() {
   state.pendingSave = true;
-  markUnsavedChanges();
   if (!state.autosaveEnabled) return;
   if (state.autosaveTimer) clearTimeout(state.autosaveTimer);
   state.autosaveTimer = setTimeout(async () => {
     state.autosaveTimer = null;
     if (!state.pendingSave) return;
-    state.pendingSave = false;
     try {
-      const segments = collectSegmentsFromDom();
-      await applySegments(segments, 'Autosave-Draft aktualisiert');
+      await flushDirtyTextOperations('Autosave-Draft aktualisiert', {
+        returnMode: 'ack',
+        renderAfter: false,
+      });
     } catch (error) {
       setStatus(`Autosave fehlgeschlagen: ${error.message}`);
     }
@@ -1027,10 +1379,25 @@ function patchStateFromSession(payload) {
   state.sessionId = payload.session_id;
   state.baseVersion = Number(payload.base_version ?? state.baseVersion);
   state.workingVersion = Number(payload.working_version ?? state.workingVersion);
-  state.autosaveEnabled = Boolean(payload.autosave_enabled);
-  state.speakerLabels = payload.speaker_labels ?? {};
-  state.segments = normalizeSegments(payload.segments ?? []);
-  state.operationLog = Array.isArray(payload.operation_log) ? payload.operation_log : [];
+  if (typeof payload.autosave_enabled === 'boolean') {
+    state.autosaveEnabled = payload.autosave_enabled;
+  }
+  if (payload.speaker_labels && typeof payload.speaker_labels === 'object') {
+    state.speakerLabels = payload.speaker_labels;
+  }
+  const returnMode = String(payload.return_mode || 'full').trim().toLowerCase();
+  if (Array.isArray(payload.segments)) {
+    if (returnMode === 'changed_segments') {
+      mergeChangedSegmentsIntoState(payload.segments, payload.removed_segment_ids || []);
+    } else {
+      state.segments = normalizeSegments(payload.segments ?? []);
+      rebuildSegmentIndex();
+      state.segmentHeightCacheDirty = true;
+    }
+  }
+  if (Array.isArray(payload.operation_log)) {
+    state.operationLog = payload.operation_log;
+  }
   state.reviewStatus = String(payload.review_status ?? state.reviewStatus);
   state.isFinal = Boolean(payload.is_final ?? state.isFinal);
   state.selectedSegmentId = resolveContextSegmentId(state.selectedSegmentId);
@@ -1042,48 +1409,73 @@ function patchStateFromSession(payload) {
 function bindInteractions() {
   const editor = document.getElementById('cw-editor');
   if (editor) {
-    editor.querySelectorAll('[data-text-input]').forEach((node) => {
+    initializeVisibleTextareas(editor);
+    const syncNodeSelection = (node) => {
+      if (!node) return;
+      const segmentId = String(node.getAttribute('data-text-input') || '');
+      if (!segmentId) return;
+      state.selectedSegmentId = segmentId;
+      syncSelectedBlockHighlight(editor);
+      updateMarkedTextSelectionFromNode(node, segmentId);
+      syncSpeakerReassignMeta();
+    };
+
+    editor.oninput = (event) => {
+      const node = event.target?.closest?.('[data-text-input]');
+      if (!node) return;
+      const segmentId = String(node.getAttribute('data-text-input') || '');
+      if (!segmentId) return;
+      const index = getSegmentIndex(segmentId);
+      if (index >= 0) {
+        state.segments[index] = {
+          ...state.segments[index],
+          text: String(node.value ?? ''),
+        };
+      }
       autoResizeTextarea(node);
-      const syncNodeSelection = () => {
-        const segmentId = String(node.getAttribute('data-text-input') || '');
-        if (!segmentId) return;
-        state.selectedSegmentId = segmentId;
-        syncSelectedBlockHighlight(editor);
-        updateMarkedTextSelectionFromNode(node, segmentId);
-        syncSpeakerReassignMeta();
-      };
-      node.addEventListener('input', () => {
+      const blockNode = node.closest('.cw-block');
+      if (blockNode) {
+        const blockSegmentId = String(blockNode.getAttribute('data-segment-id') || segmentId);
+        const measuredHeight = Number(blockNode.getBoundingClientRect().height || blockNode.offsetHeight || 0);
+        updateSegmentHeightCache(blockSegmentId, measuredHeight);
+      }
+      markSegmentDirty(segmentId);
+      scheduleAutosave();
+      syncNodeSelection(node);
+    };
+
+    editor.onfocusin = (event) => {
+      const node = event.target?.closest?.('[data-text-input]');
+      if (!node) return;
+      const segmentId = String(node.getAttribute('data-text-input') || '');
+      if (!segmentId) return;
+      const previousSegmentId = String(state.selectedSegmentId || '');
+      state.selectedSegmentId = segmentId;
+      syncSelectedBlockHighlight(editor);
+      activateSegmentForUi(segmentId, editor);
+      maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId: segmentId, source: 'text_focus' });
+      if (!state.initializedTextareaIds.has(segmentId)) {
         autoResizeTextarea(node);
-        scheduleAutosave();
-        syncNodeSelection();
-      });
-      node.addEventListener('select', syncNodeSelection);
-      node.addEventListener('mouseup', syncNodeSelection);
-      node.addEventListener('keyup', syncNodeSelection);
-      node.addEventListener('focus', () => {
-        const segmentId = String(node.getAttribute('data-text-input') || '');
-        if (!segmentId) return;
-        const previousSegmentId = String(state.selectedSegmentId || '');
-        state.selectedSegmentId = segmentId;
-        syncSelectedBlockHighlight(editor);
-        activateSegmentForUi(segmentId, editor);
-        maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId: segmentId, source: 'text_focus' });
-        syncSpeakerReassignMeta();
-      });
-    });
-    editor.querySelectorAll('.cw-block').forEach((blockNode) => {
-      blockNode.addEventListener('click', () => {
-        const nextSegmentId = String(blockNode.dataset.segmentId || '');
-        const previousSegmentId = String(state.selectedSegmentId || '');
-        state.selectedSegmentId = nextSegmentId;
-        syncSelectedBlockHighlight(editor);
-        activateSegmentForUi(nextSegmentId, editor);
-        maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId, source: 'block_click' });
-        syncSpeakerReassignMeta();
-      });
-    });
-    editor.querySelectorAll('[data-segment-jump]').forEach((jumpNode) => {
-      jumpNode.addEventListener('click', (event) => {
+        state.initializedTextareaIds.add(segmentId);
+      }
+      syncSpeakerReassignMeta();
+    };
+
+    editor.onmouseup = (event) => {
+      const node = event.target?.closest?.('[data-text-input]');
+      if (!node) return;
+      syncNodeSelection(node);
+    };
+
+    editor.onkeyup = (event) => {
+      const node = event.target?.closest?.('[data-text-input]');
+      if (!node) return;
+      syncNodeSelection(node);
+    };
+
+    editor.onclick = (event) => {
+      const jumpNode = event.target?.closest?.('[data-segment-jump]');
+      if (jumpNode) {
         event.preventDefault();
         event.stopPropagation();
         const segmentId = String(jumpNode.getAttribute('data-segment-jump') || '');
@@ -1093,8 +1485,32 @@ function bindInteractions() {
         activateSegmentForUi(segmentId, editor);
         seekMediaToSegmentStart(segmentId);
         syncSpeakerReassignMeta();
+        return;
+      }
+      const blockNode = event.target?.closest?.('.cw-block');
+      if (!blockNode) return;
+      const nextSegmentId = String(blockNode.dataset.segmentId || '');
+      const previousSegmentId = String(state.selectedSegmentId || '');
+      state.selectedSegmentId = nextSegmentId;
+      syncSelectedBlockHighlight(editor);
+      activateSegmentForUi(nextSegmentId, editor);
+      maybeAutoSeekToSegment({ previousSegmentId, nextSegmentId, source: 'block_click' });
+      syncSpeakerReassignMeta();
+    };
+
+    let scrollRaf = null;
+    editor.onscroll = () => {
+      state.editorScrollTop = Number(editor.scrollTop || 0);
+      if (scrollRaf) return;
+      scrollRaf = window.requestAnimationFrame(() => {
+        scrollRaf = null;
+        const nextRange = resolveVirtualRange();
+        if (nextRange.start === state.virtualRange.start && nextRange.end === state.virtualRange.end) return;
+        render();
+        const nextEditor = document.getElementById('cw-editor');
+        if (nextEditor) nextEditor.scrollTop = Math.max(0, Number(state.editorScrollTop || 0));
       });
-    });
+    };
   }
 
   const sidebarToggle = document.getElementById('cw-sidebar-toggle');
@@ -1155,8 +1571,11 @@ function bindInteractions() {
   if (saveButton) {
     saveButton.onclick = async () => {
       try {
-        const segments = collectSegmentsFromDom();
-        await applySegments(segments, 'Draft-Stand gespeichert');
+        const changed = await flushDirtyTextOperations('Draft-Stand gespeichert', {
+          returnMode: 'changed_segments',
+          renderAfter: true,
+        });
+        if (!changed) setStatus('Keine Aenderungen zum Speichern');
       } catch (error) {
         setStatus(`Speichern fehlgeschlagen: ${error.message}`);
       }
@@ -1229,7 +1648,7 @@ function bindInteractions() {
           method: 'POST',
         });
         patchStateFromSession(result);
-        clearUnsavedChanges();
+        resetDirtyState();
         setStatus('Ungespeicherte Aenderungen verworfen');
         render();
       } catch (error) {
@@ -1246,7 +1665,7 @@ function bindInteractions() {
           method: 'POST',
         });
         patchStateFromSession(result);
-        clearUnsavedChanges();
+        resetDirtyState();
         setStatus('Letzte Aktion rueckgaengig');
         render();
       } catch (error) {
@@ -1263,7 +1682,7 @@ function bindInteractions() {
           method: 'POST',
         });
         patchStateFromSession(result);
-        clearUnsavedChanges();
+        resetDirtyState();
         setStatus('Aktion wiederhergestellt');
         render();
       } catch (error) {
@@ -1307,20 +1726,29 @@ function bindInteractions() {
   if (replaceValueNode) replaceValueNode.oninput = () => { state.replaceValue = String(replaceValueNode.value ?? ''); };
 
   async function runReplace(replaceAll) {
-    const result = applyReplaceLiteral({
-      segments: collectSegmentsFromDom(),
-      query: state.replaceQuery,
-      replace: state.replaceValue,
-      speaker: state.searchSpeaker || null,
-      replaceAll,
-    });
-    if (!result.replacements) {
-      setStatus('Keine Treffer fuer Ersetzen gefunden');
-      return;
-    }
     try {
-      await applySegments(result.segments, `${result.replacements} Treffer ersetzt`);
+      await flushDirtyTextOperations('Lokale Aenderungen synchronisiert', {
+        returnMode: 'changed_segments',
+        renderAfter: true,
+      });
+      await applyOperations(
+        [{
+          type: 'replace_literal',
+          query: state.replaceQuery,
+          replace: state.replaceValue,
+          speaker: state.searchSpeaker || undefined,
+          replace_all: replaceAll,
+        }],
+        replaceAll ? 'Ersetzen (alle) gespeichert' : 'Ersetzen (ein Treffer) gespeichert',
+        { returnMode: 'full', renderAfter: true },
+      );
+      clearDirtySegments([...state.dirtySegmentIds]);
+      clearMarkedTextSelection();
     } catch (error) {
+      if (String(error?.message || '').includes('replace_no_match')) {
+        setStatus('Keine Treffer fuer Ersetzen gefunden');
+        return;
+      }
       setStatus(`Ersetzen fehlgeschlagen: ${error.message}`);
     }
   }
@@ -1351,19 +1779,23 @@ function bindInteractions() {
         return;
       }
 
-      const next = applySpeakerReassign({
-        segments: collectSegmentsFromDom(),
-        segmentId,
-        speaker,
-        startChar: effectiveRange.startChar,
-        endChar: effectiveRange.endChar,
-      });
-      if (!next.changed) {
-        setStatus('Sprecherumteilung konnte nicht angewendet werden');
-        return;
-      }
       try {
-        await applySegments(next.segments, 'Sprecherumteilung gespeichert');
+        await flushDirtyTextOperations('Lokale Aenderungen synchronisiert', {
+          returnMode: 'changed_segments',
+          renderAfter: true,
+        });
+        const operation = {
+          type: 'reassign_speaker',
+          segment_id: segmentId,
+          speaker,
+          start_char: effectiveRange.startChar,
+          end_char: effectiveRange.endChar,
+        };
+        await applyOperations([operation], 'Sprecherumteilung gespeichert', {
+          returnMode: 'full',
+          renderAfter: true,
+        });
+        clearDirtySegments([...state.dirtySegmentIds]);
         clearMarkedTextSelection();
       } catch (error) {
         setStatus(`Sprecherumteilung fehlgeschlagen: ${error.message}`);
@@ -1381,61 +1813,225 @@ function bindInteractions() {
     mediaNode.playbackRate = Number(audioRateNode.value || '1');
   }
 
-  const centerBlockInEditor = (node) => {
-    if (!editor || !node) return;
-    const editorRect = editor.getBoundingClientRect();
+  const centerBlockInEditor = (node, editorNode = null, behavior = 'smooth') => {
+    const targetEditor = editorNode || document.getElementById('cw-editor');
+    if (!targetEditor || !node) return;
+    const editorRect = targetEditor.getBoundingClientRect();
     const blockRect = node.getBoundingClientRect();
-    const blockOffsetInEditor = blockRect.top - editorRect.top + editor.scrollTop;
-    const targetTop = blockOffsetInEditor - (editor.clientHeight / 2) + (blockRect.height / 2);
-    editor.scrollTo({
+    const blockOffsetInEditor = blockRect.top - editorRect.top + targetEditor.scrollTop;
+    const targetTop = blockOffsetInEditor - (targetEditor.clientHeight / 2) + (blockRect.height / 2);
+    targetEditor.scrollTo({
       top: Math.max(0, targetTop),
-      behavior: 'smooth',
+      behavior,
     });
   };
 
   if (mediaNode) {
-    const syncActiveFromMedia = (selectSegment) => {
-      const nextIndex = findActiveSegmentIndex({ segments: state.segments, currentTime: mediaNode.currentTime });
-      const segmentChanged = nextIndex !== state.activeSegmentIndex;
-      if (segmentChanged) {
-        state.activeSegmentIndex = nextIndex;
-        syncActiveBlockHighlight(editor);
-      }
-      if (nextIndex >= 0) {
-        const segment = state.segments[nextIndex];
-        if (selectSegment) {
-          const segmentId = String(segment.segment_id);
-          if (String(state.selectedSegmentId || '') !== segmentId) {
-            state.selectedSegmentId = segmentId;
-            syncSelectedBlockHighlight(editor);
-            syncSpeakerReassignMeta();
-          }
-        }
-        const node = editor?.querySelector(`[data-segment-id="${CSS.escape(String(segment.segment_id))}"]`);
-        if (segmentChanged && node) {
-          centerBlockInEditor(node);
-        }
+    let lastTimeSyncMs = 0;
+    let playbackFollowRaf = null;
+    const clearPlaybackFollowPending = () => {
+      if (!state.playbackFollowPending) return;
+      state.playbackFollowPending = false;
+      syncStatusMessageNodes();
+    };
+    const evaluateSeekWarmupResume = ({ activeNodePresent = false, forceTimeout = false } = {}) => {
+      if (!state.seekResumePending) return;
+      const readiness = resolveSeekWarmupReadiness({
+        rangeStart: Number(state.virtualRange.start || 0),
+        rangeEnd: Number(state.virtualRange.end || 0),
+        activeIndex: state.seekWarmupTargetIndex,
+        totalSegments: state.segments.length,
+        lookahead: SEEK_WARMUP_LOOKAHEAD,
+      });
+      const nowMs = forceTimeout ? Number(state.seekResumeDeadlineMs || Date.now()) : Date.now();
+      const resumeDecision = resolveSeekPlaybackResumeDecision({
+        wasPlaying: state.seekResumeWasPlaying,
+        isWarmupReady: readiness.isReady && activeNodePresent,
+        nowMs,
+        resumeDeadlineMs: state.seekResumeDeadlineMs,
+      });
+      if (!resumeDecision.shouldFinalize) return;
+      const shouldResumePlayback = resumeDecision.shouldResume;
+      resetSeekWarmupState();
+      clearPlaybackFollowPending();
+      if (shouldResumePlayback) {
+        void mediaNode.play().catch(() => {
+          // Browser policies may block autoplay; keep UI responsive.
+        });
       }
     };
-    mediaNode.ontimeupdate = () => syncActiveFromMedia(false);
-    mediaNode.onseeking = () => syncActiveFromMedia(true);
-    mediaNode.onseeked = () => syncActiveFromMedia(true);
-    mediaNode.onloadedmetadata = () => syncActiveFromMedia(true);
+    const scheduleSeekResumeTimeout = () => {
+      if (!state.seekResumePending) return;
+      clearSeekResumeTimer();
+      const delay = Math.max(0, Number(state.seekResumeDeadlineMs || 0) - Date.now());
+      state.seekResumeTimerId = window.setTimeout(() => {
+        state.seekResumeTimerId = null;
+        evaluateSeekWarmupResume({ activeNodePresent: false, forceTimeout: true });
+      }, delay);
+    };
+    const schedulePlaybackFollowRender = (segmentId, targetScrollTop, options = {}) => {
+      const mode = String(options.mode || 'tick');
+      if (mode === 'seek' && options.seekRange) {
+        state.seekForcedRange = options.seekRange;
+      }
+      state.playbackFollowPending = true;
+      syncStatusMessageNodes();
+      state.editorScrollTop = Math.max(0, Number(targetScrollTop || 0));
+      if (playbackFollowRaf) {
+        window.cancelAnimationFrame(playbackFollowRaf);
+        playbackFollowRaf = null;
+      }
+      playbackFollowRaf = window.requestAnimationFrame(() => {
+        playbackFollowRaf = null;
+        render();
+        const refreshedEditor = document.getElementById('cw-editor');
+        if (refreshedEditor) {
+          refreshedEditor.scrollTop = Math.max(0, Number(state.editorScrollTop || 0));
+        }
+        const activeNode = refreshedEditor?.querySelector(`[data-segment-id="${CSS.escape(String(segmentId))}"]`);
+        if (activeNode) {
+          centerBlockInEditor(activeNode, refreshedEditor, 'auto');
+        }
+        if (mode === 'seek') {
+          evaluateSeekWarmupResume({ activeNodePresent: Boolean(activeNode), forceTimeout: false });
+          if (state.seekResumePending) {
+            scheduleSeekResumeTimeout();
+            return;
+          }
+          state.seekForcedRange = null;
+        }
+        clearPlaybackFollowPending();
+      });
+    };
+    const syncActiveFromMedia = (mode = 'tick') => {
+      const seekMode = mode === 'seek';
+      const detectedIndex = findActiveSegmentIndex({ segments: state.segments, currentTime: mediaNode.currentTime });
+      const nextIndex = seekMode
+        ? resolveGapSeekTargetIndex({
+          segments: state.segments,
+          currentTime: mediaNode.currentTime,
+          activeIndex: detectedIndex,
+        })
+        : detectedIndex;
+      const segmentChanged = nextIndex !== state.activeSegmentIndex;
+      const activeEditor = document.getElementById('cw-editor') || editor;
+      if (segmentChanged) {
+        state.activeSegmentIndex = nextIndex;
+        syncActiveBlockHighlight(activeEditor);
+      }
+      if (nextIndex < 0) {
+        state.playbackFollowAnchorSegmentId = null;
+        resetSeekWarmupState();
+        clearPlaybackFollowPending();
+        return;
+      }
+      const segment = state.segments[nextIndex];
+      if (!segment) return;
+      const segmentId = String(segment.segment_id);
+      state.playbackFollowAnchorSegmentId = segmentId;
+      if (seekMode && String(state.selectedSegmentId || '') !== segmentId) {
+        state.selectedSegmentId = segmentId;
+        syncSelectedBlockHighlight(activeEditor);
+        syncSpeakerReassignMeta();
+      }
+      const node = activeEditor?.querySelector(`[data-segment-id="${CSS.escape(segmentId)}"]`);
+      const followDecision = resolvePlaybackFollowDecision({
+        activeIndex: nextIndex,
+        rangeStart: Number(state.virtualRange.start || 0),
+        rangeEnd: Number(state.virtualRange.end || 0),
+        followPending: state.playbackFollowPending,
+        nowMs: Date.now(),
+        lastFollowMs: state.lastPlaybackFollowMs,
+        throttleMs: 200,
+        editorClientHeight: state.editorClientHeight,
+        rowHeight: VIRTUAL_ROW_HEIGHT,
+      });
+      state.lastPlaybackFollowMs = Number(followDecision.nextFollowMs || state.lastPlaybackFollowMs || 0);
+
+      if (seekMode) {
+        state.seekWarmupTargetIndex = nextIndex;
+        state.seekWarmupTargetSegmentId = segmentId;
+        const warmupRange = resolveSeekWarmupRange({
+          activeIndex: nextIndex,
+          totalSegments: state.segments.length,
+          lookahead: SEEK_WARMUP_LOOKAHEAD,
+          overscan: VIRTUAL_OVERSCAN,
+        });
+        const warmupReadiness = resolveSeekWarmupReadiness({
+          rangeStart: Number(state.virtualRange.start || 0),
+          rangeEnd: Number(state.virtualRange.end || 0),
+          activeIndex: nextIndex,
+          totalSegments: state.segments.length,
+          lookahead: SEEK_WARMUP_LOOKAHEAD,
+        });
+        const requiresSeekShift = !node || !warmupReadiness.isReady;
+        if (requiresSeekShift && warmupRange) {
+          const currentlyPlaying = !mediaNode.paused;
+          if (!state.seekResumePending) {
+            state.seekResumeWasPlaying = currentlyPlaying;
+            state.seekResumePending = true;
+          } else if (currentlyPlaying) {
+            state.seekResumeWasPlaying = true;
+          }
+          state.seekResumeDeadlineMs = Date.now() + SEEK_WARMUP_TIMEOUT_MS;
+          clearSeekResumeTimer();
+          if (currentlyPlaying) {
+            try {
+              mediaNode.pause();
+            } catch {
+              // Ignore pause errors.
+            }
+          }
+          const targetScrollTop = resolveEditorScrollTopForIndex(nextIndex);
+          schedulePlaybackFollowRender(segmentId, targetScrollTop, {
+            mode: 'seek',
+            seekRange: warmupRange,
+          });
+          return;
+        }
+        state.seekForcedRange = null;
+        evaluateSeekWarmupResume({ activeNodePresent: Boolean(node), forceTimeout: false });
+        clearPlaybackFollowPending();
+        if (segmentChanged && node) {
+          centerBlockInEditor(node, activeEditor, 'auto');
+        }
+        return;
+      }
+
+      if (segmentChanged && node) {
+        clearPlaybackFollowPending();
+        centerBlockInEditor(node, activeEditor, 'auto');
+      } else if (segmentChanged && followDecision.shouldShift) {
+        schedulePlaybackFollowRender(segmentId, resolveEditorScrollTopForIndex(nextIndex), { mode: 'tick' });
+      }
+    };
+    mediaNode.ontimeupdate = () => {
+      const now = Date.now();
+      if (now - lastTimeSyncMs < 120) return;
+      lastTimeSyncMs = now;
+      state.lastPlaybackTickMs = now;
+      syncActiveFromMedia('tick');
+    };
+    mediaNode.onseeking = () => syncActiveFromMedia('seek');
+    mediaNode.onseeked = () => syncActiveFromMedia('seek');
+    mediaNode.onloadedmetadata = () => syncActiveFromMedia('seek');
   }
 
   const commitButton = document.getElementById('cw-commit');
   if (commitButton) {
     commitButton.onclick = async () => {
       try {
-        const draftSegments = collectSegmentsFromDom();
-        await applySegments(draftSegments, 'Draft synchronisiert');
+        await flushDirtyTextOperations('Draft synchronisiert', {
+          returnMode: 'changed_segments',
+          renderAfter: true,
+        });
         const result = await callApi(`/api/v1/jobs/${state.jobId}/transcript/correction-sessions/${state.sessionId}/commit`, {
           method: 'POST',
           body: JSON.stringify({ base_version: state.baseVersion, edit_reason: 'Manueller Commit aus Korrekturmodus' }),
         });
         state.baseVersion = Number(result.version ?? state.baseVersion);
         state.workingVersion = state.baseVersion;
-        clearUnsavedChanges();
+        resetDirtyState();
         setStatus(`Version ${state.baseVersion} gespeichert`);
         render();
       } catch (error) {
@@ -1471,7 +2067,10 @@ function bindInteractions() {
     closeSaveButton.onclick = async () => {
       try {
         state.closePromptVisible = false;
-        await applySegments(collectSegmentsFromDom(), 'Draft gespeichert');
+        await flushDirtyTextOperations('Draft gespeichert', {
+          returnMode: 'changed_segments',
+          renderAfter: true,
+        });
         attemptWindowClose();
       } catch (error) {
         setStatus(`Speichern vor dem Schliessen fehlgeschlagen: ${error.message}`);
@@ -1483,7 +2082,7 @@ function bindInteractions() {
   if (closeDiscardButton) {
     closeDiscardButton.onclick = () => {
       state.closePromptVisible = false;
-      clearUnsavedChanges();
+      resetDirtyState();
       render();
       attemptWindowClose();
     };
@@ -1564,7 +2163,7 @@ async function init() {
     });
 
     patchStateFromSession(session);
-    clearUnsavedChanges();
+    resetDirtyState();
     state.isBootstrapping = false;
     state.bootstrapError = '';
     setStatus('Korrektursitzung gestartet');

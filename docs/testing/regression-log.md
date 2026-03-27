@@ -5,6 +5,10 @@
 - Bei Änderungen an Pipeline, Build, Architektur oder Mandantenmodell ist die vollständige Regression verpflichtend.
 
 ## Letzte Änderungen
+- 2026-03-27: Korrekturmodus-Performance-Refactor (Virtualisierung/Event-Delegation/Delta-Operationen) implementiert.
+  - Ausgefuehrt: node --test frontend/tests/*.test.js (69/69 gruen).
+  - Nicht ausfuehrbar in dieser Umgebung: Python-Regression (python/py/uv nicht verfuegbar im PATH).
+  - Offenes Risiko: Backend-Tests fuer neue update_text-/return_mode-Pfade muessen in CI bzw. Python-Runtime nachgezogen werden.
 - 2026-03-06: Teststrategie um Edge-/Abuse-Tests pro Entwicklungsschritt erweitert (Dokumentationsänderung, keine Codepfade geändert, daher keine Regression ausgeführt).
 - 2026-03-06: Spezifikationsfreeze v1 (fachlich/API/Event/Datenmodell/Security/Test) dokumentiert; keine Implementierungsänderung, daher keine Runtime-Regression ausgeführt.
 
@@ -306,3 +310,54 @@
   - `docs/testing/screenshots/correction-editor-validation-error.png`
   - `docs/testing/screenshots/correction-shell-responsive.png`
 - Bewertung: Keine Regression in Playback-/Selection-Logik; Fokuszustand ist visuell klarer erkennbar.
+
+## 2026-03-27 - Regression Korrekturmodus-Performance (Virtualisierung + Delta-Ops)
+- Anlass: Performance-Optimierung fuer grosse Transkripte im Korrekturmodus (Windowing, Delegation, Delta-Operationen `update_text`, `return_mode`).
+- Ausgefuehrt (Frontend Regression): `node --check frontend/correction_workspace.js` und `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 69/69 Tests.
+- Ausgefuehrt (Backend gezielte Regression via Docker): `docker run --rm -v C:\Users\patrick\Evidowhisperx:/work -w /work python:3.11-slim sh -lc "pip install --quiet . fastapi pydantic httpx && python -m unittest tests.test_transcript_correction_service.TranscriptCorrectionServiceTests.test_update_text_operation_updates_target_segment_and_diff_metadata tests.test_transcript_correction_service.TranscriptCorrectionServiceTests.test_update_text_rejects_empty_text tests.test_transcript_correction_http_adapter.TranscriptCorrectionHttpAdapterTests.test_maps_correction_session_response_changed_segments_mode tests.test_transcript_correction_http_adapter.TranscriptCorrectionHttpAdapterTests.test_maps_correction_session_response_ack_mode tests.test_transcript_correction_fastapi_integration.TranscriptCorrectionFastAPIIntegrationTests.test_correction_session_roundtrip_and_commit tests.test_transcript_correction_fastapi_integration.TranscriptCorrectionFastAPIIntegrationTests.test_correction_operations_ack_mode_with_update_text"`.
+- Ergebnis (Backend gezielte Regression): Gruen, 6/6 Tests.
+- Zusatzlauf (Backend Full-Suite Correction via Docker): 31 Tests, 1 Fehler in Legacy-Migrationspfad (`sqlite3.OperationalError: Cannot add a column with non-constant default` bei `test_legacy_session_open_reseeds_and_removes_additive_drift`); nicht im Scope der Delta-/Virtualisierungsänderung.
+- Screenshot-Nachweis (UI-Pflicht): `node scripts/capture_correction_mode_screenshots.mjs` in dieser Umgebung fehlgeschlagen, weil Modul `playwright` fehlt.
+- Reproduktion Screenshot-Nachweis (sobald Abhaengigkeit installiert): `npm --prefix frontend install` und danach `node scripts/capture_correction_mode_screenshots.mjs`.
+
+
+## 2026-03-27 - Regression Playback Autofocus Follow (Virtualized Editor)
+- Anlass: Nach Virtualisierung folgte der sichtbare Editor beim laufenden Media-Playback nicht mehr stabil dem aktiven Segment.
+- Ausgefuehrt (Red): `node --test frontend/tests/correction_workspace_viewmodel.test.js` vor Implementierung, erwarteter Fehler wegen fehlender Exporte (`resolvePlaybackFollowDecision`/`resolveVirtualWindowPreferredIndex`).
+- Ausgefuehrt (Green): `node --check frontend/correction_workspace_viewmodel.js`, `node --check frontend/correction_workspace.js`, `node --test frontend/tests/correction_workspace_viewmodel.test.js`.
+- Ergebnis (Green): Gruen, 29/29 Tests.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 74/74 Tests.
+- Screenshot-Nachweis (UI-Interaktion): `node scripts/capture_correction_mode_screenshots.mjs` in dieser Umgebung fehlgeschlagen (`Cannot find module 'playwright'`).
+- Reproduktion fuer Screenshot-Nachweis: `npm --prefix frontend install` und danach `node scripts/capture_correction_mode_screenshots.mjs`.
+
+## 2026-03-27 - Regression Seek ausserhalb Virtual-Window (Warmup + Resume)
+- Anlass: Slider-Seek auf Positionen ausserhalb des gerenderten Windows lieferte keinen zuverlaessigen Nachzug des Zielblocks.
+- Ausgefuehrt (Syntax): `node --check frontend/correction_workspace_viewmodel.js` und `node --check frontend/correction_workspace.js`.
+- Ausgefuehrt (Unit): `node --test frontend/tests/correction_workspace_viewmodel.test.js`.
+- Ergebnis (Unit): Gruen, 36/36 Tests.
+- Ausgefuehrt (Frontend Regression): `node --test frontend/tests/*.test.js`.
+- Ergebnis (Frontend Regression): Gruen, 81/81 Tests.
+- Screenshot-Nachweis (UI-Interaktion): `node scripts/capture_correction_mode_screenshots.mjs` in dieser Umgebung fehlgeschlagen (`Cannot find module 'playwright'`).
+- Reproduktion fuer Screenshot-Nachweis: `npm --prefix frontend install` und danach `node scripts/capture_correction_mode_screenshots.mjs`.
+## 2026-03-27 - Regression Seek/Autofokus Lifecycle-Hardening (Media-Reuse + Variable Hoehen)
+- Anlass: Bei Seek ausserhalb des Virtual-Windows wurden teils leere Bereiche fokussiert; anschliessend brach Auto-Follow nach Media-Fortschritt sporadisch ab.
+- Ausgefuehrt (Syntax): node --check frontend/correction_workspace_viewmodel.js und node --check frontend/correction_workspace.js.
+- Ergebnis (Syntax): Gruen.
+- Ausgefuehrt (Viewmodel Unit): node --test frontend/tests/correction_workspace_viewmodel.test.js.
+- Ergebnis (Viewmodel Unit): Gruen, 38/38 Tests.
+- Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
+- Ergebnis (Frontend Regression): Gruen, 83/83 Tests.
+- Ausgefuehrt (UI Screenshot-Nachweis): node scripts/capture_correction_mode_screenshots.mjs.
+- Ergebnis (UI Screenshot-Nachweis): Fehlgeschlagen, Abhaengigkeit playwright fehlt (Cannot find module 'playwright').
+- Reproduktion Screenshot-Nachweis: npm --prefix frontend install und danach node scripts/capture_correction_mode_screenshots.mjs.
+## 2026-03-27 - Regression Seek/Autofokus: Empty-Window + Drift
+- Anlass: Bei Seek auf weit entfernte Zeitpunkte wurden teils keine relevanten Bloecke gerendert; bei laufender Wiedergabe driftete der aktive Fokusblock aus dem Sichtfeld.
+- Ausgefuehrt (Red): node --test frontend/tests/correction_workspace_viewmodel.test.js (fehlender Export `resolveForcedVirtualRange` -> erwarteter Red-Start).
+- Ausgefuehrt (Green): node --check frontend/correction_workspace_viewmodel.js, node --check frontend/correction_workspace.js, node --test frontend/tests/correction_workspace_viewmodel.test.js.
+- Ergebnis (Green): Gruen, 41/41 Tests.
+- Ausgefuehrt (Frontend Regression): node --test frontend/tests/*.test.js.
+- Ergebnis (Frontend Regression): Gruen, 86/86 Tests.
+- Screenshot-Nachweis (UI-Interaktion): node scripts/capture_correction_mode_screenshots.mjs in dieser Umgebung nicht ausfuehrbar (Cannot find module 'playwright').
+- Reproduktion Screenshot-Nachweis: npm --prefix frontend install und danach node scripts/capture_correction_mode_screenshots.mjs.

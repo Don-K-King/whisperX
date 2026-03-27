@@ -92,6 +92,10 @@ class TranscriptCorrectionFastAPIIntegrationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(applied.status_code, 200)
+            applied_payload = applied.json()
+            self.assertEqual(applied_payload.get("return_mode"), "changed_segments")
+            self.assertEqual(applied_payload.get("removed_segment_ids"), [])
+            self.assertEqual(applied_payload.get("segments", [])[0]["text"], "Guten Tag")
 
             committed = client.post(
                 f"/api/v1/jobs/job_corr_1/transcript/correction-sessions/{session_id}/commit",
@@ -100,6 +104,67 @@ class TranscriptCorrectionFastAPIIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(committed.status_code, 200)
             self.assertEqual(committed.json()["version"], 3)
+
+    def test_correction_operations_ack_mode_with_update_text(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            transcript_repo = InMemoryTranscriptRepository()
+            correction_store = SQLiteTranscriptCorrectionStore(db_path)
+            transcript_repo.seed(
+                tenant_id="tenant-a",
+                job_id="job_corr_ack",
+                version=1,
+                segments=[
+                    {"segment_id": "seg_1", "start": 0.0, "end": 1.0, "speaker": "S1", "text": "Hallo"}
+                ],
+            )
+
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(base_url="https://minio.local", bucket="uploads"),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+                transcript_correction_store=correction_store,
+            )
+            client = TestClient(app)
+
+            created = client.post(
+                "/api/v1/jobs/job_corr_ack/transcript/correction-sessions",
+                headers={"Authorization": "Bearer token"},
+                json={"base_version": 1, "autosave_enabled": False},
+            )
+            self.assertEqual(created.status_code, 200)
+            session_id = created.json()["session_id"]
+
+            applied = client.post(
+                f"/api/v1/jobs/job_corr_ack/transcript/correction-sessions/{session_id}/operations",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "return_mode": "ack",
+                    "operations": [
+                        {
+                            "type": "update_text",
+                            "segment_id": "seg_1",
+                            "text": "Hallo Welt",
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(applied.status_code, 200)
+            payload = applied.json()
+            self.assertEqual(payload.get("return_mode"), "ack")
+            self.assertEqual(payload.get("changed_segments_count"), 1)
 
     def test_correction_session_create_preserves_timeline_gaps(self):
         from fastapi.testclient import TestClient
