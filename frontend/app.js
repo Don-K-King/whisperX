@@ -5,6 +5,7 @@ import {
   mapTranscriptToSpeakerBlocks,
   nextPollingIntervalMs,
   parseToken,
+  resolveDisplayedProgress,
   sanitizedError,
   uploadFileToPresignedUrl,
 } from './utils.js';
@@ -13,12 +14,17 @@ import {
   loadTranscriptionSettings,
   saveTranscriptionSettings,
 } from './transcription_settings_flow.js';
+import {
+  cleanupExpiredCorrectionHandoffs,
+  createCorrectionHandoff,
+} from './correction_handoff.js';
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed_terminal', 'deleted', 'canceled']);
+const THEME_STORAGE_KEY = 'evodox-theme';
 
 const state = {
   lang: 'de',
-  theme: 'light',
+  theme: loadPersistedTheme(),
   auth: null,
   route: 'login',
   jobs: [],
@@ -26,6 +32,9 @@ const state = {
   uploadProgress: 0,
   pollTimer: null,
   pollIntervalMs: 5000,
+  progressTicker: null,
+  progressModelByJobId: {},
+  activeJob: null,
 };
 
 const i18n = {
@@ -52,6 +61,44 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function openCorrectionWorkspace(jobId) {
+  if (!state.auth?.token || !jobId) {
+    return { ok: false, errorCode: 'correction.missing_context' };
+  }
+  let handoffId = '';
+  try {
+    cleanupExpiredCorrectionHandoffs();
+    handoffId = createCorrectionHandoff({
+      token: state.auth.token,
+      jobId,
+      tenantId: state.auth.tenant_id,
+      theme: state.theme,
+    });
+  } catch (error) {
+    return { ok: false, errorCode: error?.message || 'correction.handoff_failed' };
+  }
+  const workspaceUrl = `./correction_workspace.html?handoff=${encodeURIComponent(handoffId)}`;
+  const popup = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');
+  if (popup) return { ok: true };
+  return { ok: false, errorCode: 'correction.popup_blocked' };
+}
+
+function loadPersistedTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
+function persistTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // ignore persistence errors (private mode / blocked storage)
+  }
 }
 
 async function callApi(path, options = {}) {
@@ -82,6 +129,109 @@ function stopPolling() {
   if (state.pollTimer) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
+  }
+}
+
+function stopProgressTicker() {
+  if (state.progressTicker) {
+    clearInterval(state.progressTicker);
+    state.progressTicker = null;
+  }
+}
+
+function isTerminalJobStatus(statusRaw) {
+  return TERMINAL_JOB_STATUSES.has(String(statusRaw ?? ''));
+}
+
+function formatEtaLabel(etaSeconds) {
+  const seconds = Number(etaSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return 'ca. <1 min verbleibend';
+  const minutes = Math.ceil(seconds / 60);
+  return `ca. ${minutes} min verbleibend`;
+}
+
+function resolveJobProgressView(job, nowMs = Date.now(), options = {}) {
+  if (!job?.job_id) {
+    const progress = deriveProgress(job);
+    return { ...job, progress, progress_display: progress, eta_seconds: null };
+  }
+  const hasFreshServerSnapshot = Boolean(options?.hasFreshServerSnapshot);
+  const modelKey = String(job.job_id);
+  const previousState = state.progressModelByJobId[modelKey] ?? null;
+  const resolved = resolveDisplayedProgress({
+    job,
+    previousState,
+    nowMs,
+    pollIntervalMs: state.pollIntervalMs,
+    hasFreshServerSnapshot,
+  });
+  state.progressModelByJobId[modelKey] = resolved.state;
+  return {
+    ...job,
+    progress: deriveProgress(job),
+    progress_display: resolved.displayProgress,
+    eta_seconds: resolved.etaSeconds,
+  };
+}
+
+function trimProgressModels(activeJobIds = []) {
+  const keep = new Set(activeJobIds.map((value) => String(value)));
+  Object.keys(state.progressModelByJobId).forEach((jobId) => {
+    if (!keep.has(jobId)) {
+      delete state.progressModelByJobId[jobId];
+    }
+  });
+}
+
+function updateDashboardProgressDom() {
+  const nowMs = Date.now();
+  state.jobs = state.jobs.map((job) => resolveJobProgressView(job, nowMs, { hasFreshServerSnapshot: false }));
+  state.jobs.forEach((job) => {
+    const key = String(job.job_id || '');
+    if (!key) return;
+    const progress = Math.max(0, Math.min(100, Number(job.progress_display ?? deriveProgress(job))));
+    const bar = document.querySelector(`[data-progress-bar="${CSS.escape(key)}"]`);
+    if (bar) bar.style.width = `${progress}%`;
+    const label = document.querySelector(`[data-progress-label="${CSS.escape(key)}"]`);
+    if (label) label.textContent = `Progress: ${progress}%`;
+    const etaNode = document.querySelector(`[data-progress-eta="${CSS.escape(key)}"]`);
+    if (etaNode) etaNode.textContent = formatEtaLabel(job.eta_seconds);
+  });
+}
+
+function updateJobDetailProgressDom() {
+  if (!state.activeJob?.job_id) return;
+  state.activeJob = resolveJobProgressView(state.activeJob, Date.now(), { hasFreshServerSnapshot: false });
+  const key = String(state.activeJob.job_id);
+  const progress = Math.max(0, Math.min(100, Number(state.activeJob.progress_display ?? deriveProgress(state.activeJob))));
+  const bar = document.querySelector(`[data-progress-bar="${CSS.escape(key)}"]`);
+  if (bar) bar.style.width = `${progress}%`;
+  const label = document.querySelector(`[data-progress-label="${CSS.escape(key)}"]`);
+  if (label) label.textContent = `Progress: ${progress}%`;
+  const etaNode = document.querySelector(`[data-progress-eta="${CSS.escape(key)}"]`);
+  if (etaNode) etaNode.textContent = formatEtaLabel(state.activeJob.eta_seconds);
+  const timeline = document.querySelector('[data-progress-timeline]');
+  if (timeline) {
+    timeline.innerHTML = jobTimeline(progress, state.activeJob.status);
+  }
+}
+
+function syncProgressTicker() {
+  stopProgressTicker();
+  if (state.route === 'dashboard') {
+    if (!Array.isArray(state.jobs) || state.jobs.length === 0) return;
+    if (!state.jobs.some((job) => !isTerminalJobStatus(job.status))) return;
+    state.progressTicker = setInterval(() => {
+      updateDashboardProgressDom();
+    }, 700);
+    return;
+  }
+  if (state.route.startsWith('job:')) {
+    if (!state.activeJob || isTerminalJobStatus(state.activeJob.status)) return;
+    state.progressTicker = setInterval(() => {
+      updateJobDetailProgressDom();
+    }, 700);
   }
 }
 
@@ -120,6 +270,7 @@ function bindTopbar() {
   });
   document.getElementById('theme-toggle').onclick = () => {
     state.theme = state.theme === 'light' ? 'dark' : 'light';
+    persistTheme(state.theme);
     render();
     void loadRoute();
   };
@@ -130,6 +281,7 @@ function bindTopbar() {
   };
   document.getElementById('logout').onclick = () => {
     stopPolling();
+    stopProgressTicker();
     state.auth = null;
     state.route = 'login';
     render();
@@ -170,13 +322,16 @@ function render() {
 }
 
 function jobCard(job) {
-  const progress = deriveProgress(job);
+  const progress = Math.max(0, Math.min(100, Number(job.progress_display ?? deriveProgress(job))));
+  const jobId = escapeHtml(String(job.job_id ?? ''));
+  const etaLabel = formatEtaLabel(job.eta_seconds);
   return `
     <article class="card">
       <h3>${job.filename ?? String(job.job_id ?? '').slice(0, 10)}</h3>
       <p>Status: ${job.status}</p>
-      <p><small>Progress: ${progress}%</small></p>
-      <div class="progress"><span style="width:${progress}%"></span></div>
+      <p><small data-progress-label="${jobId}">Progress: ${progress}%</small></p>
+      <div class="progress"><span data-progress-bar="${jobId}" style="width:${progress}%"></span></div>
+      <p><small data-progress-eta="${jobId}">${etaLabel}</small></p>
       <p><small>Retention: ${job.retention_months ?? '-'}</small></p>
       <button class="btn-secondary" data-open="${job.job_id}">Open</button>
     </article>
@@ -215,6 +370,9 @@ async function loadRoute({ fromPoll = false } = {}) {
   const app = document.getElementById('app');
   if (!state.auth) {
     stopPolling();
+    stopProgressTicker();
+    state.activeJob = null;
+    trimProgressModels([]);
     return;
   }
   if (!fromPoll) {
@@ -225,7 +383,10 @@ async function loadRoute({ fromPoll = false } = {}) {
   if (state.route === 'dashboard') {
     try {
       const response = await callApi('/api/v1/jobs');
-      state.jobs = (response.jobs ?? []).map((job) => ({ ...job, progress: deriveProgress(job) }));
+      state.activeJob = null;
+      const nowMs = Date.now();
+      state.jobs = (response.jobs ?? []).map((job) => resolveJobProgressView(job, nowMs, { hasFreshServerSnapshot: true }));
+      trimProgressModels(state.jobs.map((job) => job.job_id));
       app.innerHTML = `<h1>${t('dashboard')}</h1><p>${t('jobsub')}</p><div class="card-grid">${state.jobs.map(jobCard).join('')}</div>`;
       document.querySelectorAll('[data-open]').forEach((button) => {
         button.onclick = async () => {
@@ -233,8 +394,10 @@ async function loadRoute({ fromPoll = false } = {}) {
           await loadRoute();
         };
       });
+      syncProgressTicker();
       scheduleNextPoll(200);
     } catch (problem) {
+      stopProgressTicker();
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
       scheduleNextPoll(problem?.status_code ?? 500);
     }
@@ -243,6 +406,9 @@ async function loadRoute({ fromPoll = false } = {}) {
 
   if (state.route === 'new-job') {
     stopPolling();
+    stopProgressTicker();
+    state.activeJob = null;
+    trimProgressModels([]);
     state.uploadProgress = 0;
     app.innerHTML = `
       <h1>${t('newjob')}</h1>
@@ -306,11 +472,13 @@ async function loadRoute({ fromPoll = false } = {}) {
     const jobId = state.route.split(':')[1];
     try {
       const job = await callApi(`/api/v1/jobs/${jobId}`);
-      const progress = deriveProgress(job);
-      const actions = jobActionsForStatus(job.status);
+      state.activeJob = resolveJobProgressView(job, Date.now(), { hasFreshServerSnapshot: true });
+      trimProgressModels([jobId]);
+      const progress = Math.max(0, Math.min(100, Number(state.activeJob.progress_display ?? deriveProgress(state.activeJob))));
+      const actions = jobActionsForStatus(state.activeJob.status);
       let transcriptPanel = '';
       let bindTranscriptInteractions = () => {};
-      if (job.status === 'completed') {
+      if (state.activeJob.status === 'completed') {
         try {
           const transcript = await callApi(`/api/v1/jobs/${jobId}/transcript`);
           const blocks = mapTranscriptToSpeakerBlocks(transcript);
@@ -319,6 +487,8 @@ async function loadRoute({ fromPoll = false } = {}) {
           transcriptPanel = `
             <section class="card">
               <h2>Transcript v${transcriptVersion}</h2>
+              <button id="open-correction-mode" class="btn-secondary">Korrekturmodus öffnen</button>
+              <p id="open-correction-status" class="error"></p>
               <div class="card">
                 <h3>Speaker labels</h3>
                 ${aliases.map((entry, index) => `
@@ -378,6 +548,24 @@ async function loadRoute({ fromPoll = false } = {}) {
                 void saveSpeakerLabels();
               };
             }
+
+            const correctionButton = document.getElementById('open-correction-mode');
+            if (correctionButton) {
+              correctionButton.onclick = () => {
+                const result = openCorrectionWorkspace(jobId);
+                const statusNode = document.getElementById('open-correction-status');
+                if (!statusNode) return;
+                if (result.ok) {
+                  statusNode.textContent = '';
+                  return;
+                }
+                if (result.errorCode === 'correction.popup_blocked') {
+                  statusNode.textContent = 'Neuer Tab/Fenster wurde blockiert. Bitte Popups fuer diese Seite erlauben.';
+                  return;
+                }
+                statusNode.textContent = 'Korrekturmodus konnte nicht geoeffnet werden.';
+              };
+            }
           };
         } catch (problem) {
           transcriptPanel = `<p class="error">${sanitizedError(problem)}</p>`;
@@ -387,10 +575,11 @@ async function loadRoute({ fromPoll = false } = {}) {
       app.innerHTML = `
         <h1>${t('detail')}</h1>
         <p>${jobId}</p>
-        <p><strong>Status:</strong> ${job.status}</p>
-        <p><strong>Progress:</strong> ${progress}%</p>
-        <div class="progress"><span style="width:${progress}%"></span></div>
-        ${jobTimeline(progress, job.status)}
+        <p><strong>Status:</strong> ${state.activeJob.status}</p>
+        <p><strong data-progress-label="${escapeHtml(String(jobId))}">Progress: ${progress}%</strong></p>
+        <div class="progress"><span data-progress-bar="${escapeHtml(String(jobId))}" style="width:${progress}%"></span></div>
+        <p><small data-progress-eta="${escapeHtml(String(jobId))}">${formatEtaLabel(state.activeJob.eta_seconds)}</small></p>
+        <div data-progress-timeline>${jobTimeline(progress, state.activeJob.status)}</div>
         <div class="action-row">
           ${actions.canPause ? '<button id="pause-job" class="btn-secondary">Pause</button>' : ''}
           ${actions.canResume ? '<button id="resume-job" class="btn-secondary">Resume</button>' : ''}
@@ -460,12 +649,15 @@ async function loadRoute({ fromPoll = false } = {}) {
         };
       }
 
-      if (TERMINAL_JOB_STATUSES.has(job.status)) {
+      if (TERMINAL_JOB_STATUSES.has(state.activeJob.status)) {
         stopPolling();
+        stopProgressTicker();
       } else {
+        syncProgressTicker();
         scheduleNextPoll(200);
       }
     } catch (problem) {
+      stopProgressTicker();
       app.innerHTML = `<p class="error">${sanitizedError(problem)}</p>`;
       scheduleNextPoll(problem?.status_code ?? 500);
     }
@@ -474,6 +666,9 @@ async function loadRoute({ fromPoll = false } = {}) {
 
   if (state.route === 'audit') {
     stopPolling();
+    stopProgressTicker();
+    state.activeJob = null;
+    trimProgressModels([]);
     if (!(state.auth.roles ?? []).includes('admin')) {
       app.innerHTML = `<p>${t('notauth')}</p>`;
       return;
@@ -489,6 +684,9 @@ async function loadRoute({ fromPoll = false } = {}) {
 
   if (state.route === 'transcription-settings') {
     stopPolling();
+    stopProgressTicker();
+    state.activeJob = null;
+    trimProgressModels([]);
     if (!(state.auth.roles ?? []).includes('admin')) {
       app.innerHTML = `<p>${t('notauth')}</p>`;
       return;

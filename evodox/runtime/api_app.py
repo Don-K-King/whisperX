@@ -22,6 +22,7 @@ from evodox.jobs.infrastructure import (
     SQLiteTranscriptRepository,
     SQLiteWorkerArtifactStore,
 )
+from evodox.jobs.transcript_correction_store import SQLiteTranscriptCorrectionStore
 from evodox.web.fastapi_adapter import FastAPIAdapterSettings, create_fastapi_app
 
 
@@ -118,6 +119,7 @@ def create_app(*, settings: APIRuntimeSettings | None = None):
         object_storage = LocalObjectStorageCatalog()
 
     transcript_repository = SQLiteTranscriptRepository(runtime_settings.db_path)
+    correction_store = SQLiteTranscriptCorrectionStore(runtime_settings.db_path)
     checkpoint_store = SQLiteJobCheckpointStore(runtime_settings.db_path)
     worker_artifact_store = SQLiteWorkerArtifactStore(runtime_settings.db_path)
 
@@ -139,9 +141,12 @@ def create_app(*, settings: APIRuntimeSettings | None = None):
         object_storage=object_storage,
         outbox=SQLiteOutbox(runtime_settings.db_path),
         transcript_repository=transcript_repository,
+        transcript_correction_store=correction_store,
         checkpoint_store=checkpoint_store,
         worker_artifact_store=worker_artifact_store,
         transcription_settings_store=SQLiteTenantTranscriptionSettingsStore(runtime_settings.db_path),
+        media_base_url=runtime_settings.upload_base_url,
+        media_bucket=runtime_settings.upload_bucket,
     )
 
 

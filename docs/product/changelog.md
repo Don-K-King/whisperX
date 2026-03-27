@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-03-26
+- Frontend-Proxy gehaertet: Nginx nutzt jetzt Docker-DNS-Resolver (127.0.0.11) mit dynamischem API-Upstream, damit /api nach API-Container-Recreate automatisch wieder auf die neue Ziel-IP zeigt.
+- Fehlerbild 502 Bad Gateway nach API-Neustart behoben (kein persistentes Stale-Upstream-Mapping mehr im Frontend-Proxy).
+- Korrekturmodus zeigt und speichert Draft-Segmente wieder als Rohbloecke (keine implizite Zusammenfuehrung gleicher Speaker beim Laden/Speichern).
+- Manuelle Speaker-Zuweisungen im Korrekturmodus behalten Rohblock-Grenzen bei; Segmentgrenzen werden nicht automatisch zusammengezogen.
+- Export bleibt davon entkoppelt: fuer bessere Lesbarkeit kann weiterhin die kompakte Ausgabe verwendet werden.
+- Korrekturmodus Timeline-Fix umgesetzt: Session-Start uebernimmt Segment-Zeitstempel (start/end) jetzt unveraendert aus der Transcript-Version.
+- Seed-Kompaktierung fuer Timeline-Luecken entfernt; Drift gegenueber der Original-Videotimeline wird dadurch nicht mehr kumulativ vergroessert.
+- Korrektur-Validierung angepasst: Luecken sind im Korrekturpfad zulaessig, Overlaps bleiben verboten; ungueltige Zeitwerte (NaN/inf/negativ) werden abgewiesen.
+- Korrektur-Workspace merged Speaker-Bloecke nur noch bei kontiguierlichen Segmenten; Pausen bleiben als echte Timeline-Luecken erhalten.
+- Medien-Sync im Workspace gehaertet: bei Seek in internen Luecken wird kein falscher vorheriger Block mehr als aktiv markiert.
+
+## 2026-03-25
+- Korrekturmodus-Start gegen Legacy-Runtime-DB stabilisiert: Session-Erstellung ist jetzt schema-kompatibel, auch wenn alte transcript_correction_sessions noch expires_at NOT NULL erzwingen.
+- 404/500-Fehlerbild beim Start des Korrekturmodus im Docker-Zielbetrieb beseitigt; Session-Start (POST /api/v1/jobs/{id}/transcript/correction-sessions) liefert wieder erfolgreich 200.
+- Korrektur-Startfluss gehaertet: tabuebergreifender Handover (single-use + TTL) statt sessionStorage-Bindung, damit neue Tabs/Fenster stabil bootstrappen.
+- Korrekturmodus startet jetzt ausschliesslich in neuem Tab/Fenster; In-Tab-Fallback wurde entfernt.
+- Neue API GET /api/v1/jobs/{id}/media-source eingefuehrt; Workspace laedt Audio/Video automatisch ohne manuelle Dateiauswahl.
+- UX verbessert: Sidebar/Topbar/Audioleiste fixiert, nur Editor scrollt; Audio-Fokus wird im Editor zentriert; Schliessen-Flow mit Speichern | Verwerfen | Abbrechen hinzugefuegt.
+- Korrekturmodus uebernimmt jetzt konsolidierte Sprecherbloecke (konsekutive gleiche Speaker) inkl. zusammengefuehrter Zeitfenster.
+
 ## 2026-03-23
 - Speaker-Diarization im Docker-Zielbetrieb stabilisiert: Legacy-Modell pyannote/speaker-diarization wird auf pyannote/speaker-diarization-community-1 normalisiert.
 - Worker-Defaults und Deploy-Compose-Defaults auf pyannote/speaker-diarization-community-1 angehoben, um diarization_fallback mit UNKNOWN-Only-Transkripten zu vermeiden.
@@ -174,3 +195,157 @@
 - Worker setzt --language nur wenn Sprache ungleich auto ist.
 - Tenant-Admin Transcription-Settings wurden um chunk_size, vad_onset, vad_offset erweitert; serverseitige Validation und CLI-Wiring (--chunk_size, --vad_onset, --vad_offset) sind aktiv.
 - Rueckwaertskompatibilitaet: Jobs/Settings ohne neue Felder laufen weiterhin ueber sichere Defaults.
+
+## 2026-03-24
+- Neuer Korrekturmodus eingefuehrt: dedizierter Workspace mit Session-basiertem Draft (`create/get/patch/apply/undo/redo/discard/commit`).
+- Transcript-Status erweitert: `review_status` und `is_final` ueber neuen API-Pfad `PATCH /api/v1/jobs/{id}/transcript/status`.
+- Timeline-Schutz verschaerft: Korrektur-Operationen blockieren Overlaps/Luecken und invaliden Segmentzuschnitt.
+- Segment-IDs im Transcript-Output stabilisiert; fehlende IDs werden deterministisch normalisiert.
+- Frontend erweitert: Korrekturmodus kann aus Job-Detail in eigenem Fenster geoeffnet werden.
+- Neuer Korrektur-Workspace: Fliesstext-Bearbeitung, Suche/Ersetzen, Sprecher-Umteilung, Undo/Redo, Verwerfen, Draft-Speichern, Commit, Audio-Mitfuehrung.
+- Testabdeckung erweitert um Correction-Service/Store/HTTP-Mapping sowie neue Frontend-Utils fuer Korrekturmodus.
+- Screenshot-Automation fuer Korrekturmodus hinzugefuegt (`scripts/capture_correction_mode_screenshots.mjs`).
+
+
+## 2026-03-25
+- Korrekturmodus-Sidebar als aufklappbarer Baum umgesetzt (Status, Suche/Ersetzen, Sprecherumteilung, Aenderungslog).
+- Offene/geschlossene Baumknoten werden nun pro Nutzer lokal persistent gespeichert.
+- Sidebar-Layout entkoppelt: eigener Scrollbereich verhindert Ueberdeckung mit Audio-Footer bei langen Menues.
+- Frontend-Viewmodel-Tests fuer Sidebar-Baumzustand/Persistenz erweitert.
+- Pflicht-Screenshots fuer Korrekturmodus nach UI-Aenderung aktualisiert (Default, Validierung, Responsive).
+
+## 2026-03-25
+- Korrekturmodus Sprecherumteilung erweitert: Block auswaehlen, Text im Block markieren und direkt als anderen Sprecher anwenden.
+- Segment-Split bei Sprecherumteilung validiert: Zeitstempel werden proportional zu den Textteilen aufgeteilt (links/mittel/rechts).
+- Sprecherumteilungs-UI vereinfacht (ohne manuelle Start/End-Char-Eingabe), inklusive Markierungs-Feedback im Sidebar-Panel.
+
+## 2026-03-25
+- Markierte Textpassagen im Korrekturmodus bleiben bei Sidebar-Interaktionen (z.B. Sprecherauswahl/Statusklicks) erhalten; Aufhebung nur durch neue gueltige Markierung im Transkript oder Segmentwechsel nach Datenaenderung.
+- Beim Auswaehlen/Fokussieren eines Transcript-Blocks springt Audio/Video automatisch auf den Block-Startzeitpunkt (ohne Autoplay), sodass direkt mit Play gestartet werden kann.
+
+## 2026-03-25
+- Korrekturmodus Audio-Text-Sync gehaertet: Beim manuellen Seeken (Slider/seeked/metadata) wird der aktive Transcript-Block jetzt sofort aktualisiert, auch im Pause-Zustand.
+- Klick/Fokus auf einen Transcript-Block setzt die aktive Blockmarkierung deterministisch und springt Medien auf Segmentstart, ohne doppelte Markierung auf vorherigem Block.
+- Segmentgrenzen explizit abgesichert: Boundary-Mapping bleibt konsistent in beide Richtungen (Text->Media, Media->Text).
+
+## 2026-03-25
+- Hybrid-Seek im Korrekturmodus umgesetzt: automatischer Sprung auf Blockstart nur noch bei echtem Blockwechsel, kein Ruecksprung mehr bei Refokus/Edit im selben Block.
+- Pro Transcript-Block wurde ein expliziter Jump-Button (keyboard-accessible) ergaenzt, um gezielt auf den Blockstart im Media zu springen.
+- Media->Text-Sync bei Slider/Seek gestaerkt: beim Seeken wird der passende Block weiterhin automatisch aktiv und zusaetzlich als Auswahl uebernommen.
+
+## 2026-03-25
+- Bedienbarkeit im Korrekturmodus verbessert: Nach Sprecherzuweisung bleibt der Editor im bearbeiteten Bereich; Scrollposition und Segmentkontext werden nach Rendern wiederhergestellt.
+- Neue Header-Option Auto-Sprung Media eingefuehrt (persistiert): automatischer Sprung auf Blockstart kann aktiviert/deaktiviert werden.
+- Header-Layout neu gegliedert (Meta, Aktionen, Optionen) sowie konsistentes Button-Styling mit dezentem Hover-/Active-Effekt umgesetzt.
+
+## 2026-03-25
+- Korrekturmodus-Editor passt Textblockhoehen jetzt automatisch an den Inhalt an; interne Scrollbalken in den Bloecken entfallen.
+- Neue Exportfunktion direkt im Korrekturmodus: Download als Markdown (.md), PDF (.pdf) und Word-kompatibel (.doc/RTF).
+- Header-Layout weiter gegliedert und Export-Aktionen integriert, inklusive konsistenter dezent hervorgehobener Action-Buttons.
+
+## 2026-03-26 - Legacy-Reseed gegen additive Timeline-Drift
+- Korrekturmodus-Session-Start akzeptiert jetzt optional `force_reseed_from_transcript` und kann damit bei Legacy-Session-Resume den Draft auf aktuelle Transcript-Segmente (absolute Timeline) zuruecksetzen.
+- Legacy-Resume-Fall wird fix-forward behandelt: `history[0]` wird reseeded, `history_index` auf `0` gesetzt und Drift aus historisch kompaktierter Draft-Historie entfernt.
+- End-Pause-Verhalten im Workspace gehaertet: fuer `currentTime > lastEnd` wird kein aktiver Block mehr markiert.
+
+## 2026-03-26 (Korrektur-Export Lesbarkeit)
+- Korrektur-Workspace Export erweitert: neuer Modus `compact|raw` (Default `compact`) ohne Backend-API-Aenderung.
+- Kompaktmodus nutzt Dashboard-Semantik (konsekutive gleiche Speaker werden zusammengefuehrt, Speakerwechsel bleiben getrennt).
+- Zeitachsenpraezision bleibt erhalten: kompakte Bloecke behalten absolute `start/end` Grenzen (keine Timeline-Kompaktierung).
+- Exportlayout vereinheitlicht: Speaker + Zeitrange in einer Zeile, Text darunter; Header mit Job-/Session-/Versions-Metadaten und UTC-Exportzeitpunkt.
+
+
+## 2026-03-26 (Korrekturmodus Seed-Overlap Hotfix)
+- Fehlerbehebung fuer `transcript.timeline_overlap` beim Start des Korrekturmodus: kleine Rundungs-Ueberlappungen in bestehenden Transcript-Zeitstempeln werden beim Session-Seed automatisch auf den vorherigen Segment-Endpunkt gesnappt (50ms Toleranz).
+- Strikte Safety bleibt erhalten: groessere Overlaps werden weiterhin mit `transcript.timeline_overlap` abgewiesen.
+- Zukuenftige Erstmaterialisierung aus Worker-Artefakten haertet die Timeline ebenfalls gegen kleine Rundungs-Ueberlappungen.
+
+## 2026-03-26 (Korrekturmodus UI-Modernisierung)
+- Korrekturmodus-Header modernisiert: neues 3-Zonen-Layout (Meta, Hauptaktionen, Utility-Toggles) mit klarerer visueller Hierarchie und kompakter Sticky-Darstellung.
+- Export im Header auf Icon + Dropdown-Submenue umgestellt (Drucken, Markdown, PDF, Word) inkl. integrierter Exportmodus-Wahl `Kompakt|Rohdaten`.
+- Header-Toggles auf Aktiv/Inaktiv-Pills umgebaut (Autosave, Auto-Sprung, Sidebar, Theme) mit `aria-pressed` fuer verbesserte Tastatur-/Screenreader-Bedienung.
+- Segmentkarten im Korrekturmodus erhalten eine stabile, sehr dezente Speaker-Farbkodierung (deterministisch pro Speaker-Key, neutraler UNKNOWN-Fallback) fuer bessere visuelle Zuordnung.
+- UI-Feinschliff fuer Lesbarkeit und Orientierung: ruhigeres Spacing, konsistente Button-/Chip-Proportionen, praezisere Hover-/Fokus-Zustaende und verbesserte Responsive-Umbrueche.
+
+## 2026-03-26 (Korrekturmodus UI-Feinschliff: Header + Media-Stabilitaet)
+- Header-Container im Korrekturmodus auf abgerundete Kanten umgestellt und visuell an die uebrigen Grids angeglichen.
+- Header-Buttons vereinheitlicht (konsistente Hoehe/Breitenlogik pro Button-Gruppe) fuer ein ruhigeres, modernes Gesamtbild.
+- Light-Mode-Farbkonzept fuer Buttons geschaerft: alle Buttons heben sich klarer von der Flaeche ab, inklusive konsistenter Hover-Zustaende.
+- Speaker-spezifische Blockeinfaerbung im Transcript dezent verstaerkt (leichter Tint + subtile farbige Akzentkante pro Sprecher).
+- Media-Playback bleibt bei UI-Aktionen erhalten (Zeitposition, Play/Pause, Rate, Lautstaerke), sodass Header-/Status-Aktionen das laufende Medium nicht mehr resetten.
+- Sidebar-Baum startet jetzt standardmaessig eingeklappt; initial sind nur die Menuepunkte sichtbar.
+
+## 2026-03-26 (Korrekturmodus Header-Kompaktlayout + Icon-Toolbar)
+- Header im Korrekturmodus stark verdichtet (ca. halbierte vertikale Flaeche) und von 3-Spalten-Layout auf platzsparende Toolbar-Anordnung umgestellt.
+- Aktionen neu geordnet: kompakte Action-Cluster mit Icon-Buttons fuer Speichern, Drucken, Undo und Redo; Tooltip-Texte liefern die Bezeichnung im Hover.
+- Export-Menue als platzsparender Icon-Trigger umgesetzt; Utility-Toggles auf kurze Labels in kompakter Reihe reduziert.
+- Header-Buttons in Groesse/Abstand vereinheitlicht, damit ein konsistentes und modernes Bedienbild entsteht.
+
+## 2026-03-26 (Header-Reflow + Statuszeile + Toggle-Farbsemantik)
+- Korrekturmodus-Header auf 2 Bereiche umgebaut: oben vollbreite Aktionsleiste, unten kompakte Statuszeile (`Job`, `B`, `W`, `Review`, `Final`).
+- Beschriftung `Korrekturmodus` im Header entfernt; Statusinfos in eigene Footer-Zeile des Headers verschoben.
+- Aktionsleiste nutzt jetzt die volle Breite mit kompakter Toolbar-Anordnung (Main- und State-Controls).
+- `Autosave` und `Auto-Sprung` haben explizite Aktiv/Inaktiv-Farbsemantik: aktiv gruen, inaktiv leicht rot.
+- Sprecher-Blockfarben deutlich verstaerkt (kraeftigere Palette + staerkerer Rahmen-/Akzentkontrast) fuer klarere visuelle Unterscheidung.
+
+## 2026-03-26 (Block-Fokus Hervorhebung)
+- Fokusdarstellung der Transcript-Bloecke deutlich verstaerkt: aktive/selektierte Bloecke erhalten klarere Akzentfarbe, staerkere Outline und sichtbareren Left-Accent.
+- Kombinierter Zustand `active + selected` wurde explizit gehaertet, damit der aktuelle Media-Block waehrend Playback eindeutig erkennbar bleibt.
+
+## 2026-03-27
+- Korrekturmodus zeigt beim Oeffnen jetzt sofort einen Bootstrap-Ladebildschirm statt eines leeren Tabs.
+- Neues Feedback im Ladezustand: Titel Transcript mit Media wird geladen, Spinner sowie sichtbare Processing-Schritte (Arbeitsbereich, Media, Transcript, Session).
+- Ladefehler im Bootstrap-Pfad werden im selben Screen angezeigt und koennen direkt per Erneut versuchen erneut gestartet werden.
+- Korrekturmodus fuer grosse Transkripte beschleunigt: Editor rendert nur noch den sichtbaren Segmentbereich (Windowing statt Voll-DOM).
+- Event-Verarbeitung im Editor auf Delegation umgestellt; dadurch entfallen Massen-Bindings pro Block/Textarea.
+- Media-Sync entlastet: aktive Segmentsuche effizienter und timeupdate gedrosselt.
+- Save/Autosave im Korrekturmodus auf Delta-Operationen umgestellt (update_text) statt Vollpayload-set_segments.
+- Operations-API erweitert: return_mode (ack|changed_segments|full) zur Payload-Reduktion, Default changed_segments.
+- API und Service validieren neue update_text-Operation serverseitig (Segment-Existenz und Textgrenzen).
+
+## 2026-03-27 (Playback Autofocus Follow Fix)
+- Correction mode autoplay focus works again with virtualized editor windows: viewport follows the active media segment reliably.
+- Virtual window anchor now prefers playback progress during active follow mode instead of sticking to stale manual selection.
+- Out-of-range active segment triggers throttled window-shift and re-render, preventing frozen focus while keeping performance gains.
+- Status line shows temporary feedback during follow synchronization: `Aktiven Block synchronisieren ...`.
+
+## 2026-03-27 (Seek Warmup + Autofokus Stabilisierung)
+- Seek ausserhalb des aktuell gerenderten Virtual-Windows fuehrt den Editor jetzt deterministisch auf den Zielblock nach.
+- Fuer Seek wird ein temporaeres Warmup-Fenster mit Zielblock + Lookahead (10 Bloecke) erzwungen, ohne API-Nachladen.
+- Laufende Wiedergabe wird beim Out-of-Window-Seek kurz pausiert und nach Warmup-Ready oder spaetestens nach Timeout fortgesetzt.
+- Waehrend der Nachfuehrung bleibt visuelles Feedback aktiv: `Aktiven Block synchronisieren ...`.
+## 2026-03-27 (Seek/Autofokus Follow Lifecycle Hardening)
+- Fehlerbehebung fuer Seek + Autofokus bei virtualisiertem Editor: Media-Follow-Handler werden nach Media-Reuse am finalen DOM-Node neu gebunden und verlieren den aktuellen Editor-Kontext nicht mehr.
+- Schnelle aufeinanderfolgende Seek-Events verlieren kein Follow-Update mehr: laufende requestAnimationFrame-Follow-Renders werden auf den neuesten Zielsprung aktualisiert.
+- Gap-Seek-Zielauflosung bleibt deterministisch (naechstes Segment, am Ende vorheriges) und Warmup-Fenster deckt target plus/minus 10 (plus Overscan) ab.
+- Virtualisierung fuer variable Blockhoehen wurde gehaertet (Hoehenmessung + Cache + Prefix-basierte Spacer-/Range-Berechnung), um leere Fenster und Scroll-Drift bei grossen Transkripten zu reduzieren.
+## 2026-03-27 (Seek-Render Empty-Window + Autofokus-Drift Fix)
+- Leeres Editorfenster nach Timeline-Seek gehaertet: forced Virtual-Ranges werden jetzt robust geklemmt und mit Fallback auf den aktiven Zielindex abgesichert.
+- Seek-Warmup wird jetzt auch im pausierten Zustand deterministisch finalisiert (Ready oder Timeout), damit das Fenster nicht in inkonsistenten Zwischenzustaenden verbleibt.
+- Autofokus-Drift waehrend Playback reduziert: automatische Zentrierung im Follow-Pfad nutzt direktes Scrollen statt weicher Animation, damit der aktive Block stabil im Sichtbereich bleibt.
+- Seek-/Playback-Follow bleibt performant: Virtualisierung bleibt aktiv, aber Follow-Renders verarbeiten immer das neueste Ziel konsistent.
+## 2026-03-27 (Scrollbar-Seek im Editor: Empty-Window Fix)
+- Virtual-Window-Pinning auf ausgewaehlte Segmente wird beim manuellen Scrollen nicht mehr erzwungen; das Renderfenster folgt wieder der echten Scrollposition.
+- Damit werden leere Blockbereiche beim Springen mit der Editor-Scrollbar verhindert.
+- Bei manuellem Scrollen wird ein aktiver Seek-Warmup-Zwischenzustand sauber beendet, damit keine stale forced ranges das Rendering blockieren.
+## 2026-03-27 (Adaptive Virtual-Window Strategie)
+- Virtualisierung im Korrekturmodus nutzt jetzt adaptive Fenstergroessen statt statischem Verhalten.
+- Profile umgesetzt: bis 300 Segmente voll rendern, bis 600 Segmente grosses Arbeitsfenster (450), darueber adaptive Fenster (300/240/180 je nach Segmentmenge).
+- Ziel: fuer kleine/mittlere Medien deutlich weniger Nachlade-Wahrnehmung bei Scroll-/Seek-Spruengen, ohne den Main-Thread bei sehr grossen Transkripten zu ueberlasten.
+
+## 2026-03-27 (Dashboard/Jobdetail: aktiver Progress-Balken)
+- Dashboard- und Jobdetail-Fortschrittsanzeige vereinheitlicht: beide Views nutzen nun dieselbe zentrale Progress-Interpolation als UI-Schicht auf den bestehenden Server-Milestones.
+- Sichtbarer Zwischenfortschritt zwischen seltenen Backend-Updates eingefuehrt (monoton, ohne Rueckschritte, mit hartem Clamping am naechsten Milestone).
+- Terminale Status (`completed`, `failed_terminal`, `canceled`, `deleted`) beenden die Interpolation sofort und zeigen den finalen Serverwert.
+- ETA-Anzeige als leichte Heuristik ergaenzt (`ca. x min verbleibend`), mit Fallback bei fehlender Dateigroesse.
+- Robustheit gehaertet: bei Polling-Fehlern wird die Interpolation gestoppt; bei erfolgreichem Poll synchronisiert die Anzeige wieder auf den Serverzustand.
+
+## 2026-03-27 (Progress Freeze Fix: Jobdetail + Dashboard konsistent)
+- Fehlerbehebung fuer eingefrorenen Interpolationsfortschritt im Jobdetail (typisch bei ~28%): erfolgreiche Poll-Snapshots setzen jetzt einen Freshness-Heartbeat, auch wenn `status/progress` unveraendert bleiben.
+- Dadurch bleibt die Interpolation zwischen Milestones aktiv, statt nach der Stale-Grenze frueh zu stoppen.
+- Dashboard und Jobdetail nutzen denselben Heartbeat-Mechanismus und bleiben beim Wechsel zwischen Ansichten kongruent.
+
+## 2026-03-27 (Progresskurve >59% ohne fruehes 99%-Kleben)
+- Interpolations-Cap fuer `processing` auf UI-seitig bis max. 99% erweitert, damit der Balken nicht bei 59% stehenbleibt.
+- Zeitkurve verlangsamt: interne Phasendauer nutzt jetzt groessere Obergrenze, damit lange Jobs nicht schon nach kurzer Zeit auf 99% laufen.
+- Ergebnis: sichtbarer Fortschritt ueber 59% hinaus, ohne 100% vor `completed`.

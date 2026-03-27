@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 from evodox.auth.context import AuthzError, authorize_request
@@ -22,6 +23,23 @@ from evodox.jobs.transcript_service import (
     get_transcript,
     update_transcript,
     update_transcript_speaker_labels,
+)
+from evodox.jobs.transcript_correction_service import (
+    CorrectionSessionApplyInput,
+    CorrectionSessionCommitInput,
+    CorrectionSessionCreateInput,
+    CorrectionSessionOptionsInput,
+    TranscriptStatusUpdateInput,
+    apply_correction_operations,
+    commit_correction_session,
+    create_correction_session,
+    discard_correction_session,
+    get_correction_session,
+    get_transcript_status,
+    redo_correction_session,
+    set_correction_session_options,
+    undo_correction_session,
+    update_transcript_status,
 )
 from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
 from evodox.jobs.transcription_settings_service import (
@@ -84,17 +102,93 @@ def map_jobs_list_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"jobs": [map_job_list_item(row) for row in rows]}
 
 
+def map_job_media_source_response(
+    *,
+    job_id: str,
+    row: dict[str, Any],
+    media_base_url: str | None,
+    media_bucket: str | None,
+) -> dict[str, Any] | None:
+    base_url = str(media_base_url or "").strip()
+    bucket = str(media_bucket or "").strip().strip("/")
+    object_key = str(row.get("object_key") or "").strip().lstrip("/")
+    if not base_url or not bucket or not object_key:
+        return None
+    object_path = quote(f"{bucket}/{object_key}", safe="/")
+    return {
+        "job_id": job_id,
+        "filename": row.get("filename"),
+        "content_type": row.get("content_type"),
+        "object_key": object_key,
+        "media_url": f"{base_url.rstrip('/')}/{object_path}",
+    }
+
+
 def map_transcript_response(response: Any) -> dict[str, Any]:
+    raw_segments = list(getattr(response, "segments", []) or [])
+    normalized_segments: list[dict[str, Any]] = []
+    for index, segment in enumerate(raw_segments):
+        if not isinstance(segment, dict):
+            continue
+        normalized = dict(segment)
+        segment_id = str(normalized.get("segment_id", "")).strip()
+        if len(segment_id) == 0:
+            normalized["segment_id"] = f"seg_{index + 1:06d}"
+        normalized_segments.append(normalized)
     return {
         "job_id": response.job_id,
         "version": response.version,
-        "segments": response.segments,
+        "segments": normalized_segments,
         "speaker_labels": dict(getattr(response, "speaker_labels", {}) or {}),
+        "review_status": str(getattr(response, "review_status", "in_review")),
+        "is_final": bool(getattr(response, "is_final", False)),
+        "final_set_by": getattr(response, "final_set_by", None),
+        "final_set_at": getattr(response, "final_set_at", None),
+        "status_updated_at": getattr(response, "status_updated_at", None),
     }
 
 
 def map_transcript_update_response(response: Any) -> dict[str, Any]:
     return {"job_id": response.job_id, "version": response.version, "saved_at": response.saved_at}
+
+
+def map_correction_session_response(response: Any, *, return_mode: str = "full") -> dict[str, Any]:
+    mode = str(return_mode or "full").strip().lower()
+    payload = {
+        "session_id": response.session_id,
+        "job_id": response.job_id,
+        "base_version": response.base_version,
+        "working_version": response.working_version,
+        "autosave_enabled": response.autosave_enabled,
+        "history_index": response.history_index,
+        "speaker_labels": response.speaker_labels,
+        "review_status": response.review_status,
+        "is_final": response.is_final,
+        "return_mode": mode,
+    }
+    if mode == "ack":
+        payload["changed_segments_count"] = len(getattr(response, "changed_segments", []) or [])
+        payload["removed_segments_count"] = len(getattr(response, "removed_segment_ids", []) or [])
+        return payload
+    if mode == "changed_segments":
+        payload["segments"] = list(getattr(response, "changed_segments", []) or [])
+        payload["removed_segment_ids"] = [str(item) for item in (getattr(response, "removed_segment_ids", []) or [])]
+        payload["operation_log"] = response.operation_log
+        return payload
+    payload["operation_log"] = response.operation_log
+    payload["segments"] = response.segments
+    return payload
+
+
+def map_transcript_status_response(response: Any) -> dict[str, Any]:
+    return {
+        "job_id": response.job_id,
+        "review_status": response.review_status,
+        "is_final": response.is_final,
+        "final_set_by": response.final_set_by,
+        "final_set_at": response.final_set_at,
+        "updated_at": response.updated_at,
+    }
 
 
 def map_export_response(response: Any) -> dict[str, Any]:
@@ -114,10 +208,13 @@ def create_fastapi_app(
     outbox: Any,
     queue_policy: QueueSelectionPolicy | None = None,
     transcript_repository: Any | None = None,
+    transcript_correction_store: Any | None = None,
     export_artifact_store: Any | None = None,
     checkpoint_store: Any | None = None,
     worker_artifact_store: Any | None = None,
     transcription_settings_store: Any | None = None,
+    media_base_url: str | None = None,
+    media_bucket: str | None = None,
 ):
     try:
         from fastapi import FastAPI, Header, HTTPException
@@ -158,6 +255,39 @@ def create_fastapi_app(
         speaker_labels: dict[str, str]
         edit_reason: str = Field(min_length=3, max_length=255)
 
+    class TranscriptStatusUpdatePayload(BaseModel):
+        review_status: str | None = Field(default=None, min_length=2, max_length=64)
+        is_final: bool | None = None
+
+    class CorrectionSessionCreatePayload(BaseModel):
+        base_version: int | None = None
+        autosave_enabled: bool = False
+        force_reseed_from_transcript: bool = False
+
+    class CorrectionSessionUpdatePayload(BaseModel):
+        autosave_enabled: bool
+
+    class CorrectionSessionOperation(BaseModel):
+        type: str = Field(min_length=1, max_length=64)
+        segment_id: str | None = None
+        text: str | None = None
+        speaker: str | None = None
+        start_char: int | None = None
+        end_char: int | None = None
+        query: str | None = None
+        replace: str | None = None
+        replace_all: bool | None = None
+        segments: list[dict[str, Any]] | None = None
+
+    class CorrectionSessionApplyPayload(BaseModel):
+        operations: list[CorrectionSessionOperation] = Field(min_length=1)
+        autosave_enabled: bool | None = None
+        return_mode: Literal["ack", "changed_segments", "full"] = "changed_segments"
+
+    class CorrectionSessionCommitPayload(BaseModel):
+        base_version: int
+        edit_reason: str = Field(min_length=3, max_length=255)
+
     class ExportPayload(BaseModel):
         format: str
         transcript_version: int
@@ -167,6 +297,17 @@ def create_fastapi_app(
             status_code=status_code,
             detail={"error_code": error_code, "correlation_id": correlation_id or str(uuid4())},
         )
+
+    def _correction_error_status(error_code: str) -> int:
+        if error_code == "transcript.correction_session_not_found":
+            return 404
+        if error_code == "transcript.correction_session_forbidden":
+            return 403
+        if error_code == "transcript.not_found":
+            return 404
+        if error_code == "transcript.correction_unavailable":
+            return 503
+        return 422
 
     def _require_auth(authorization: str | None, *, required_roles: set[str] | None = None):
         if not authorization or not authorization.lower().startswith("bearer "):
@@ -336,6 +477,33 @@ def create_fastapi_app(
         except JobStatusNotFoundError as exc:
             raise _http_error(404, exc.error_code) from exc
 
+    @app.get("/api/v1/jobs/{job_id}/media-source")
+    def get_job_media_source(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        try:
+            auth_context = _require_auth(authorization)
+            get_for_tenant = getattr(job_repository, "get", None)
+            if not callable(get_for_tenant):
+                raise _http_error(503, "jobs.unavailable")
+            row = get_for_tenant(auth_context.tenant_id, job_id)
+            if row is None:
+                raise _http_error(404, "job.not_found")
+            payload = map_job_media_source_response(
+                job_id=job_id,
+                row=row,
+                media_base_url=media_base_url,
+                media_bucket=media_bucket,
+            )
+            if payload is None:
+                raise _http_error(503, "media_source.unavailable")
+            return payload
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+
     @app.post("/api/v1/jobs/{job_id}/pause")
     def post_job_pause(
         job_id: str,
@@ -457,7 +625,23 @@ def create_fastapi_app(
         try:
             auth_context = _require_auth(authorization)
             result = get_transcript(tenant_id=auth_context.tenant_id, job_id=job_id, transcript_repo=transcript_repository)
-            return map_transcript_response(result)
+            payload = map_transcript_response(result)
+            if transcript_correction_store is not None:
+                status = get_transcript_status(
+                    tenant_id=auth_context.tenant_id,
+                    job_id=job_id,
+                    correction_store=transcript_correction_store,
+                )
+                payload.update(
+                    {
+                        "review_status": status.review_status,
+                        "is_final": status.is_final,
+                        "final_set_by": status.final_set_by,
+                        "final_set_at": status.final_set_at,
+                        "status_updated_at": status.updated_at,
+                    }
+                )
+            return payload
         except AuthzError as exc:
             raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
         except TranscriptValidationError as exc:
@@ -529,6 +713,270 @@ def create_fastapi_app(
         except TranscriptValidationError as exc:
             status_code = 404 if exc.error_code == "transcript.not_found" else 422
             raise _http_error(status_code, exc.error_code) from exc
+
+    @app.patch("/api/v1/jobs/{job_id}/transcript/status")
+    def patch_job_transcript_status(
+        job_id: str,
+        payload: TranscriptStatusUpdatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        if transcript_repository is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.unavailable"})
+        try:
+            auth_context = _require_auth(authorization, required_roles={"reviewer", "admin"})
+            result = update_transcript_status(
+                TranscriptStatusUpdateInput(
+                    job_id=job_id,
+                    review_status=payload.review_status,
+                    is_final=payload.is_final,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_transcript_status_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions")
+    def post_correction_session(
+        job_id: str,
+        payload: CorrectionSessionCreatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None or transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = create_correction_session(
+                CorrectionSessionCreateInput(
+                    job_id=job_id,
+                    base_version=payload.base_version,
+                    autosave_enabled=payload.autosave_enabled,
+                    force_reseed_from_transcript=payload.force_reseed_from_transcript,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptConflictError as exc:
+            raise _http_error(409, exc.error_code) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.get("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}")
+    def get_correction_session_endpoint(
+        job_id: str,
+        session_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = get_correction_session(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                session_id=session_id,
+                correction_store=transcript_correction_store,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.patch("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}")
+    def patch_correction_session_endpoint(
+        job_id: str,
+        session_id: str,
+        payload: CorrectionSessionUpdatePayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = set_correction_session_options(
+                CorrectionSessionOptionsInput(
+                    job_id=job_id,
+                    session_id=session_id,
+                    autosave_enabled=payload.autosave_enabled,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/operations")
+    def post_correction_session_operations(
+        job_id: str,
+        session_id: str,
+        payload: CorrectionSessionApplyPayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = apply_correction_operations(
+                CorrectionSessionApplyInput(
+                    job_id=job_id,
+                    session_id=session_id,
+                    operations=[item.model_dump(exclude_none=True) for item in payload.operations],
+                    autosave_enabled=payload.autosave_enabled,
+                    return_mode=payload.return_mode,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result, return_mode=payload.return_mode)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/undo")
+    def post_correction_session_undo(
+        job_id: str,
+        session_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = undo_correction_session(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                session_id=session_id,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/redo")
+    def post_correction_session_redo(
+        job_id: str,
+        session_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = redo_correction_session(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                session_id=session_id,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/discard")
+    def post_correction_session_discard(
+        job_id: str,
+        session_id: str,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = discard_correction_session(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                session_id=session_id,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_correction_session_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/commit")
+    def post_correction_session_commit(
+        job_id: str,
+        session_id: str,
+        payload: CorrectionSessionCommitPayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> dict[str, Any]:
+        del x_correlation_id
+        if transcript_repository is None or transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            result = commit_correction_session(
+                CorrectionSessionCommitInput(
+                    job_id=job_id,
+                    session_id=session_id,
+                    base_version=payload.base_version,
+                    edit_reason=payload.edit_reason,
+                ),
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                transcript_repo=transcript_repository,
+                correction_store=transcript_correction_store,
+                audit_log=audit_log,
+            )
+            return map_transcript_update_response(result)
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptConflictError as exc:
+            raise _http_error(409, exc.error_code) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
 
     @app.post("/api/v1/jobs/{job_id}/export")
     def post_job_export(

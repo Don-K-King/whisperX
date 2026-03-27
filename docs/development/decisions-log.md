@@ -1,5 +1,10 @@
 # Decisions Log
 
+## 2026-03-27
+- ADR-0023 angenommen: Korrekturmodus-Performance wird durch Editor-Virtualisierung, Event-Delegation und Delta-Operationen (`update_text`) verbessert.
+- API-Entscheidung: Operations-Endpoint unterstuetzt `return_mode` (`ack|changed_segments|full`), Default auf `changed_segments`.
+- Betriebskonsequenz: Autosave/Save vermeiden Vollpayload-`set_segments` im Regelfall und reduzieren Main-Thread-/Netzwerk-Last bei grossen Transkripten.
+
 ## 2026-03-06
 - ADR-0001 angenommen: On-Prem Multi-Tenant Architektur mit RabbitMQ/Celery Pipeline, lokaler Modellbereitstellung und Retention-Konzept.
 - Konsequenz: Alle neuen API-/DB-/Export-Pfade müssen `tenant_id`-gescoped umgesetzt und getestet werden.
@@ -214,3 +219,69 @@
 - Entscheidung: Tenant-Admin Decoding-Settings werden um chunk_size, vad_onset, vad_offset erweitert und strikt validiert.
 - Sicherheitsentscheidung: Eingaben bleiben whitelist-/range-basiert, Snapshot-Verarbeitung bleibt fail-safe ueber safe_worker_decoding_options.
 - Referenz: ADR-0020 (/docs/adr/ADR-0020-whisperx-large-v3-erzwingung-sprache-und-chunk-vad.md).
+
+## 2026-03-24 - ADR-0021 Korrekturmodus Sessions + Statusfuehrung
+- Neue Transcript-Korrekturlogik eingefuehrt: Session-basierter Draft mit `apply/undo/redo/discard/commit` statt sofortiger Versionspersistenz.
+- Autosave semantisch als Draft-Sicherung umgesetzt (keine automatische Versionserzeugung).
+- Transcript-Status erweitert um `review_status` und `is_final` inkl. eigener API und Audit-Events.
+- Timeline-Guards fuer Korrektur-Operationen verankert (keine Overlaps/Luecken, konsistente Segment-IDs).
+- Frontend um dedizierten Korrektur-Workspace erweitert (`window.open` ohne In-Tab-Fallback, Suche/Ersetzen, Sprecherumteilung, Audio-Mitfuehrung, Status/Final).
+- Handover-Strategie fuer den Korrekturstart auf kurzlebigen tabuebergreifenden Store umgestellt (single-use, TTL, Cleanup), um `Korrektur-Startdaten fehlen` im neuen Tab zu vermeiden.
+- Neue tenant-scoped Media-Quelle fuer den Workspace eingefuehrt (`GET /api/v1/jobs/{id}/media-source`) fuer automatisches Laden der Ursprungsdatei.
+- Security-Hardening nach Implementierungsreview: Session-Reads sind actor-gebunden, `forbidden` wird als `403` gemappt, Status-Updates validieren Transcript-Existenz.
+- Referenz: ADR-0021 (`/docs/adr/ADR-0021-korrekturmodus-sessions-und-status.md`).
+
+## 2026-03-25 - Korrekturmodus Legacy-Schema-Migration (Hotfix)
+- Entscheidung: Session-Insert im Correction-Store wird schema-adaptiv ausgefuehrt; existiert Legacy-Spalte `expires_at`, wird sie beim `create_session` explizit befuellt.
+- Grund: Laufende Runtime-Volumes enthielten ein aelteres Schema mit `expires_at NOT NULL`, wodurch Korrektur-Session-Start mit `IntegrityError` scheiterte.
+- Ergebnis: Korrekturmodus-Start bleibt ohne DB-Reset kompatibel zu Bestandsdaten.
+
+## 2026-03-26 - ADR-0022 Korrekturmodus Absolute Timeline
+- Entscheidung: Seed-Kompaktierung im Korrekturmodus wurde entfernt; `start/end` bleiben beim Session-Start 1:1 auf der persistierten Transcript-Timeline.
+- Entscheidung: Timeline-Invariante im Korrekturpfad wurde von "keine Luecken" auf "keine Overlaps + monotone, finite Timeline" umgestellt.
+- Entscheidung: `set_segments` akzeptiert Luecken, lehnt Overlaps sowie `NaN`/`inf`/negative Zeiten weiterhin strikt ab.
+- Entscheidung: Frontend merged Speaker-Bloecke nur noch bei kontiguierlichen Segmenten; in internen Luecken gibt es bewusst keinen aktiven Block.
+- Referenz: ADR-0022 (`/docs/adr/ADR-0022-korrekturmodus-absolute-timeline-ohne-seed-kompaktierung.md`).
+
+## 2026-03-26 - Legacy-Session-Reseed im Korrekturmodus
+- Entscheidung: Beim Start einer Correction-Session kann per `force_reseed_from_transcript` ein Legacy-Resume-Fall fix-forward auf die aktuelle Transcript-Timeline reseeded werden.
+- Entscheidung: Reseed ersetzt den aktiven Draft auf `history[0]` mit absoluten Segmentzeiten der aktuellen Transcript-Version und setzt `history_index=0`.
+- Entscheidung: Active-Highlighting nach Segmentende wird als "kein aktiver Block" behandelt, um End-Pausen nicht als Drift des letzten Blocks darzustellen.
+## 2026-03-27 - Seek/Autofokus bei Virtualisierung: Lifecycle-Hardening
+- Entscheidung: Media-Reuse im Render-Pfad wird vor dem erneuten Binding abgeschlossen; Event-Handler (timeupdate/seek) werden danach auf dem finalen Media-Node registriert.
+- Begruendung: verhindert stale Closures mit veraltetem Editor-Referenzkontext und stabilisiert das automatische Follow nach Seek/Render.
+- Entscheidung: Bei bereits geplanter Follow-rAF wird das Pending-Frame zugunsten des neuesten Seek-Ziels ersetzt (latest-wins), statt neue Seek-Spruenge zu verwerfen.
+- Entscheidung: Virtual-Scroll-Projektion basiert auf gemessenen Segmenthoehen (mit Cache + Prefix-Summen) statt nur fixer Zeilenhoehe, um Drift bei variablen Blocktexten zu reduzieren.
+- Sicherheitsbewertung: keine neuen AuthN/AuthZ- oder Datenflussaenderungen; Verarbeitung bleibt tenant-scoped und input-validiert wie bisher.
+## 2026-03-27 - Seek/Follow Stabilisierung bei Virtualisierung (Empty-Window + Drift)
+- Entscheidung: forced Virtual-Range wird zentral sanitisiert (Clamp auf gueltige Grenzen, nie leeres Fenster, Fallback auf Zielindex), um stale Range-Zustaende bei Seek robust abzufangen.
+- Entscheidung: Seek-Warmup-Pending gilt jetzt fuer Playing und Paused gleich; Finalisierung erfolgt bei Warmup-Ready oder Deadline-Timeout, Playback-Resume jedoch nur wenn zuvor tatsaechlich gespielt wurde.
+- Entscheidung: automatische Playback-Nachfuehrung nutzt im Follow-Pfad unmittelbares Zentrieren (kein smooth), um bei kurzen Segmenten/haeufigen Updates Drift aus dem Sichtfenster zu vermeiden.
+- Sicherheitsbewertung: keine neuen externen Schnittstellen, keine AuthN/AuthZ-Aenderung, keine Erweiterung sensibler Datenfluesse.
+## 2026-03-27 - Virtual-Window Scrollbar-Verhalten entkoppelt von Selection-Pinning
+- Entscheidung: Virtual-Range wird nur noch im Playback-Follow explizit an einen bevorzugten Index gepinnt; manueller Scroll bleibt source of truth.
+- Entscheidung: User-Scroll bricht stale Seek-Warmup-States kontrolliert ab (reset forced range), um leere Fenster bei Slider-Spruengen zu verhindern.
+- Sicherheitsbewertung: rein frontendspezifische Renderlogik, keine neuen Daten- oder Auth-Grenzen.
+## 2026-03-27 - Adaptive Windowing basierend auf Segmentumfang
+- Entscheidung: Rendering-Fenster wird dynamisch aus der Segmentmenge abgeleitet (<=300 full, <=600: 450, <=1200: 300, <=3000: 240, sonst 180).
+- Entscheidung: Sowohl normale Scroll-Range als auch Seek-forced-Range werden auf die adaptive Zielgroesse erweitert, damit Fenster-Spruenge weniger Nachladeartefakte zeigen.
+- Begruendung: erreicht den gemessenen UX-Sweet-Spot fuer Interaktivitaet bei gleichzeitig kontrollierter DOM-/Layout-Last.
+- Sicherheitsbewertung: keine neuen externen APIs, keine Aenderung von AuthN/AuthZ oder Tenant-Isolation.
+
+## 2026-03-27 - Adaptive Progress-Interpolation (Dashboard + Jobdetail)
+- Entscheidung: Fortschritt vom Backend bleibt Source of Truth; die UI interpoliert nur zwischen bekannten Milestones fuer bessere Aktivitaetswahrnehmung.
+- Entscheidung: Interpolation ist strikt monoton und milestone-begrenzt (kein Rueckwaertslauf, kein vorzeitiges 100% vor terminalem Status).
+- Entscheidung: Interpolation stoppt bei Polling-Fehlern/stale Daten und bei terminalen Status sofort.
+- Entscheidung: ETA bleibt bewusst heuristisch (Dateigroesse-basiert mit Fallback), um Komplexitaet niedrig zu halten.
+- Sicherheitsbewertung: keine API-/AuthN-/AuthZ-Aenderung, rein frontendspezifisches Anzeigeverhalten.
+
+## 2026-03-27 - Progress-Heartbeat bei unveraenderten Poll-Snapshots
+- Entscheidung: Poll-Antworten gelten als Freshness-Signal, auch wenn `status/progress` unveraendert sind.
+- Umsetzung: `lastServerTimestamp` wird bei frischen Server-Snapshots aktualisiert, ohne `phaseStartMs` zu resetten.
+- Effekt: kein fruehes Einfrieren der UI-Interpolation in langen `processing`-Phasen; Milestone-Clamping bleibt erhalten.
+- Sicherheitsbewertung: reine Frontend-Anzeigelogik, keine Aenderung von AuthN/AuthZ/API-Contracts.
+
+## 2026-03-27 - UI-Progress-Cap fuer lange Processing-Phasen angepasst
+- Entscheidung: `processing` darf UI-seitig bis 99% interpolieren (statt indirekt bei 59% zu stoppen), um Abbruch-Eindruck zu vermeiden.
+- Entscheidung: Interpolationsdauer nutzt hohe Obergrenze, um verfruehtes Auflaufen auf 99% zu vermeiden.
+- Sicherheitsbewertung: reine Frontend-Darstellung, keine API-/Auth-Aenderung.

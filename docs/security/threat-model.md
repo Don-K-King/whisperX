@@ -92,3 +92,25 @@
 - **Threat:** Informationsabfluss ueber Audit durch Klartext-`initial_prompt`.
   - **Control:** Audit nur mit Prompt-Hash/Laenge, ohne Klartext.
   - **Test:** Service-Tests auf audit payload ohne `initial_prompt`.
+
+## Ergaenzung 2026-03-24 - Threats Korrekturmodus
+- **Threat:** Session-Entfuehrung im Korrekturmodus.
+  - **Control:** tenant-/actor-scoped Session-Validierung in allen Session-Endpunkten (inkl. Read).
+  - **Test:** Session-Read/Mutation durch fremden Actor fuehrt zu `transcript.correction_session_forbidden`.
+- **Threat:** Timeline-Korruption durch fehlerhafte Speaker-Teilumteilung.
+  - **Control:** verpflichtende Timeline-Invariant-Checks bei jeder Operation.
+  - **Test:** Overlap/Gap Injection wird mit `transcript.timeline_*` geblockt.
+- **Threat:** Silent State Drift zwischen Draft und persistierter Version.
+  - **Control:** klare Trennung Draft (Autosave) vs Commit (Version+1) mit Audit-Event.
+  - **Test:** Commit ist einziger Pfad fuer neue `transcript_version`.
+- **Threat:** Unautorisierte Status-/Final-Setzung.
+  - **Control:** Endpoint-Rollenpruefung (`reviewer|admin`) + Audit.
+  - **Test:** `user` ohne Rolle kann Status nicht setzen.
+
+## Ergaenzung 2026-03-25 - Threats Korrekturmodus Handover
+- Threat: Handover-Token-Abgriff zwischen Haupttab und neuem Korrektur-Tab.
+  - Control: single-use Handover-Store mit kurzer TTL; Consume entfernt den Eintrag sofort, Cleanup entfernt abgelaufene Eintraege.
+  - Test: Frontend-Unit fuer create/consume/expiry/cleanup und E2E-Start ohne In-Tab-Fallback.
+- Threat: Medienquelle im Workspace nicht tenant-scoped.
+  - Control: GET /api/v1/jobs/{id}/media-source nutzt tenant-scoped Job-Lookup und liefert bei Cross-Tenant neutral 404.
+  - Test: Contract-/Integrationstests fuer 200/404/503 Pfade.

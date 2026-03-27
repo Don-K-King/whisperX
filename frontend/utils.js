@@ -20,6 +20,14 @@ const MILESTONE_PROGRESS = {
 
 const POLLING_BASE_MS = 5000;
 const POLLING_MAX_MS = 30000;
+const TERMINAL_PROGRESS_STATUSES = new Set(['completed', 'failed_terminal', 'canceled', 'deleted']);
+const INTERPOLATION_ELIGIBLE_STATUSES = new Set(['queued', 'processing']);
+const PROGRESS_STALE_AFTER_MS = 60000;
+
+const DEFAULT_ESTIMATED_DURATION_MS = Object.freeze({
+  queued: 120000,
+  processing: 540000,
+});
 
 export function parseToken(token){
   if (token?.startsWith('dev:')) {
@@ -55,6 +63,152 @@ export function deriveProgress(job){
     return Math.max(0, Math.min(100, raw));
   }
   return MILESTONE_PROGRESS[status] ?? 0;
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
+}
+
+function resolveNextProgressMilestone(progressValue) {
+  const milestones = [5, 20, 60, 90, 100];
+  const current = clampInt(progressValue, 0, 100);
+  for (const milestone of milestones) {
+    if (milestone > current) {
+      return milestone;
+    }
+  }
+  return 100;
+}
+
+function resolveInterpolationCap({ status, monotonicServerProgress, nextMilestone }) {
+  if (status === 'processing') {
+    return 99;
+  }
+  const boundedMilestone = nextMilestone >= 100 ? 99 : nextMilestone;
+  return Math.max(monotonicServerProgress, boundedMilestone - 1);
+}
+
+export function estimateTranscriptionDurationMs({ sizeBytes = null, status = 'processing' } = {}) {
+  const normalizedStatus = String(status ?? '').trim().toLowerCase();
+  const fallback = DEFAULT_ESTIMATED_DURATION_MS[normalizedStatus] ?? DEFAULT_ESTIMATED_DURATION_MS.processing;
+  const size = Number(sizeBytes);
+  if (!Number.isFinite(size) || size <= 0) return fallback;
+  const megaBytes = size / (1024 * 1024);
+  const estimated = 90000 + (megaBytes * 1200);
+  return Math.max(120000, Math.min(2700000, Math.round(estimated)));
+}
+
+export function resolveDisplayedProgress({
+  job = {},
+  previousState = null,
+  nowMs = Date.now(),
+  pollIntervalMs = POLLING_BASE_MS,
+  hasFreshServerSnapshot = false,
+} = {}) {
+  const status = String(job?.status ?? '').trim();
+  const serverProgress = deriveProgress(job);
+  const previous = previousState && typeof previousState === 'object' ? previousState : null;
+  const previousServerProgress = clampInt(previous?.lastServerProgress ?? serverProgress, 0, 100);
+  const monotonicServerProgress = Math.max(serverProgress, previousServerProgress);
+  const estimatedDurationMs = estimateTranscriptionDurationMs({
+    sizeBytes: job?.size_bytes,
+    status,
+  });
+  const isTerminal = TERMINAL_PROGRESS_STATUSES.has(status);
+  const previousDisplay = clampInt(previous?.displayProgress ?? monotonicServerProgress, 0, 100);
+
+  if (isTerminal) {
+    const finalDisplay = clampInt(monotonicServerProgress, 0, 100);
+    return {
+      displayProgress: finalDisplay,
+      etaSeconds: 0,
+      state: {
+        status,
+        displayProgress: finalDisplay,
+        lastServerProgress: finalDisplay,
+        lastServerTimestamp: nowMs,
+        estimatedDurationMs,
+        phaseStartMs: nowMs,
+      },
+    };
+  }
+
+  if (!INTERPOLATION_ELIGIBLE_STATUSES.has(status)) {
+    const displayProgress = Math.max(previousDisplay, monotonicServerProgress);
+    return {
+      displayProgress,
+      etaSeconds: null,
+      state: {
+        status,
+        displayProgress,
+        lastServerProgress: monotonicServerProgress,
+        lastServerTimestamp: nowMs,
+        estimatedDurationMs,
+        phaseStartMs: nowMs,
+      },
+    };
+  }
+
+  const nextMilestone = resolveNextProgressMilestone(monotonicServerProgress);
+  const interpolationCap = resolveInterpolationCap({
+    status,
+    monotonicServerProgress,
+    nextMilestone,
+  });
+  const phaseSpan = Math.max(1, interpolationCap - monotonicServerProgress);
+  const progressToComplete = Math.max(1, 100 - monotonicServerProgress);
+
+  const hasNewServerSignal = !previous
+    || String(previous.status ?? '') !== status
+    || monotonicServerProgress > previousServerProgress
+    || nowMs < Number(previous?.lastServerTimestamp ?? nowMs);
+  const staleThresholdMs = Math.max(20000, Number(pollIntervalMs || POLLING_BASE_MS) * 4);
+  const staleMs = Math.min(PROGRESS_STALE_AFTER_MS, staleThresholdMs);
+
+  let phaseStartMs = Number(previous?.phaseStartMs ?? nowMs);
+  let lastServerTimestamp = Number(previous?.lastServerTimestamp ?? nowMs);
+  let displayProgress = Math.max(previousDisplay, monotonicServerProgress);
+
+  if (hasNewServerSignal) {
+    phaseStartMs = nowMs;
+    lastServerTimestamp = nowMs;
+    displayProgress = Math.max(monotonicServerProgress, previousDisplay);
+  } else {
+    if (hasFreshServerSnapshot) {
+      // Poll response arrived, so the server snapshot is still fresh.
+      // Keep phaseStart for smooth interpolation, but refresh heartbeat timestamp.
+      lastServerTimestamp = nowMs;
+    }
+    const elapsedSinceServerMs = Math.max(0, nowMs - lastServerTimestamp);
+    if (elapsedSinceServerMs <= staleMs) {
+      const phaseDurationMs = clampInt(
+        estimatedDurationMs * (phaseSpan / progressToComplete),
+        4000,
+        3600000,
+      );
+      const elapsedPhaseMs = Math.max(0, nowMs - phaseStartMs);
+      const interpolatedStep = Math.floor((elapsedPhaseMs / phaseDurationMs) * phaseSpan);
+      const candidate = monotonicServerProgress + interpolatedStep;
+      const phaseCap = Math.max(monotonicServerProgress, interpolationCap);
+      displayProgress = clampInt(Math.max(displayProgress, candidate), monotonicServerProgress, phaseCap);
+    }
+  }
+
+  const remainingRatio = Math.max(0, (100 - displayProgress) / Math.max(1, 100 - monotonicServerProgress));
+  const etaSeconds = displayProgress >= 100 ? 0 : clampInt((estimatedDurationMs * remainingRatio) / 1000, 0, 7200);
+
+  return {
+    displayProgress,
+    etaSeconds,
+    state: {
+      status,
+      displayProgress,
+      lastServerProgress: monotonicServerProgress,
+      lastServerTimestamp,
+      estimatedDurationMs,
+      phaseStartMs,
+    },
+  };
 }
 
 export function jobActionsForStatus(statusRaw){

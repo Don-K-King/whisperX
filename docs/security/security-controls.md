@@ -23,6 +23,11 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Gruppierung der Transcript-Bloecke basiert auf Roh-Speaker-Wechseln; Alias-Gleichheit darf nicht zu stiller Segmentfusion fuehren.
 - Audit-Events muessen Alias-Reads und Alias-Updates nachvollziehbar machen, mindestens mit `tenant_id`, `job_id`, `transcript_version` und `actor_id`.
 
+## Korrekturmodus-Operationen
+- Operationstypen werden serverseitig allowlist-basiert validiert (`set_segments`, `replace_literal`, `reassign_speaker`, `update_text`).
+- `update_text` validiert `segment_id`-Existenz sowie Textgrenzen strikt, damit keine ungueltigen Segmentreferenzen oder leeren Texte persistiert werden.
+- `return_mode` fuer Operations-Responses ist strikt auf `ack|changed_segments|full` begrenzt; unbekannte Werte werden durch Request-Validierung abgewiesen.
+
 ## Upload- und Verarbeitungs-Sicherheit
 - Dateityp-/Signaturprüfung (MIME + Magic Bytes)
 - Maximalgrößen und Ratenlimits
@@ -165,7 +170,7 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Preflight als Deployment-Guard.** `RETENTION_VALIDATE_ENV_ONLY=true` muss vor Start in Pipeline/Init-Checks ausgeführt werden.
 
 ## 2026-03-08 – Frontend Security Controls (Phase-1 UI)
-- Bearer-Token wird ausschließlich im Laufzeitspeicher gehalten (kein LocalStorage/SessionStorage Persistenzpfad).
+- Bearer-Token wird im Haupt-Frontend im Laufzeitspeicher gehalten; fuer den Korrektur-Workspace wird ein kurzlebiger, single-use Handover im browserweiten Storage mit TTL und sofortigem Consume verwendet.
 - Upload-Flow führt clientseitige Vorvalidierung (Dateigröße, Typfilter) aus; serverseitige Validierung bleibt maßgeblich.
 - Fehlerdarstellung ist sanitisiert (`error_code`, `correlation_id`) und unterdrückt intern-sensible Details.
 
@@ -200,3 +205,21 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Parameter-Range-Validation.** chunk_size (5..60), vad_onset (0.0..1.0), vad_offset (0.0..1.0) werden serverseitig validiert, bevor sie in Queue/Worker gelangen.
 - **Control: Data-not-code Behandlung.** Neue Transcription-Optionen werden ausschliesslich als Daten im Snapshot verarbeitet; keine dynamische Ausfuehrung von Input-Inhalten.
 - **Control: Defensive Worker Consumption.** Ungueltige Snapshot-/Settings-Payloads fallen weiterhin auf sichere Defaults zurueck (safe_worker_decoding_options).
+
+## 2026-03-24 - Controls fuer Korrekturmodus Sessions
+- **Control: Session Tenant+Actor Scope.** Correction-Sessions sind an `(tenant_id, session_id)` und `actor_id` gebunden; fremde Bearbeiter duerfen Session weder lesen noch mutieren.
+- **Control: Timeline Invariants.** Korrektur-Operationen validieren `start/end` strikt auf monotone, finite Timeline ohne Overlap (`start <= end`); Luecken sind erlaubt.
+- **Control: Draft-vs-Version Trennung.** Autosave aktualisiert nur Session-Draft; persistente Transcript-Versionen entstehen ausschliesslich ueber explizites Commit.
+- **Control: Status Governance.** `review_status` und `is_final` werden separat gepflegt und auditierbar protokolliert.
+- **Control: Input Safety.** Sprecher-/Text-/Replace-Inputs werden als Daten behandelt, inklusive Control-Character-Checks und XSS-sicherem Rendering im Workspace.
+
+## 2026-03-26 - Ergaenzende Controls fuer Legacy-Reseed im Korrekturmodus
+- **Control: Expliziter Fix-Forward-Trigger.** Legacy-Reseed wird nur bei explizitem Flag `force_reseed_from_transcript` ausgefuehrt, um unbeabsichtigtes Ueberschreiben historischer Drafts zu vermeiden.
+- **Control: Draft-Reset auf verifizierte Transcript-Basis.** Reseed setzt `history_index=0` und schreibt `history[0]` aus normalisierten, validierten Transcript-Segmenten (monotone, finite, non-overlapping Timeline).
+- **Control: Session-Ownership nach Reseed.** Reseeded Session wird auf den aktuellen Actor gebunden, damit Session-Zugriff im Korrekturfluss konsistent actor-scoped bleibt.
+
+
+## 2026-03-26 - Controls fuer Seed-Overlap-Korrektur im Korrekturmodus
+- **Control: Bounded overlap snapping.** Nur kleine Seed-Ueberlappungen (<= 50ms) duerfen beim Session-Seed auf `previous_end` korrigiert werden, um Rundungsartefakte sicher zu entschaerfen.
+- **Control: Hard reject fuer strukturelle Overlaps.** Ueberlappungen oberhalb der Toleranz bleiben als `transcript.timeline_overlap` blockiert (kein stilles Durchwinken).
+- **Control: Defensive Materialisierung.** Beim Uebernehmen von Worker-Artefakten in Transcript-Versionen werden kleine Rundungs-Ueberlappungen ebenfalls begrenzt korrigiert, um Folgefehler im Review-Flow zu verhindern.

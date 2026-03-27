@@ -1,4 +1,4 @@
-﻿# Test Matrix (inkl. Edge-/Abuse-Schwerpunkte)
+# Test Matrix (inkl. Edge-/Abuse-Schwerpunkte)
 
 | Anforderung | Unit | Integration | Contract | E2E | Security/Abuse | PrioritÃ¤t | Gate |
 |---|---|---|---|---|---|---|---|
@@ -100,3 +100,12 @@
 - E2E/Integration: `tests/test_job_lifecycle_e2e.py` deckt den tenant-scoped End-to-End-Kernfluss `create_job` â†’ `complete_upload` â†’ `OutboxQueueDispatcher.dispatch_pending` â†’ `get_job_status` in einer realen SQLite-Infrastrukturkette ab.
 - Security-Fokus: Objektpfad bleibt tenant/job-gebunden, Queue-Message enthÃ¤lt Tenant-Kontext, Statusabfrage erfolgt weiterhin tenant-isoliert.
 
+
+## 2026-03-24 - Matrix-Ergaenzung Korrekturmodus
+| Anforderung | Unit | Integration | Contract | E2E | Security/Abuse | Prioritaet | Gate |
+|---|---|---|---|---|---|---|---|
+| Correction Sessions (Draft/Undo/Redo/Discard/Commit) | Ja | Ja | Ja | Ja | Session-Hijack, stale base_version, actor mismatch | P0 | Muss gruen |
+| Timeline-Integritaet bei Korrekturen | Ja | Ja | Nein | Ja | Overlap/Gap Injection, invalid Char-Ranges | P0 | Muss gruen |
+| Transcript-Status (`review_status`, `is_final`) | Ja | Ja | Ja | Ja | Unautorisierte Statusaenderung, Audit-Luecken | P1 | Muss gruen |
+| Korrektur-Workspace (Popup/New-Tab, kein Fallback) | Ja | Ja | Nein | Ja | Popup-Blocker, handoff expiry/single-use misuse | P1 | Muss gruen |
+| Suche/Ersetzen + Sprecherfilter | Ja | Ja | Nein | Ja | Replace-Missbrauch, no-match Fehlpfade | P1 | Muss gruen |
