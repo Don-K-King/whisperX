@@ -114,6 +114,21 @@ test('raw_mode_emits_original_segment_count', () => {
   assert.equal(raw.length, 2);
 });
 
+test('plain text export in raw mode preserves original speaker block boundaries', () => {
+  const text = buildCorrectionPlainTextExport({
+    jobId: 'job-raw',
+    sessionId: 'cs-raw',
+    mode: 'raw',
+    createdAt: new Date('2026-03-28T10:00:00Z'),
+    segments: [
+      { speaker: 'S1', start: 0, end: 1, text: 'A' },
+      { speaker: 'S1', start: 2, end: 3, text: 'B' },
+    ],
+  });
+  const blockMatches = text.match(/\[00:00:\d{2} - 00:00:\d{2}\] S1:/g) || [];
+  assert.equal(blockMatches.length, 2);
+});
+
 test('compact_mode_emits_expected_block_count_and_ranges', () => {
   const compact = buildCorrectionExportSegments({
     segments: [
@@ -132,7 +147,7 @@ test('compact_mode_emits_expected_block_count_and_ranges', () => {
 });
 
 test('buildSimpleDocxFromPlainText creates valid docx zip container', () => {
-  const bytes = buildSimpleDocxFromPlainText('Titel\nZeile äöü');
+  const bytes = buildSimpleDocxFromPlainText('Titel\nZeile ï¿½ï¿½ï¿½');
   const signature = new TextDecoder().decode(bytes.slice(0, 2));
   assert.equal(signature, 'PK');
   const content = new TextDecoder().decode(bytes);

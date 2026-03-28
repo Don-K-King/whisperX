@@ -30,6 +30,11 @@
   - Ausgefuehrt (UI-Screenshot-Nachweis): `node scripts/capture_correction_mode_screenshots.mjs`.
   - Nicht ausfuehrbar in dieser Umgebung: Python-Tests (`python`, `py`, `pytest` nicht im PATH verfuegbar).
   - Offenes Risiko: Backend-Tests `tests/test_correction_export_service.py` und FastAPI-Integrationsfaelle muessen in CI oder lokaler Python-Runtime nachgezogen werden.
+- 2026-03-28: Exportmodus-Switch (`Kompakt|Rohdaten`) im Download-Menue wieder eingefuehrt, Rohdaten-Export stellt die Original-Blockstruktur aus dem Korrekturmodus wieder her.
+  - Ausgefuehrt: `node --test frontend/tests/correction_workspace_export.test.js frontend/tests/correction_workspace_export_menu.test.js` (13/13 gruen).
+- 2026-03-28: Footer-Playback-Rate-Regression behoben (`1.0x`-Reset nach Re-Render).
+  - Ausgefuehrt: `node --test frontend/tests/correction_workspace_footer_layout.test.js` (6/6 gruen).
+  - Ausgefuehrt: `node --test frontend/tests/*.test.js` (110/110 gruen).
 - 2026-03-27: Korrekturmodus-Performance-Refactor (Virtualisierung/Event-Delegation/Delta-Operationen) implementiert.
   - Ausgefuehrt: node --test frontend/tests/*.test.js (69/69 gruen).
   - Nicht ausfuehrbar in dieser Umgebung: Python-Regression (python/py/uv nicht verfuegbar im PATH).

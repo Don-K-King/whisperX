@@ -21,6 +21,19 @@ test('footer renders only media player and playback speed control without status
   assert.doesNotMatch(js, /<label for="cw-audio-rate">Rate<\/label>/);
 });
 
+test('playback speed keeps selected value across re-render and is persisted', () => {
+  const { js } = loadWorkspaceSources();
+  assert.match(js, /PLAYBACK_RATE_STORAGE_KEY/);
+  assert.match(js, /playbackRate:\s*loadPersistedPlaybackRate\(\)/);
+  assert.match(js, /function loadPersistedPlaybackRate\(\)/);
+  assert.match(js, /function persistPlaybackRate\(rate\)/);
+  assert.match(js, /renderPlaybackRateOptions\(state\.playbackRate\)/);
+  assert.match(js, /audioRateNode\.value = String\(normalizePlaybackRate\(state\.playbackRate\)\)/);
+  assert.match(js, /state\.playbackRate = nextRate/);
+  assert.match(js, /persistPlaybackRate\(nextRate\)/);
+  assert.doesNotMatch(js, /<option value="1" selected>1\.0x<\/option>/);
+});
+
 test('status synchronization no longer writes into footer status node', () => {
   const { js } = loadWorkspaceSources();
   assert.doesNotMatch(js, /cw-global-status/);

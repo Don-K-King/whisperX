@@ -20,14 +20,14 @@ test('print and court labels are removed from export UI', () => {
   const js = loadWorkspaceSource();
   assert.doesNotMatch(js, /id="cw-print"/);
   assert.doesNotMatch(js, /id="cw-export-print"/);
-  assert.doesNotMatch(js, /id="cw-export-mode-compact"/);
-  assert.doesNotMatch(js, /id="cw-export-mode-raw"/);
   assert.doesNotMatch(js, /Gerichtsexport/);
   assert.doesNotMatch(js, /Drucken/);
 });
 
-test('all export actions are hardwired to compact mode', () => {
+test('export menu exposes compact and raw mode switch', () => {
   const js = loadWorkspaceSource();
-  assert.match(js, /const exportMode = 'compact'/);
-  assert.match(js, /format === 'word_docx' \|\| format === 'txt'/);
+  assert.match(js, /id="cw-export-mode-compact"/);
+  assert.match(js, /id="cw-export-mode-raw"/);
+  assert.match(js, /function loadPersistedExportMode\(\)/);
+  assert.match(js, /const exportMode = state\.exportMode === 'raw' \? 'raw' : 'compact'/);
 });

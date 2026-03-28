@@ -45,11 +45,14 @@ const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
 const AUTO_SEEK_SELECTION_STORAGE_KEY = 'evodox-correction-auto-seek-selection';
+const EXPORT_MODE_STORAGE_KEY = 'evodox-correction-export-mode';
 const FOOTER_MEDIA_HEIGHT_STORAGE_KEY = 'evodox-correction-footer-media-height-px';
+const PLAYBACK_RATE_STORAGE_KEY = 'evodox-correction-playback-rate';
 const FOOTER_MEDIA_HEIGHT_MIN_PX = 56;
 const FOOTER_MEDIA_HEIGHT_MAX_PX = 220;
 const FOOTER_MEDIA_HEIGHT_DEFAULT_PX = 108;
 const FOOTER_MEDIA_HEIGHT_STEP_PX = 8;
+const PLAYBACK_RATE_OPTIONS = Object.freeze([0.75, 1, 1.25, 1.5, 2]);
 const VIRTUAL_ROW_HEIGHT = 156;
 const VIRTUAL_OVERSCAN = 8;
 const SEEK_WARMUP_LOOKAHEAD = 10;
@@ -86,6 +89,8 @@ const state = {
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
   autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
+  exportMode: loadPersistedExportMode(),
+  playbackRate: loadPersistedPlaybackRate(),
   mediaStripHeightPx: loadPersistedMediaStripHeightPx(),
   exportMenuOpen: false,
   lastExportAction: '',
@@ -295,6 +300,45 @@ function loadPersistedAutoSeekSelectionEnabled() {
 function persistAutoSeekSelectionEnabled(enabled) {
   try {
     localStorage.setItem(AUTO_SEEK_SELECTION_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function loadPersistedExportMode() {
+  try {
+    const mode = String(localStorage.getItem(EXPORT_MODE_STORAGE_KEY) || '').trim().toLowerCase();
+    return mode === 'raw' ? 'raw' : 'compact';
+  } catch {
+    return 'compact';
+  }
+}
+
+function persistExportMode(mode) {
+  try {
+    localStorage.setItem(EXPORT_MODE_STORAGE_KEY, mode === 'raw' ? 'raw' : 'compact');
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function normalizePlaybackRate(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return PLAYBACK_RATE_OPTIONS.includes(parsed) ? parsed : 1;
+}
+
+function loadPersistedPlaybackRate() {
+  try {
+    return normalizePlaybackRate(localStorage.getItem(PLAYBACK_RATE_STORAGE_KEY));
+  } catch {
+    return 1;
+  }
+}
+
+function persistPlaybackRate(rate) {
+  try {
+    localStorage.setItem(PLAYBACK_RATE_STORAGE_KEY, String(normalizePlaybackRate(rate)));
   } catch {
     // ignore persistence errors
   }
@@ -583,7 +627,8 @@ async function exportCurrentTranscript(format) {
     const createdAt = new Date();
     const segments = collectSegmentsFromState();
     const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt });
-    const exportMode = 'compact';
+    const exportMode = state.exportMode === 'raw' ? 'raw' : 'compact';
+    const exportModeLabel = exportMode === 'raw' ? 'Rohdaten' : 'Kompakt';
     if (format === 'md') {
       const markdown = buildCorrectionMarkdownExport({
         jobId: state.jobId,
@@ -602,7 +647,7 @@ async function exportCurrentTranscript(format) {
         mimeType: 'text/markdown;charset=utf-8',
         payload: markdown,
       });
-      setStatus('Markdown-Export erstellt (Kompakt)');
+      setStatus(`Markdown-Export erstellt (${exportModeLabel})`);
       return;
     }
 
@@ -626,7 +671,7 @@ async function exportCurrentTranscript(format) {
         mimeType: 'application/pdf',
         payload: pdfBytes,
       });
-      setStatus('PDF-Export erstellt (Kompakt)');
+      setStatus(`PDF-Export erstellt (${exportModeLabel})`);
       return;
     }
 
@@ -637,7 +682,7 @@ async function exportCurrentTranscript(format) {
           mimeType: 'text/plain;charset=utf-8',
           payload: text,
         });
-        setStatus('TXT-Export erstellt (Kompakt)');
+        setStatus(`TXT-Export erstellt (${exportModeLabel})`);
         return;
       }
 
@@ -647,7 +692,7 @@ async function exportCurrentTranscript(format) {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         payload: docxBytes,
       });
-      setStatus('Word DOCX-Export erstellt (Kompakt)');
+      setStatus(`Word DOCX-Export erstellt (${exportModeLabel})`);
       return;
     }
   } catch (error) {
@@ -1017,6 +1062,15 @@ function renderBootstrapScreen() {
   }
 }
 
+function renderPlaybackRateOptions(selectedRate) {
+  const activeRate = normalizePlaybackRate(selectedRate);
+  return PLAYBACK_RATE_OPTIONS.map((rate) => {
+    const selected = activeRate === rate ? ' selected' : '';
+    const label = `${rate.toFixed(2).replace(/\.00$/, '.0')}x`;
+    return `<option value="${rate}"${selected}>${label}</option>`;
+  }).join('');
+}
+
 function render() {
   const app = document.getElementById('correction-app');
   if (!app) return;
@@ -1141,6 +1195,20 @@ function render() {
                 </span>
               </button>
               <div id="cw-export-menu-list" class="cw-export-menu-list" role="menu" aria-label="Export">
+                <div class="cw-export-mode-group" role="group" aria-label="Exportmodus">
+                  <button
+                    id="cw-export-mode-compact"
+                    type="button"
+                    class="cw-segment ${state.exportMode === 'compact' ? 'active' : ''}"
+                    aria-pressed="${state.exportMode === 'compact' ? 'true' : 'false'}"
+                  >Kompakt</button>
+                  <button
+                    id="cw-export-mode-raw"
+                    type="button"
+                    class="cw-segment ${state.exportMode === 'raw' ? 'active' : ''}"
+                    aria-pressed="${state.exportMode === 'raw' ? 'true' : 'false'}"
+                  >Rohdaten</button>
+                </div>
                 <button id="cw-export-md" role="menuitem" type="button">Markdown</button>
                 <button id="cw-export-pdf" role="menuitem" type="button">PDF</button>
                 <button id="cw-export-word-docx" role="menuitem" type="button">Word (DOCX)</button>
@@ -1231,11 +1299,7 @@ function render() {
           <div id="cw-media-slot" class="cw-media-slot">${mediaNode}</div>
           <div class="cw-media-controls">
             <select id="cw-audio-rate" aria-label="Wiedergabegeschwindigkeit">
-              <option value="0.75">0.75x</option>
-              <option value="1" selected>1.0x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2.0x</option>
+              ${renderPlaybackRateOptions(state.playbackRate)}
             </select>
           </div>
         </div>
@@ -1605,6 +1669,23 @@ function bindInteractions() {
     };
   }
 
+  const applyExportMode = (mode) => {
+    state.exportMode = mode === 'raw' ? 'raw' : 'compact';
+    persistExportMode(state.exportMode);
+    setStatus(`Exportmodus: ${state.exportMode === 'raw' ? 'Rohdaten' : 'Kompakt'}`);
+    render();
+  };
+
+  const exportModeCompactButton = document.getElementById('cw-export-mode-compact');
+  if (exportModeCompactButton) {
+    exportModeCompactButton.onclick = () => applyExportMode('compact');
+  }
+
+  const exportModeRawButton = document.getElementById('cw-export-mode-raw');
+  if (exportModeRawButton) {
+    exportModeRawButton.onclick = () => applyExportMode('raw');
+  }
+
   const runExportAction = (action) => {
     applyExportMenuEvent({ type: 'select', action });
     exportCurrentTranscript(action);
@@ -1799,10 +1880,15 @@ function bindInteractions() {
   const mediaResizeHandle = document.getElementById('cw-media-resize-handle');
 
   if (audioRateNode && mediaNode) {
+    audioRateNode.value = String(normalizePlaybackRate(state.playbackRate));
     audioRateNode.onchange = () => {
-      mediaNode.playbackRate = Number(audioRateNode.value || '1');
+      const nextRate = normalizePlaybackRate(audioRateNode.value);
+      state.playbackRate = nextRate;
+      persistPlaybackRate(nextRate);
+      audioRateNode.value = String(nextRate);
+      mediaNode.playbackRate = nextRate;
     };
-    mediaNode.playbackRate = Number(audioRateNode.value || '1');
+    mediaNode.playbackRate = normalizePlaybackRate(state.playbackRate);
   }
 
   if (mediaResizeHandle) {
