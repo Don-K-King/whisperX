@@ -361,3 +361,12 @@
 - Neuer Runtime-Readiness-Entry `python -m evodox.runtime.offline_readiness` mit `check|prepare` fuer reproduzierbare Betriebspruefungen.
 - Worker wurde fuer offline-sicheren Laufzeitpfad gehaertet: `--model_cache_only True` sowie optionaler Strict-Offline-Modus mit lokaler Diarization-Aufloesung und fail-fast bei fehlenden Pflichtartefakten.
 - Neuer Windows-Betriebspfad fuer Uebergabe: `deploy/register-evodox-login-autostart.ps1` registriert Login-Autostart (any user) auf denselben Bootstrap.
+
+## 2026-03-28 (Offline Start Hardening fuer SYSTEM-Autostart)
+- `deploy/start-evodox.ps1` wurde gehaertet: Docker-Backend-Readiness-Wait, expliziter lokaler Image-Check fuer `EVODOX_IMAGE` und optionales `docker load` aus `C:\ProgramData\EvidoX\images\evodox-local-dev.tar`.
+- Primarfehler bei `offline_readiness` werden jetzt direkt ausgegeben (inkl. Exit-Code und Ausgabevorschau), statt nur als JSON-Folgefehler zu erscheinen.
+- Neues Betriebswerkzeug `deploy/preload-offline-runtime-image.ps1` erstellt bzw. pullt das Runtime-Image einmal online und archiviert es fuer Offline-Neustarts.
+- `deploy/register-evodox-login-autostart.ps1` registriert jetzt einen Zwei-Task-Loginpfad: Docker-Start im User-Kontext plus verzoegerter/restartfaehiger SYSTEM-Task fuer EvidoX.
+- Runbook erweitert um `Offline Image Preload` und gezieltes Troubleshooting fuer `dockerBackendApiServer ... Access is denied`.
+- Worker-Modellstandard im lokalen Betrieb auf `WORKER_WHISPERX_MODEL=large-v3` festgezogen (`.env` und Compose-Fallbacks), damit `tiny` nicht mehr als Default aktiv wird.
+- Operator-Runbook um dedizierten Online-Preload fuer WhisperX-Assets (`offline_readiness prepare`) mit `large-v3` erweitert.

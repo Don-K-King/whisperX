@@ -12,18 +12,47 @@
    powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-evodox.ps1
    ```
 2. Das Skript fuehrt intern aus:
-   - Docker-Verfuegbarkeit pruefen.
+   - Docker-Backend-Readiness pruefen (wartet auf laufenden Backend-API-Pfad).
+   - Lokales Runtime-Image aus `EVODOX_IMAGE` pruefen und optional aus `C:\ProgramData\EvidoX\images\evodox-local-dev.tar` laden.
+   - Worker-Modell-Default `WORKER_WHISPERX_MODEL=large-v3` verwenden (kein `tiny`-Fallback im Compose-Default).
    - Offline-Readiness (`python -m evodox.runtime.offline_readiness check --json`) pruefen.
    - Bei fehlenden Artefakten und Internet: `prepare` ausfuehren.
    - Worker im `offline_strict` Modus starten (`WORKER_OFFLINE_STRICT=true`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`).
+
+### Offline Image Preload (einmal online)
+1. Runtime-Image preloaden und archivieren:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\preload-offline-runtime-image.ps1
+   ```
+2. Erwartetes Ergebnis:
+   - Image aus `.env` (`EVODOX_IMAGE`) ist lokal verfuegbar.
+   - Archiv liegt unter `C:\ProgramData\EvidoX\images\evodox-local-dev.tar`.
+
+### Offline WhisperX Model Preload (large-v3, einmal online)
+1. Modell-Assets mit `large-v3` vorbereiten:
+   ```powershell
+   $repo = (Get-Location).Path
+   $env:WORKER_WHISPERX_MODEL = "large-v3"
+   $env:WORKER_HF_HUB_OFFLINE = "0"
+   $env:WORKER_TRANSFORMERS_OFFLINE = "0"
+   docker compose --env-file .env -f deploy/docker-compose.target.yml run --rm --no-deps --volume "$repo`:/workspace" --workdir /workspace worker python -m evodox.runtime.offline_readiness prepare --json
+   ```
+2. Verifikation:
+   ```powershell
+   docker compose --env-file .env -f deploy/docker-compose.target.yml run --rm --no-deps worker python -m evodox.runtime.offline_readiness check --json
+   ```
+   Erwartet: `"ready": true`.
 
 ### Windows Login Autostart (any user)
 1. Einmalig als Administrator ausfuehren:
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\register-evodox-login-autostart.ps1
    ```
-2. Der Task Scheduler startet `deploy/start-evodox.ps1` bei jedem User-Login.
-3. Keine BIOS- und keine Firewall-Automation erforderlich.
+2. Der Task Scheduler registriert zwei koordinierte Tasks:
+   - `EvidoX Docker Desktop Login Start` im User-Kontext (z. B. `KripoEV`) fuer Docker Desktop.
+   - `EvidoX Login Autostart` als `SYSTEM` mit Delay/Retry fuer `deploy/start-evodox.ps1`.
+3. Docker Desktop Autostart im User-Profil wird best effort deaktiviert, damit kein Doppelstart-Race entsteht.
+4. Keine BIOS- und keine Firewall-Automation erforderlich.
 
 ### Readiness-Report lesen
 - `ready=true`: Offline-faehige Runtime kann sofort starten.
@@ -41,6 +70,11 @@
 - Fehler `config_error:*`: `.env` Pflichtparameter fuer Worker/Token/Storage korrigieren.
 - Fehler `diarization_snapshot:*`: Auto-Prepare mit Internet erneut ausfuehren.
 - Fehler `nltk_punkt_tab:*`: Auto-Prepare erneut ausfuehren oder NLTK-Daten im Worker-Image vorprovisionieren.
+- Fehler `Lokales Runtime-Image ... nicht vorhanden`: online `deploy/preload-offline-runtime-image.ps1` ausfuehren.
+- Fehler `Pipe Access Denied` (`dockerBackendApiServer`):
+  1. Sicherstellen, dass nur der geplante Docker-Task den Backend-Start ausloest.
+  2. Docker Desktop User-Autostart deaktiviert lassen.
+  3. `Get-ScheduledTaskInfo` fuer beide EvidoX-Tasks pruefen und bei Bedarf neu registrieren.
 
 ## Betrieb (On-Prem Docker)
 - Startreihenfolge: Keycloak, PostgreSQL, MinIO, RabbitMQ, API, Worker, Frontend, NGINX

@@ -52,6 +52,7 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         self.assertIn("proxy_pass $api_upstream;", nginx_frontend)
 
     def test_env_profiles_document_required_and_optional_variables_per_service(self) -> None:
+        env_local = self._read(".env")
         env_example = self._read(".env.example")
         env_prod = self._read(".env.production.example")
 
@@ -67,6 +68,7 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         for required in (
             "API_DB_DSN=",
             "WORKER_BROKER_URL=",
+            "WORKER_WHISPERX_MODEL=large-v3",
             "WORKER_WHISPERX_DEVICE=cuda",
             "WORKER_WHISPERX_COMPUTE_TYPE=float16",
             "WORKER_WHISPERX_DEVICE_INDEX=0",
@@ -77,9 +79,14 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
         ):
             self.assertIn(required, env_prod)
 
+        self.assertIn("WORKER_WHISPERX_MODEL=large-v3", env_local)
+        self.assertNotIn("WORKER_WHISPERX_MODEL=tiny", env_local)
+
     def test_runbook_covers_provisioning_secrets_healthchecks_and_rollback(self) -> None:
         runbook = self._read("docs/operations/runbooks.md")
         monitoring = self._read("docs/operations/monitoring-alerting.md")
+        start_script = self._read("deploy/start-evodox.ps1")
+        register_script = self._read("deploy/register-evodox-login-autostart.ps1")
         self.assertIn("## 2026-03-27 - No-Switch Offline-Handover (Windows Login Autostart)", runbook)
 
         for heading in (
@@ -93,6 +100,29 @@ class TargetDeploymentArtifactsTests(unittest.TestCase):
             self.assertIn(heading, runbook)
         self.assertTrue(Path("deploy/start-evodox.ps1").exists())
         self.assertTrue(Path("deploy/register-evodox-login-autostart.ps1").exists())
+        self.assertTrue(Path("deploy/preload-offline-runtime-image.ps1").exists())
+
+        for marker in (
+            "Docker-Backend-Readiness wird geprueft",
+            "WORKER_OFFLINE_STRICT",
+            "C:\\ProgramData\\EvidoX\\images\\evodox-local-dev.tar",
+        ):
+            self.assertIn(marker, start_script)
+
+        self.assertIn("WORKER_WHISPERX_MODEL: ${WORKER_WHISPERX_MODEL:-large-v3}", self._read("deploy/docker-compose.target.yml"))
+
+        for marker in (
+            "EvidoX Docker Desktop Login Start",
+            "RestartCount",
+            "Docker Desktop Autostart",
+        ):
+            self.assertIn(marker, register_script)
+
+        for marker in (
+            "Offline Image Preload",
+            "Pipe Access Denied",
+        ):
+            self.assertIn(marker, runbook)
 
         for mapping in (
             "docker compose service `api`",

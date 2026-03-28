@@ -230,3 +230,14 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - **Control: Offline strict runtime.** Worker startet mit `WORKER_OFFLINE_STRICT=true`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1` und `--model_cache_only True`.
 - **Control: Lokale Diarization-Aufloesung.** Diarization-Modelle werden auf lokale Snapshot-Pfade aufgeloest; fehlende Snapshots sind harte Startfehler.
 - **Control: Login-Autostart Governance.** Windows Task Scheduler startet den Bootstrap bei Login jedes Users; dadurch bleibt das Startverhalten bei User-Wechsel reproduzierbar.
+
+## 2026-03-28 - Controls fuer SYSTEM-Loginstart und Offline-Image-Governance
+- **Control: Docker readiness gate.** `deploy/start-evodox.ps1` startet keine Runtime-Container bevor `docker info` und `docker version` das Backend als bereit bestaetigen.
+- **Control: Local image fail-fast.** Der Bootstrap bricht ab, wenn `EVODOX_IMAGE` lokal fehlt und kein gueltiges Offline-Archiv geladen werden kann.
+- **Control: Offline archive convention.** Runtime-Image-Archivierung erfolgt ueber festen lokalen Pfad `C:\ProgramData\EvidoX\images\evodox-local-dev.tar` fuer reproduzierbare Offline-Recovery.
+- **Control: Start-race prevention.** Docker Desktop wird im dedizierten User-Kontext gestartet, waehrend der EvidoX-Task als SYSTEM verzoegert/restartfaehig laeuft; konkurrierende User-Autostarts werden best effort deaktiviert.
+
+## 2026-03-28 - Controls fuer WhisperX Modell-Default und Offline-Model-Preload
+- **Control: Default-Modell ohne Drift.** `.env` und Compose-Fallbacks verwenden `WORKER_WHISPERX_MODEL=large-v3`; `tiny` ist nicht mehr Standardpfad.
+- **Control: Expliziter Online-Preload.** Offline-Artefaktvorbereitung fuer ASR/Alignment/Diarization erfolgt vor dem Offline-Betrieb via `offline_readiness prepare` und wird mit `offline_readiness check` verifiziert.
+- **Control: Fail-fast bei fehlendem Cache.** Offline-Strict-Pfad bleibt aktiv fail-fast, wenn erforderliche Modellartefakte fehlen; kein stiller Online-Nachzug im Offline-Betrieb.

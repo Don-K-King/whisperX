@@ -301,3 +301,16 @@
 - Entscheidung: Worker-Runtime wird offline-sicher gehaertet (`--model_cache_only True`, optional `WORKER_OFFLINE_STRICT=true`, lokale Diarization-Snapshot-Aufloesung, fail-fast bei fehlendem `punkt_tab`).
 - Entscheidung: Windows Login-Autostart fuer beliebige User ueber Task Scheduler (`deploy/register-evodox-login-autostart.ps1`).
 - Referenz: ADR-0024 (`/docs/adr/ADR-0024-no-switch-offline-readiness-und-login-autostart.md`).
+
+## 2026-03-28 - SYSTEM-Loginstart gehaertet (Docker Pipe Race + Offline Image Governance)
+- Entscheidung: Login-Orchestrierung wird auf zwei Tasks aufgeteilt: Docker Desktop im dedizierten User-Kontext, EvidoX-Start weiter als SYSTEM mit Delay/RestartPolicy.
+- Entscheidung: Docker Desktop User-Autostart wird best effort deaktiviert, damit konkurrierende Backend-Starts (`dockerBackendApiServer`) vermieden werden.
+- Entscheidung: `deploy/start-evodox.ps1` enthaelt einen verbindlichen Docker-Backend-Readiness-Wait und fail-fast Image-Gates fuer `EVODOX_IMAGE`.
+- Entscheidung: Offline-Runtime nutzt standardisierten lokalen Archivpfad `C:\ProgramData\EvidoX\images\evodox-local-dev.tar`; optionales `docker load` erfolgt vor `offline_readiness`.
+- Entscheidung: Preload/Archivierung wird als eigener Operator-Schritt ueber `deploy/preload-offline-runtime-image.ps1` abgebildet.
+- Sicherheitsbewertung: reduziert Start-Race und unkontrollierte Runtime-Drift; kein Secret-Handling im Klartext erweitert, keine Tenant-Grenzen geaendert.
+
+## 2026-03-28 - WhisperX Modell-Default auf large-v3 standardisiert
+- Entscheidung: Lokale Betriebsdefaults werden auf `WORKER_WHISPERX_MODEL=large-v3` festgezogen (`.env` und Compose-Fallbacks), damit `tiny` nicht mehr als unbeabsichtigter Default verwendet wird.
+- Entscheidung: Offline-Preload fuer ASR-Assets wird als expliziter Betreiber-Schritt ueber `python -m evodox.runtime.offline_readiness prepare --json` mit `WORKER_WHISPERX_MODEL=large-v3` dokumentiert.
+- Sicherheits-/Betriebsbewertung: reduziert Modell-Drift zwischen Neustarts und verhindert terminale Offline-Fehler durch fehlenden `large-v3` Cache.
