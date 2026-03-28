@@ -23,6 +23,8 @@ import {
   resolveSeekPlaybackResumeDecision,
   resolveForcedVirtualRange,
   resolveMarkedTextRange,
+  parseMediaStripHeightPx,
+  resolveMediaStripHeightPx,
   resolveMediaSeekTime,
   shouldAutoSeek,
   SIDEBAR_SECTION_IDS,
@@ -253,6 +255,19 @@ test('parseAutoSeekSelectionEnabled supports persisted toggle values', () => {
   assert.equal(parseAutoSeekSelectionEnabled('1'), true);
   assert.equal(parseAutoSeekSelectionEnabled('0'), false);
   assert.equal(parseAutoSeekSelectionEnabled(null), true);
+});
+
+test('parseMediaStripHeightPx reads persisted value and falls back safely', () => {
+  assert.equal(parseMediaStripHeightPx('126'), 126);
+  assert.equal(parseMediaStripHeightPx(''), 108);
+  assert.equal(parseMediaStripHeightPx(null), 108);
+  assert.equal(parseMediaStripHeightPx('abc'), 108);
+});
+
+test('resolveMediaStripHeightPx clamps media strip height to allowed range', () => {
+  assert.equal(resolveMediaStripHeightPx(40), 56);
+  assert.equal(resolveMediaStripHeightPx(560), 220);
+  assert.equal(resolveMediaStripHeightPx(108), 108);
 });
 
 test('resolveSelectedSegmentId keeps previous id when still available', () => {

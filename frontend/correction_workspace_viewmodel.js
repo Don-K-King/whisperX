@@ -111,6 +111,36 @@ export function parseAutoSeekSelectionEnabled(value) {
   return true;
 }
 
+export function resolveMediaStripHeightPx(
+  value,
+  {
+    minPx = 56,
+    maxPx = 220,
+    fallbackPx = 108,
+  } = {},
+) {
+  const min = Number.isFinite(Number(minPx)) ? Math.floor(Number(minPx)) : 56;
+  const maxCandidate = Number.isFinite(Number(maxPx)) ? Math.floor(Number(maxPx)) : 220;
+  const max = Math.max(min, maxCandidate);
+  const fallbackCandidate = Number.isFinite(Number(fallbackPx))
+    ? Math.round(Number(fallbackPx))
+    : 108;
+  const fallback = Math.min(max, Math.max(min, fallbackCandidate));
+  if (value == null) return fallback;
+  if (typeof value === 'string' && value.trim() === '') return fallback;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const rounded = Math.round(numeric);
+  return Math.min(max, Math.max(min, rounded));
+}
+
+export function parseMediaStripHeightPx(value, options = {}) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return resolveMediaStripHeightPx(null, options);
+  }
+  return resolveMediaStripHeightPx(value, options);
+}
+
 export function parseSidebarSectionState(value, sectionIds = SIDEBAR_SECTION_IDS) {
   const defaults = Object.fromEntries(sectionIds.map((id) => [id, false]));
   if (typeof value !== 'string' || value.trim() === '') {

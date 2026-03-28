@@ -435,6 +435,27 @@ Fehlerpfade:
 ```
 - Fehlercodes: `401, 403, 404, 409, 422, 503`.
 
+### POST /api/v1/jobs/{id}/transcript/correction-sessions/{session_id}/export
+- AuthZ: `user|reviewer|admin`, tenant-scoped.
+- Zweck: Einvernahmeprotokoll-Download aus dem aktuellen Session-Draft erzeugen.
+- Request:
+```json
+{
+  "format": "docx",
+  "profile": "court_transcript",
+  "mode": "compact"
+}
+```
+- Request-Regeln:
+  - `format`: `docx|txt`
+  - `profile`: aktuell nur `court_transcript`
+  - `mode`: `raw|compact`
+- Response 200:
+  - Binärer Datei-Download (`application/vnd.openxmlformats-officedocument.wordprocessingml.document` fuer `docx`, `text/plain` fuer `txt`).
+  - `Content-Disposition: attachment; filename="<safe-file-name>"`
+  - `X-Content-Type-Options: nosniff`
+- Fehlercodes: `401, 403, 404, 422, 503`.
+
 ### Korrektur-Operationen (v1) - Vertragsregeln
 - `set_segments`: ersetzt kompletten Draft-Stand, jedes Segment mit `segment_id`, `speaker`, `text`, `start`, `end`.
 - `replace_literal`: nur literal matching (kein Regex), optional speaker-filter.

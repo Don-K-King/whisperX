@@ -9,9 +9,11 @@ import {
   deriveMarkedTextRange,
   buildSpeakerOptionEntries,
   parseAutoSeekSelectionEnabled,
+  parseMediaStripHeightPx,
   parseSidebarSectionState,
   parseSidebarVisibility,
   resolveCorrectionBootstrapFeedback,
+  resolveMediaStripHeightPx,
   resolveExportMenuState,
   resolveMarkedTextRange,
   resolveMediaSeekTime,
@@ -35,7 +37,7 @@ import {
   buildCorrectionExportBaseName,
   buildCorrectionMarkdownExport,
   buildCorrectionPlainTextExport,
-  buildCorrectionWordDocument,
+  buildSimpleDocxFromPlainText,
   buildSimplePdfFromPlainText,
 } from './correction_workspace_export.js';
 
@@ -43,7 +45,11 @@ const THEME_STORAGE_KEY = 'evodox-theme';
 const SIDEBAR_VISIBILITY_STORAGE_KEY = 'evodox-correction-sidebar-visible';
 const SIDEBAR_SECTION_STATE_STORAGE_KEY = 'evodox-correction-sidebar-sections';
 const AUTO_SEEK_SELECTION_STORAGE_KEY = 'evodox-correction-auto-seek-selection';
-const EXPORT_MODE_STORAGE_KEY = 'evodox-correction-export-mode';
+const FOOTER_MEDIA_HEIGHT_STORAGE_KEY = 'evodox-correction-footer-media-height-px';
+const FOOTER_MEDIA_HEIGHT_MIN_PX = 56;
+const FOOTER_MEDIA_HEIGHT_MAX_PX = 220;
+const FOOTER_MEDIA_HEIGHT_DEFAULT_PX = 108;
+const FOOTER_MEDIA_HEIGHT_STEP_PX = 8;
 const VIRTUAL_ROW_HEIGHT = 156;
 const VIRTUAL_OVERSCAN = 8;
 const SEEK_WARMUP_LOOKAHEAD = 10;
@@ -74,14 +80,13 @@ const state = {
   hasUnsavedChanges: false,
   closePromptVisible: false,
   mediaSource: null,
-  mediaLoadError: '',
   isBootstrapping: true,
   bootstrapPhase: 'boot',
   bootstrapError: '',
   sidebarVisible: loadPersistedSidebarVisibility(),
   sidebarSectionsOpen: loadPersistedSidebarSectionState(),
   autoSeekSelectionEnabled: loadPersistedAutoSeekSelectionEnabled(),
-  exportMode: loadPersistedExportMode(),
+  mediaStripHeightPx: loadPersistedMediaStripHeightPx(),
   exportMenuOpen: false,
   lastExportAction: '',
   selectedTextRange: null,
@@ -216,8 +221,6 @@ function syncStatusMessageNodes() {
   const message = resolveDisplayedStatusMessage();
   const sidebarNode = document.getElementById('cw-status-message');
   if (sidebarNode) sidebarNode.textContent = message;
-  const footerNode = document.getElementById('cw-global-status');
-  if (footerNode) footerNode.textContent = message;
 }
 
 function clearSeekResumeTimer() {
@@ -297,21 +300,43 @@ function persistAutoSeekSelectionEnabled(enabled) {
   }
 }
 
-function loadPersistedExportMode() {
+function loadPersistedMediaStripHeightPx() {
   try {
-    const mode = String(localStorage.getItem(EXPORT_MODE_STORAGE_KEY) || '').trim().toLowerCase();
-    return mode === 'raw' ? 'raw' : 'compact';
+    return parseMediaStripHeightPx(
+      localStorage.getItem(FOOTER_MEDIA_HEIGHT_STORAGE_KEY),
+      {
+        minPx: FOOTER_MEDIA_HEIGHT_MIN_PX,
+        maxPx: FOOTER_MEDIA_HEIGHT_MAX_PX,
+        fallbackPx: FOOTER_MEDIA_HEIGHT_DEFAULT_PX,
+      },
+    );
   } catch {
-    return 'compact';
+    return FOOTER_MEDIA_HEIGHT_DEFAULT_PX;
   }
 }
 
-function persistExportMode(mode) {
+function persistMediaStripHeightPx(heightPx) {
   try {
-    localStorage.setItem(EXPORT_MODE_STORAGE_KEY, mode === 'raw' ? 'raw' : 'compact');
+    localStorage.setItem(FOOTER_MEDIA_HEIGHT_STORAGE_KEY, String(heightPx));
   } catch {
     // ignore persistence errors
   }
+}
+
+function applyMediaStripHeightPx(heightPx, options = {}) {
+  const next = resolveMediaStripHeightPx(heightPx, {
+    minPx: FOOTER_MEDIA_HEIGHT_MIN_PX,
+    maxPx: FOOTER_MEDIA_HEIGHT_MAX_PX,
+    fallbackPx: FOOTER_MEDIA_HEIGHT_DEFAULT_PX,
+  });
+  state.mediaStripHeightPx = next;
+  if (document.body) {
+    document.body.style.setProperty('--cw-media-strip-height', `${next}px`);
+  }
+  if (options.persist !== false) {
+    persistMediaStripHeightPx(next);
+  }
+  return next;
 }
 
 function renderSidebarTreeSection({ id, title, body }) {
@@ -549,43 +574,16 @@ function triggerDownload({ filename, mimeType, payload }) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Defer revocation so slow browser download managers can still resolve the URL.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function openPrintPreview({ title, text }) {
-  const popup = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760');
-  if (!popup) {
-    throw new Error('print_popup_blocked');
-  }
-  const safeTitle = escapeHtml(title || 'Korrektur-Export');
-  const safeText = escapeHtml(String(text ?? ''));
-  popup.document.open();
-  popup.document.write(`<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <title>${safeTitle}</title>
-  <style>
-    body { font-family: "Segoe UI", "Noto Sans", sans-serif; margin: 28px; color: #1f1f1b; line-height: 1.45; }
-    h1 { font-size: 20px; margin: 0 0 16px; }
-    pre { white-space: pre-wrap; word-break: break-word; font: 13px/1.45 "Consolas", "Courier New", monospace; }
-  </style>
-</head>
-<body>
-  <h1>${safeTitle}</h1>
-  <pre>${safeText}</pre>
-</body>
-</html>`);
-  popup.document.close();
-  popup.focus();
-  popup.print();
-}
-
-function exportCurrentTranscript(format) {
+async function exportCurrentTranscript(format) {
   try {
     const createdAt = new Date();
     const segments = collectSegmentsFromState();
     const baseName = buildCorrectionExportBaseName({ jobId: state.jobId, createdAt });
+    const exportMode = 'compact';
     if (format === 'md') {
       const markdown = buildCorrectionMarkdownExport({
         jobId: state.jobId,
@@ -594,7 +592,7 @@ function exportCurrentTranscript(format) {
         workingVersion: state.workingVersion,
         reviewStatus: state.reviewStatus,
         isFinal: state.isFinal,
-        mode: state.exportMode,
+        mode: exportMode,
         segments,
         speakerLabels: state.speakerLabels,
         createdAt,
@@ -604,7 +602,7 @@ function exportCurrentTranscript(format) {
         mimeType: 'text/markdown;charset=utf-8',
         payload: markdown,
       });
-      setStatus(`Markdown-Export erstellt (${state.exportMode})`);
+      setStatus('Markdown-Export erstellt (Kompakt)');
       return;
     }
 
@@ -615,7 +613,7 @@ function exportCurrentTranscript(format) {
       workingVersion: state.workingVersion,
       reviewStatus: state.reviewStatus,
       isFinal: state.isFinal,
-      mode: state.exportMode,
+      mode: exportMode,
       createdAt,
       segments,
       speakerLabels: state.speakerLabels,
@@ -628,30 +626,29 @@ function exportCurrentTranscript(format) {
         mimeType: 'application/pdf',
         payload: pdfBytes,
       });
-      setStatus(`PDF-Export erstellt (${state.exportMode})`);
+      setStatus('PDF-Export erstellt (Kompakt)');
       return;
     }
 
-    if (format === 'print') {
-      openPrintPreview({
-        title: `Korrektur-Export Job ${state.jobId} (${state.exportMode})`,
-        text,
-      });
-      setStatus(`Druckansicht geoeffnet (${state.exportMode})`);
-      return;
-    }
+    if (format === 'word_docx' || format === 'txt') {
+      if (format === 'txt') {
+        triggerDownload({
+          filename: `${baseName}.txt`,
+          mimeType: 'text/plain;charset=utf-8',
+          payload: text,
+        });
+        setStatus('TXT-Export erstellt (Kompakt)');
+        return;
+      }
 
-    if (format === 'word') {
-      const word = buildCorrectionWordDocument({
-        title: `Korrektur-Export Job ${state.jobId} (${state.exportMode})`,
-        text,
-      });
+      const docxBytes = buildSimpleDocxFromPlainText(text);
       triggerDownload({
-        filename: `${baseName}.doc`,
-        mimeType: 'application/msword',
-        payload: word,
+        filename: `${baseName}.docx`,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        payload: docxBytes,
       });
-      setStatus(`Word-Export erstellt (${state.exportMode})`);
+      setStatus('Word DOCX-Export erstellt (Kompakt)');
+      return;
     }
   } catch (error) {
     setStatus(`Export fehlgeschlagen: ${error.message}`);
@@ -1023,6 +1020,7 @@ function renderBootstrapScreen() {
 function render() {
   const app = document.getElementById('correction-app');
   if (!app) return;
+  applyMediaStripHeightPx(state.mediaStripHeightPx, { persist: false });
   if (state.isBootstrapping) {
     renderBootstrapScreen();
     return;
@@ -1099,19 +1097,6 @@ function render() {
             </button>
             <button id="cw-commit" class="primary" type="button" title="Version committen">Commit</button>
             <button
-              id="cw-print"
-              class="cw-icon-only"
-              type="button"
-              aria-label="Drucken"
-              title="Drucken"
-            >
-              <span class="cw-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M6 9V3h12v6h1a3 3 0 0 1 3 3v5h-4v4H6v-4H2v-5a3 3 0 0 1 3-3h1Zm2-4v4h8V5H8Zm8 12H8v2h8v-2Zm2-2h2v-3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v3h2v-2h12v2Z"/>
-                </svg>
-              </span>
-            </button>
-            <button
               id="cw-undo"
               class="cw-icon-only"
               type="button"
@@ -1155,25 +1140,11 @@ function render() {
                   </svg>
                 </span>
               </button>
-              <div id="cw-export-menu-list" class="cw-export-menu-list" role="menu" aria-label="Export und Drucken">
-                <div class="cw-export-mode-group" role="group" aria-label="Exportmodus">
-                  <button
-                    id="cw-export-mode-compact"
-                    type="button"
-                    class="cw-segment ${state.exportMode === 'compact' ? 'active' : ''}"
-                    aria-pressed="${state.exportMode === 'compact' ? 'true' : 'false'}"
-                  >Kompakt</button>
-                  <button
-                    id="cw-export-mode-raw"
-                    type="button"
-                    class="cw-segment ${state.exportMode === 'raw' ? 'active' : ''}"
-                    aria-pressed="${state.exportMode === 'raw' ? 'true' : 'false'}"
-                  >Rohdaten</button>
-                </div>
-                <button id="cw-export-print" role="menuitem" type="button">Drucken</button>
+              <div id="cw-export-menu-list" class="cw-export-menu-list" role="menu" aria-label="Export">
                 <button id="cw-export-md" role="menuitem" type="button">Markdown</button>
                 <button id="cw-export-pdf" role="menuitem" type="button">PDF</button>
-                <button id="cw-export-word" role="menuitem" type="button">Word</button>
+                <button id="cw-export-word-docx" role="menuitem" type="button">Word (DOCX)</button>
+                <button id="cw-export-txt" role="menuitem" type="button">TXT</button>
               </div>
             </div>
           </div>
@@ -1246,17 +1217,28 @@ function render() {
         ` : ''}
       </section>
       <footer class="cw-audio">
-        <div id="cw-media-slot">${mediaNode}</div>
-        <label for="cw-audio-rate">Rate</label>
-        <select id="cw-audio-rate">
-          <option value="0.75">0.75x</option>
-          <option value="1" selected>1.0x</option>
-          <option value="1.25">1.25x</option>
-          <option value="1.5">1.5x</option>
-          <option value="2">2.0x</option>
-        </select>
-        <span class="cw-status">${escapeHtml(state.mediaLoadError || 'Ursprungsdatei automatisch geladen.')}</span>
-        <span id="cw-global-status" class="cw-status">${escapeHtml(displayedStatusMessage)}</span>
+        <button
+          id="cw-media-resize-handle"
+          class="cw-media-resize-handle"
+          type="button"
+          aria-label="Footerhoehe anpassen"
+          aria-valuemin="${FOOTER_MEDIA_HEIGHT_MIN_PX}"
+          aria-valuemax="${FOOTER_MEDIA_HEIGHT_MAX_PX}"
+          aria-valuenow="${state.mediaStripHeightPx}"
+          title="Footerhoehe ziehen oder mit Pfeiltasten anpassen"
+        ></button>
+        <div class="cw-media-shell">
+          <div id="cw-media-slot" class="cw-media-slot">${mediaNode}</div>
+          <div class="cw-media-controls">
+            <select id="cw-audio-rate" aria-label="Wiedergabegeschwindigkeit">
+              <option value="0.75">0.75x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2.0x</option>
+            </select>
+          </div>
+        </div>
       </footer>
       ${state.closePromptVisible ? `
       <section class="cw-modal-backdrop" role="dialog" aria-modal="true" aria-label="Ungespeicherte Aenderungen">
@@ -1283,8 +1265,8 @@ function render() {
     && existingMediaSrc === String(state.mediaSource.media_url).trim();
   if (shouldReuseMedia) {
     const mediaSlot = document.getElementById('cw-media-slot');
-    if (mediaSlot?.parentNode) {
-      mediaSlot.replaceWith(existingMedia);
+    if (mediaSlot) {
+      mediaSlot.replaceChildren(existingMedia);
     }
   } else {
     restoreMediaPlaybackState(mediaSnapshot);
@@ -1305,7 +1287,7 @@ function render() {
 
 function renderMediaNode() {
   if (!state.mediaSource?.media_url) {
-    return '<div class="cw-status">Keine Medienquelle verfuegbar.</div>';
+    return '<div class="cw-media-empty" aria-hidden="true"></div>';
   }
   const url = escapeHtml(state.mediaSource.media_url);
   const isVideo = String(state.mediaSource.content_type || '').startsWith('video/');
@@ -1623,40 +1605,11 @@ function bindInteractions() {
     };
   }
 
-  const applyExportMode = (mode) => {
-    state.exportMode = mode === 'raw' ? 'raw' : 'compact';
-    persistExportMode(state.exportMode);
-    setStatus(`Exportmodus: ${state.exportMode === 'raw' ? 'Rohdaten' : 'Kompakt'}`);
-    render();
-  };
-
-  const exportModeCompactButton = document.getElementById('cw-export-mode-compact');
-  if (exportModeCompactButton) {
-    exportModeCompactButton.onclick = () => applyExportMode('compact');
-  }
-
-  const exportModeRawButton = document.getElementById('cw-export-mode-raw');
-  if (exportModeRawButton) {
-    exportModeRawButton.onclick = () => applyExportMode('raw');
-  }
-
   const runExportAction = (action) => {
     applyExportMenuEvent({ type: 'select', action });
     exportCurrentTranscript(action);
     render();
   };
-
-  const quickPrintButton = document.getElementById('cw-print');
-  if (quickPrintButton) {
-    quickPrintButton.onclick = () => {
-      exportCurrentTranscript('print');
-    };
-  }
-
-  const exportPrintButton = document.getElementById('cw-export-print');
-  if (exportPrintButton) {
-    exportPrintButton.onclick = () => runExportAction('print');
-  }
 
   const exportMarkdownButton = document.getElementById('cw-export-md');
   if (exportMarkdownButton) {
@@ -1668,9 +1621,14 @@ function bindInteractions() {
     exportPdfButton.onclick = () => runExportAction('pdf');
   }
 
-  const exportWordButton = document.getElementById('cw-export-word');
+  const exportWordButton = document.getElementById('cw-export-word-docx');
   if (exportWordButton) {
-    exportWordButton.onclick = () => runExportAction('word');
+    exportWordButton.onclick = () => runExportAction('word_docx');
+  }
+
+  const exportTxtButton = document.getElementById('cw-export-txt');
+  if (exportTxtButton) {
+    exportTxtButton.onclick = () => runExportAction('txt');
   }
 
   const discardButton = document.getElementById('cw-discard');
@@ -1838,12 +1796,79 @@ function bindInteractions() {
 
   const mediaNode = getMediaElement();
   const audioRateNode = document.getElementById('cw-audio-rate');
+  const mediaResizeHandle = document.getElementById('cw-media-resize-handle');
 
   if (audioRateNode && mediaNode) {
     audioRateNode.onchange = () => {
       mediaNode.playbackRate = Number(audioRateNode.value || '1');
     };
     mediaNode.playbackRate = Number(audioRateNode.value || '1');
+  }
+
+  if (mediaResizeHandle) {
+    const setHandleValue = (valuePx) => {
+      mediaResizeHandle.setAttribute('aria-valuenow', String(valuePx));
+    };
+    const applyDelta = (deltaPx, persist = true) => {
+      const next = applyMediaStripHeightPx(state.mediaStripHeightPx + Number(deltaPx || 0), { persist });
+      setHandleValue(next);
+    };
+
+    mediaResizeHandle.onkeydown = (event) => {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        applyDelta(FOOTER_MEDIA_HEIGHT_STEP_PX, true);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        applyDelta(-FOOTER_MEDIA_HEIGHT_STEP_PX, true);
+      }
+    };
+
+    mediaResizeHandle.ondblclick = (event) => {
+      event.preventDefault();
+      const next = applyMediaStripHeightPx(FOOTER_MEDIA_HEIGHT_DEFAULT_PX, { persist: true });
+      setHandleValue(next);
+    };
+
+    mediaResizeHandle.onpointerdown = (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startY = Number(event.clientY || 0);
+      const startHeight = Number(state.mediaStripHeightPx || FOOTER_MEDIA_HEIGHT_DEFAULT_PX);
+      const pointerId = event.pointerId;
+
+      try {
+        mediaResizeHandle.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer-capture support gaps.
+      }
+
+      const onPointerMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        const delta = startY - Number(moveEvent.clientY || startY);
+        const next = applyMediaStripHeightPx(startHeight + delta, { persist: false });
+        setHandleValue(next);
+      };
+
+      const stopResize = (finalEvent) => {
+        if (finalEvent.pointerId !== pointerId) return;
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', stopResize);
+        window.removeEventListener('pointercancel', stopResize);
+        persistMediaStripHeightPx(state.mediaStripHeightPx);
+        try {
+          mediaResizeHandle.releasePointerCapture(pointerId);
+        } catch {
+          // Ignore pointer-capture support gaps.
+        }
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', stopResize);
+      window.addEventListener('pointercancel', stopResize);
+    };
   }
 
   const centerBlockInEditor = (node, editorNode = null, behavior = 'smooth') => {
@@ -2164,17 +2189,18 @@ async function init() {
   }
   const persistedTheme = bootstrapTheme || storedTheme;
   setTheme(persistedTheme === 'dark' ? 'dark' : 'light');
+  applyMediaStripHeightPx(state.mediaStripHeightPx, { persist: false });
   render();
 
   try {
+    let mediaLoadErrorMessage = '';
     state.bootstrapPhase = 'media';
     render();
     try {
       state.mediaSource = await callApi(`/api/v1/jobs/${state.jobId}/media-source`);
-      state.mediaLoadError = '';
     } catch (mediaError) {
       state.mediaSource = null;
-      state.mediaLoadError = `Medienquelle konnte nicht geladen werden: ${mediaError.message}`;
+      mediaLoadErrorMessage = `Medienquelle konnte nicht geladen werden: ${mediaError.message}`;
     }
 
     state.bootstrapPhase = 'transcript';
@@ -2199,7 +2225,7 @@ async function init() {
     resetDirtyState();
     state.isBootstrapping = false;
     state.bootstrapError = '';
-    setStatus('Korrektursitzung gestartet');
+    setStatus(mediaLoadErrorMessage || 'Korrektursitzung gestartet');
     render();
   } catch (error) {
     state.isBootstrapping = true;

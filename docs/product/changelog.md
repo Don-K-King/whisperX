@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-03-28
+- Korrekturmodus-Exportmenue auf vier Formate vereinheitlicht: `Markdown`, `PDF`, `Word (DOCX)` und `TXT`.
+- Neuer API-Downloadpfad fuer Korrektursessions: `POST /api/v1/jobs/{id}/transcript/correction-sessions/{session_id}/export` mit Payload `format|profile|mode`.
+- Exportformat fuer Einvernahmeprotokolle vereinheitlicht: technischer Header + Sprecherzeilen mit Zeitstempel `[HH:MM:SS - HH:MM:SS]`.
+- Sprecherauflosung priorisiert manuelle Aliasnamen; Fallback bleibt der Roh-Key (z. B. `SPEAKER_01`) ohne Zusatzformat `Alias (KEY)`.
+- Word-Weiterverarbeitung gehaertet: DOCX wird serverseitig als natives OpenXML-Dokument ausgeliefert (statt lokalem `.doc`-RTF-Workaround).
+- Exporte im Korrekturmodus laufen einheitlich im Kompaktverhalten (Blockwechsel nur bei Sprecherwechsel).
+- Druckfunktion im Korrekturmodus entfernt (Header-Icon und Dropdown-Eintrag).
+- Korrekturmodus-Footer fuer Medien optimiert: im Footer werden nur noch Media-Player und Geschwindigkeitswechsler angezeigt; Status-/Hinweistexte wurden entfernt und die Videoanzeige nutzt die Footerflaeche deutlich besser aus.
+- Korrekturmodus-Footer weiter verdichtet: Video wird als flacher, breiter Streifen dargestellt (deutlich geringere Hoehe, hohe Breitenutzung), Speed-Control bleibt erhalten.
+- Korrekturmodus-Footer jetzt in der Hoehe skalierbar und persistent: Default-Videohoehe wurde um rund 50% erhoeht, Groesse kann per Drag-Handle angepasst werden und wird lokal gespeichert.
+- Footer-Videoanzeige auf vollstaendige Bildsicht umgestellt: kein Cropping mehr, Video wird ueber Footer-Hoehe skaliert (`contain`) und bei Bedarf mit seitlichen Letterbox-Raendern zentriert dargestellt.
+
 ## 2026-03-27
 - README von WhisperX-Upstream-Einstieg auf EvidoX-Produktuebersicht umgestellt (Nutzen, Architektur, Datenfluss, Lifecycle, Dokumentations-Navigation).
 - Zentrale Dokumentationsnavigation eingefuehrt: `docs/README.md` als Themen- und SoT-Navigator.

@@ -166,6 +166,184 @@ class TranscriptCorrectionFastAPIIntegrationTests(unittest.TestCase):
             self.assertEqual(payload.get("return_mode"), "ack")
             self.assertEqual(payload.get("changed_segments_count"), 1)
 
+    def test_correction_export_txt_returns_court_transcript_download(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            transcript_repo = InMemoryTranscriptRepository()
+            correction_store = SQLiteTranscriptCorrectionStore(db_path)
+            transcript_repo.seed(
+                tenant_id="tenant-a",
+                job_id="job_corr_export_txt",
+                version=1,
+                segments=[
+                    {"segment_id": "seg_1", "start": 4.0, "end": 11.0, "speaker": "SPEAKER_01", "text": "Bitte nennen Sie Ihren Namen."},
+                    {"segment_id": "seg_2", "start": 18.0, "end": 24.0, "speaker": "SPEAKER_03", "text": "Ich bestaetige die Angabe."},
+                ],
+                speaker_labels={"SPEAKER_01": "Staatsanwalt"},
+            )
+
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(base_url="https://minio.local", bucket="uploads"),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+                transcript_correction_store=correction_store,
+            )
+            client = TestClient(app)
+
+            created = client.post(
+                "/api/v1/jobs/job_corr_export_txt/transcript/correction-sessions",
+                headers={"Authorization": "Bearer token"},
+                json={"base_version": 1, "autosave_enabled": False},
+            )
+            self.assertEqual(created.status_code, 200)
+            session_id = created.json()["session_id"]
+
+            exported = client.post(
+                f"/api/v1/jobs/job_corr_export_txt/transcript/correction-sessions/{session_id}/export",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "format": "txt",
+                    "profile": "court_transcript",
+                    "mode": "raw",
+                },
+            )
+            self.assertEqual(exported.status_code, 200)
+            self.assertEqual(exported.headers.get("content-type"), "text/plain; charset=utf-8")
+            self.assertIn(".txt", str(exported.headers.get("content-disposition", "")))
+            body = exported.content.decode("utf-8")
+            self.assertIn("Einvernahmeprotokoll", body)
+            self.assertIn("[00:00:04 - 00:00:11] Staatsanwalt:", body)
+            self.assertNotIn("Staatsanwalt (SPEAKER_01)", body)
+            self.assertIn("[00:00:18 - 00:00:24] SPEAKER_03:", body)
+
+    def test_correction_export_docx_returns_word_download(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            transcript_repo = InMemoryTranscriptRepository()
+            correction_store = SQLiteTranscriptCorrectionStore(db_path)
+            transcript_repo.seed(
+                tenant_id="tenant-a",
+                job_id="job_corr_export_docx",
+                version=1,
+                segments=[
+                    {"segment_id": "seg_1", "start": 0.0, "end": 2.0, "speaker": "S1", "text": "Hallo Welt"},
+                ],
+            )
+
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(base_url="https://minio.local", bucket="uploads"),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+                transcript_correction_store=correction_store,
+            )
+            client = TestClient(app)
+
+            created = client.post(
+                "/api/v1/jobs/job_corr_export_docx/transcript/correction-sessions",
+                headers={"Authorization": "Bearer token"},
+                json={"base_version": 1, "autosave_enabled": False},
+            )
+            self.assertEqual(created.status_code, 200)
+            session_id = created.json()["session_id"]
+
+            exported = client.post(
+                f"/api/v1/jobs/job_corr_export_docx/transcript/correction-sessions/{session_id}/export",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "format": "docx",
+                    "profile": "court_transcript",
+                    "mode": "raw",
+                },
+            )
+            self.assertEqual(exported.status_code, 200)
+            self.assertEqual(
+                exported.headers.get("content-type"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            self.assertIn(".docx", str(exported.headers.get("content-disposition", "")))
+            self.assertTrue(exported.content.startswith(b"PK"))
+
+    def test_correction_export_rejects_invalid_format(self):
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "evodox.db"
+            transcript_repo = InMemoryTranscriptRepository()
+            correction_store = SQLiteTranscriptCorrectionStore(db_path)
+            transcript_repo.seed(
+                tenant_id="tenant-a",
+                job_id="job_corr_export_invalid",
+                version=1,
+                segments=[
+                    {"segment_id": "seg_1", "start": 0.0, "end": 1.0, "speaker": "S1", "text": "Hallo"},
+                ],
+            )
+
+            app = create_fastapi_app(
+                settings=FastAPIAdapterSettings(
+                    expected_issuer="https://keycloak.prod/realms/evodox",
+                    expected_audience="evodox-api",
+                ),
+                token_verifier=lambda _token: self._claims(),
+                job_repository=SQLiteJobRepository(db_path),
+                upload_session_factory=LocalPresignUploadSessionFactory(base_url="https://minio.local", bucket="uploads"),
+                audit_log=JsonlAuditLog(Path(tmp) / "audit.log"),
+                idempotency_store=SQLiteIdempotencyStore(db_path),
+                complete_upload_idempotency_store=SQLiteCompleteUploadIdempotencyStore(db_path),
+                object_storage=LocalObjectStorageCatalog(),
+                outbox=SQLiteOutbox(db_path),
+                transcript_repository=transcript_repo,
+                transcript_correction_store=correction_store,
+            )
+            client = TestClient(app)
+
+            created = client.post(
+                "/api/v1/jobs/job_corr_export_invalid/transcript/correction-sessions",
+                headers={"Authorization": "Bearer token"},
+                json={"base_version": 1, "autosave_enabled": False},
+            )
+            self.assertEqual(created.status_code, 200)
+            session_id = created.json()["session_id"]
+
+            exported = client.post(
+                f"/api/v1/jobs/job_corr_export_invalid/transcript/correction-sessions/{session_id}/export",
+                headers={"Authorization": "Bearer token"},
+                json={
+                    "format": "pdf",
+                    "profile": "court_transcript",
+                    "mode": "raw",
+                },
+            )
+            self.assertEqual(exported.status_code, 422)
+            self.assertEqual(
+                exported.json().get("detail", {}).get("error_code"),
+                "transcript.correction_export_invalid_format",
+            )
+
     def test_correction_session_create_preserves_timeline_gaps(self):
         from fastapi.testclient import TestClient
 

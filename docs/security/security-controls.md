@@ -27,6 +27,8 @@ Verbindliche Security-Spezifikation: `docs/security/security-spec-v1.md`.
 - Operationstypen werden serverseitig allowlist-basiert validiert (`set_segments`, `replace_literal`, `reassign_speaker`, `update_text`).
 - `update_text` validiert `segment_id`-Existenz sowie Textgrenzen strikt, damit keine ungueltigen Segmentreferenzen oder leeren Texte persistiert werden.
 - `return_mode` fuer Operations-Responses ist strikt auf `ack|changed_segments|full` begrenzt; unbekannte Werte werden durch Request-Validierung abgewiesen.
+- Gerichtsexport aus Korrektursessions ist strikt validiert (`profile=court_transcript`, `format=docx|txt`, `mode=raw|compact`) und bleibt tenant-/actor-scoped.
+- Download-Antworten fuer Gerichtsexporte setzen `Content-Disposition` mit sicherem Dateinamen und `X-Content-Type-Options: nosniff`.
 
 ## Upload- und Verarbeitungs-Sicherheit
 - Dateityp-/Signaturprüfung (MIME + Magic Bytes)

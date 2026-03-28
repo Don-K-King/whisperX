@@ -6,7 +6,7 @@ import {
   buildCorrectionExportSegments,
   buildCorrectionMarkdownExport,
   buildCorrectionPlainTextExport,
-  buildCorrectionWordDocument,
+  buildSimpleDocxFromPlainText,
   buildSimplePdfFromPlainText,
 } from '../correction_workspace_export.js';
 
@@ -33,15 +33,18 @@ test('buildCorrectionMarkdownExport renders blocks with timestamps and labels', 
       { speaker: 'SPEAKER_01', start: 0, end: 5, text: 'Hallo Welt' },
     ],
   });
-  assert.ok(markdown.includes('# Korrektur-Export Job job-1'));
-  assert.ok(markdown.includes('- Session-ID: cs-1'));
-  assert.ok(markdown.includes('- Basis-Version: 2'));
-  assert.ok(markdown.includes('- Arbeits-Version: 4'));
-  assert.ok(markdown.includes('- Review-Status: in_review'));
-  assert.ok(markdown.includes('- Final: Nein'));
-  assert.ok(markdown.includes('- Export-Modus: compact'));
-  assert.ok(markdown.includes('### Alice (SPEAKER_01) | 00:00:00 - 00:00:05'));
+  assert.ok(markdown.includes('# Einvernahmeprotokoll'));
+  assert.ok(markdown.includes('Job-ID: job-1'));
+  assert.ok(markdown.includes('Session-ID: cs-1'));
+  assert.ok(markdown.includes('Basis-Version: 2'));
+  assert.ok(markdown.includes('Arbeits-Version: 4'));
+  assert.ok(markdown.includes('Review-Status: in_review'));
+  assert.ok(markdown.includes('Final: Nein'));
+  assert.ok(markdown.includes('Exportzeitpunkt (UTC): 2026-03-25T12:00:00.000Z'));
+  assert.ok(markdown.includes('[00:00:00 - 00:00:05] Alice:'));
   assert.ok(markdown.includes('Hallo Welt'));
+  assert.ok(!markdown.includes('Alice (SPEAKER_01)'));
+  assert.ok(!markdown.includes('Export-Modus'));
 });
 
 test('buildCorrectionPlainTextExport renders transcript lines', () => {
@@ -59,13 +62,16 @@ test('buildCorrectionPlainTextExport renders transcript lines', () => {
       { speaker: 'SPEAKER_02', start: 10, end: 12, text: 'Danke.' },
     ],
   });
-  assert.ok(text.includes('Korrektur-Export'));
+  assert.ok(text.includes('Einvernahmeprotokoll'));
   assert.ok(text.includes('Job-ID: job-2'));
   assert.ok(text.includes('Session-ID: cs-2'));
+  assert.ok(text.includes('Review-Status: approved'));
   assert.ok(text.includes('Final: Ja'));
-  assert.ok(text.includes('Export-Modus: raw'));
-  assert.ok(text.includes('[00:00:10 - 00:00:12] Bob (SPEAKER_02)'));
+  assert.ok(text.includes('Exportzeitpunkt (UTC): 2026-03-25T13:00:00.000Z'));
+  assert.ok(text.includes('[00:00:10 - 00:00:12] Bob:'));
   assert.ok(text.includes('Danke.'));
+  assert.ok(!text.includes('Bob (SPEAKER_02)'));
+  assert.ok(!text.includes('Export-Modus'));
 });
 
 test('compact_merges_consecutive_same_speaker_even_with_gaps', () => {
@@ -125,15 +131,14 @@ test('compact_mode_emits_expected_block_count_and_ranges', () => {
   assert.equal(compact[1].end, 6);
 });
 
-test('buildCorrectionWordDocument escapes control chars and supports unicode', () => {
-  const rtf = buildCorrectionWordDocument({
-    title: 'Titel {A}',
-    text: 'Zeile \\ eins\nÃ¤Ã¶Ã¼',
-  });
-  assert.ok(rtf.startsWith('{\\rtf1'));
-  assert.ok(rtf.includes('Titel \\{A\\}'));
-  assert.ok(rtf.includes('Zeile \\\\ eins\\par'));
-  assert.ok(rtf.includes('\\u228?'));
+test('buildSimpleDocxFromPlainText creates valid docx zip container', () => {
+  const bytes = buildSimpleDocxFromPlainText('Titel\nZeile äöü');
+  const signature = new TextDecoder().decode(bytes.slice(0, 2));
+  assert.equal(signature, 'PK');
+  const content = new TextDecoder().decode(bytes);
+  assert.ok(content.includes('[Content_Types].xml'));
+  assert.ok(content.includes('word/document.xml'));
+  assert.ok(content.includes('_rels/.rels'));
 });
 
 test('buildSimplePdfFromPlainText emits a PDF header and trailer', () => {

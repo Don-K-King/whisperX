@@ -41,6 +41,10 @@ from evodox.jobs.transcript_correction_service import (
     undo_correction_session,
     update_transcript_status,
 )
+from evodox.jobs.correction_export_service import (
+    CorrectionExportValidationError,
+    build_correction_court_export_artifact,
+)
 from evodox.jobs.export_service import ExportRequestInput, ExportValidationError, queue_export
 from evodox.jobs.transcription_settings_service import (
     TranscriptionSettingsValidationError,
@@ -217,7 +221,7 @@ def create_fastapi_app(
     media_bucket: str | None = None,
 ):
     try:
-        from fastapi import FastAPI, Header, HTTPException
+        from fastapi import FastAPI, Header, HTTPException, Response
         from pydantic import BaseModel, Field
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
@@ -287,6 +291,11 @@ def create_fastapi_app(
     class CorrectionSessionCommitPayload(BaseModel):
         base_version: int
         edit_reason: str = Field(min_length=3, max_length=255)
+
+    class CorrectionSessionExportPayload(BaseModel):
+        format: str
+        profile: str = "court_transcript"
+        mode: str = "raw"
 
     class ExportPayload(BaseModel):
         format: str
@@ -977,6 +986,68 @@ def create_fastapi_app(
             raise _http_error(409, exc.error_code) from exc
         except TranscriptValidationError as exc:
             raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+
+    @app.post("/api/v1/jobs/{job_id}/transcript/correction-sessions/{session_id}/export")
+    def post_correction_session_export(
+        job_id: str,
+        session_id: str,
+        payload: CorrectionSessionExportPayload,
+        authorization: str | None = Header(default=None),
+        x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    ) -> Any:
+        del x_correlation_id
+        if transcript_correction_store is None:
+            raise HTTPException(status_code=503, detail={"error_code": "transcript.correction_unavailable"})
+        try:
+            auth_context = _require_auth(authorization)
+            session = get_correction_session(
+                tenant_id=auth_context.tenant_id,
+                actor_id=auth_context.actor_id,
+                job_id=job_id,
+                session_id=session_id,
+                correction_store=transcript_correction_store,
+            )
+            artifact = build_correction_court_export_artifact(
+                job_id=job_id,
+                session_id=session_id,
+                base_version=session.base_version,
+                working_version=session.working_version,
+                review_status=session.review_status,
+                is_final=session.is_final,
+                segments=session.segments,
+                speaker_labels=session.speaker_labels,
+                fmt=payload.format,
+                profile=payload.profile,
+                mode=payload.mode,
+            )
+            if hasattr(audit_log, "append"):
+                audit_log.append(
+                    {
+                        "action": "transcript.correction_export.generated",
+                        "tenant_id": auth_context.tenant_id,
+                        "actor_id": auth_context.actor_id,
+                        "job_id": job_id,
+                        "session_id": session_id,
+                        "format": str(payload.format or ""),
+                        "profile": str(payload.profile or ""),
+                        "mode": str(payload.mode or ""),
+                        "ts": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                )
+            return Response(
+                content=artifact.content,
+                media_type=artifact.content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except AuthzError as exc:
+            raise _http_error(exc.status_code, exc.error_code, exc.correlation_id) from exc
+        except TranscriptValidationError as exc:
+            raise _http_error(_correction_error_status(exc.error_code), exc.error_code) from exc
+        except CorrectionExportValidationError as exc:
+            raise _http_error(422, exc.error_code) from exc
 
     @app.post("/api/v1/jobs/{job_id}/export")
     def post_job_export(
